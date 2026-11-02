@@ -619,11 +619,17 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //       identity: An Identity capability. The field is the account ID.
 //       http: An ApiSession capability pointing to an external HTTP service. Object containing:
 //           url: Base URL of the external service.
+//           encryptedSettings: Versioned AES-256-GCM envelope {version, nonce, data, tag}.
+//               Encrypts connectionHeaders and Basic username with a domain-separated key
+//               derived from the sturdy ref. Legacy plaintext fields migrate on token use.
 //           auth: Authentication mechanism. Object containing one of:
 //               none: Value "null". Indicates no authorization.
 //               bearer: A bearer token to pass in the `Authorization: Bearer` header on all
 //                   requests. Encrypted with nonce 0.
+//               authorization: {scheme, value}; empty scheme means raw Authorization.
+//                   The value is encrypted with nonce 0, mutually exclusive with other auth.
 //               basic: A `{username, password}` object. The password is encrypted with nonce 0.
+//                   The username is stored in encryptedSettings, restored in memory.
 //                   Before encryption, the password is padded to 32 bytes by appending NUL bytes,
 //                   in order to mask the length of small passwords.
 //               refresh: An OAuth refresh token, which can be exchanged for an access token.
@@ -711,10 +717,12 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //       http :group {
 //         url :Text;
 //         connectionHeaders :List({ name :Text, value :Text });
-//         # Optional validated non-secret provider settings (OpenAI project/organization).
+//         # In-memory only; stored inside encryptedSettings (legacy plaintext migrates on use).
+//         encryptedSettings :group { version :UInt8; nonce :Data; data :Data; tag :Data; }
 //         auth :union {
 //           none :Void;
 //           bearer :Text;
+//           apiKey :group { headerName :Text; value :Text; }
 //           basic :group { username :Text; password :Text; }
 //           refresh :Text;
 //         }
@@ -722,6 +730,10 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //       outboundHttp :group {
 //         baseUrl :Text;
 //         methods :List(Text);
+//         auth :HttpAuth; # Optional; absence preserves legacy caller-supplied credentials.
+//         # The whole auth object is stored in an AES-GCM envelope bound to baseUrl/methods.
+//         # auth is present only in memory after decryption, never in a saved token.
+//         encryptedCredentials :EncryptedOutboundCredentials;
 //       }
 //     }
 //     child :group {
@@ -768,6 +780,7 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 // nonce 0:
 //     parentTokenKey
 //     frontendRef.http.auth.basic.password
+//     frontendRef.http.auth.apiKey.value
 //     frontendRef.http.auth.bearer
 //     frontendRef.http.auth.refresh
 

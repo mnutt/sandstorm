@@ -40,6 +40,28 @@ class PersistentImpl {
     this[privateIsSaved] = !!saveTemplate.parentToken;
   }
 
+  async checkLiveRequirements() {
+    const db = this[privateDb];
+    const template = this[privateTemplate];
+    await checkRequirements(db, template.requirements);
+    const seen = new Set();
+    let id = template.parentToken;
+    let root;
+    while (id) {
+      if (seen.has(id)) throw new Meteor.Error(403, "Invalid capability ancestry.");
+      seen.add(id);
+      const token = await db.collections.apiTokens.findOneAsync(id);
+      if (!token || token.revoked || (token.expires && token.expires <= new Date()) ||
+          (token.expiresIfUnused && token.expiresIfUnused <= new Date())) {
+        throw new Meteor.Error(403, "Connection authorization has expired or been revoked.");
+      }
+      await checkRequirements(db, token.requirements);
+      root = id;
+      id = token.parentToken;
+    }
+    return root;
+  }
+
   isSaved() {
     // Can be called by subclasses to ask whether or not a record currently exists in the ApiTokens
     // table representing this capability.
@@ -130,9 +152,77 @@ function cryptApiToken(key, entry, cryptIn, cryptOut) {
         auth.bearer = encrypt0(auth.bearer);
       } else if (auth.basic) {
         auth.basic.password = encrypt0(auth.basic.password);
+      } else if (auth.authorization) {
+        auth.authorization.value = encrypt0(auth.authorization.value);
+      } else if (auth.apiKey) {
+        auth.apiKey.value = encrypt0(auth.apiKey.value);
       } else if (auth.refresh) {
         auth.refresh = encrypt0(auth.refresh);
       }
+    }
+  }
+}
+
+function cryptOutboundCredentials(key, outbound, encrypt) {
+  // New outbound grants have no plaintext credential migration path. Bind credentials to
+  // their exact stored scope so database edits cannot redirect them or broaden methods.
+  const credentialKey = Crypto.createHash("sha256")
+      .update("sandstorm-outbound-credentials-v1\0").update(Buffer.from(key, "base64")).digest();
+  const scope = Buffer.from(JSON.stringify({ baseUrl: outbound.baseUrl, methods: outbound.methods || [] }));
+  if (encrypt) {
+    const nonce = Crypto.randomBytes(12);
+    const cipher = Crypto.createCipheriv("aes-256-gcm", credentialKey, nonce);
+    cipher.setAAD(scope);
+    const data = Buffer.concat([
+      cipher.update(JSON.stringify({ auth: outbound.auth }), "utf8"), cipher.final(),
+    ]);
+    outbound.encryptedCredentials = { version: 1, nonce, data, tag: cipher.getAuthTag() };
+    delete outbound.auth;
+  } else {
+    try {
+      const envelope = outbound.encryptedCredentials;
+      if (envelope.version !== 1 || outbound.auth) throw new Error("Invalid envelope");
+      const decipher = Crypto.createDecipheriv("aes-256-gcm", credentialKey, Buffer.from(envelope.nonce));
+      decipher.setAAD(scope);
+      decipher.setAuthTag(Buffer.from(envelope.tag));
+      const plaintext = Buffer.concat([
+        decipher.update(Buffer.from(envelope.data)), decipher.final(),
+      ]);
+      const { auth } = JSON.parse(plaintext.toString("utf8"));
+      if (auth) outbound.auth = auth;
+      delete outbound.encryptedCredentials;
+    } catch {
+      throw new Error("Unable to decrypt outbound HTTP credentials.");
+    }
+  }
+}
+
+function cryptHttpSettings(key, http, encrypt) {
+  const settingsKey = Crypto.createHash("sha256")
+      .update("sandstorm-http-settings-v1\0").update(Buffer.from(key, "base64")).digest();
+  if (encrypt) {
+    const settings = { connectionHeaders: http.connectionHeaders || [] };
+    if (http.auth?.basic) settings.username = http.auth.basic.username;
+    const nonce = Crypto.randomBytes(12);
+    const cipher = Crypto.createCipheriv("aes-256-gcm", settingsKey, nonce);
+    const data = Buffer.concat([cipher.update(JSON.stringify(settings), "utf8"), cipher.final()]);
+    http.encryptedSettings = { version: 1, nonce, data, tag: cipher.getAuthTag() };
+    delete http.connectionHeaders;
+    if (http.auth?.basic) delete http.auth.basic.username;
+  } else {
+    const envelope = http.encryptedSettings;
+    try {
+      if (envelope.version !== 1) throw new Error("Unknown version");
+      const decipher = Crypto.createDecipheriv("aes-256-gcm", settingsKey, Buffer.from(envelope.nonce));
+      decipher.setAuthTag(Buffer.from(envelope.tag));
+      const settings = JSON.parse(Buffer.concat([
+        decipher.update(Buffer.from(envelope.data)), decipher.final(),
+      ]).toString("utf8"));
+      http.connectionHeaders = settings.connectionHeaders;
+      if (http.auth?.basic) http.auth.basic.username = settings.username;
+      delete http.encryptedSettings;
+    } catch {
+      throw new Error("Unable to decrypt HTTP connection settings.");
     }
   }
 }
@@ -155,6 +245,27 @@ async function fetchApiToken(db, key, moreQuery) {
   const entry = await db.collections.apiTokens.findOneAsync(query);
   if (entry) {
     cryptApiToken(key, entry, x => x, bufferToString);
+    const outbound = entry.frontendRef?.outboundHttp;
+    if (outbound?.encryptedCredentials) {
+      cryptOutboundCredentials(key, outbound, false);
+    } else if (outbound?.auth) {
+      throw new Error("Unencrypted outbound HTTP credentials are not supported.");
+    }
+    const http = entry.frontendRef?.http;
+    if (http?.encryptedSettings) {
+      cryptHttpSettings(key, http, false);
+    } else if (http && (http.connectionHeaders || http.auth?.basic)) {
+      // Only the presented sturdy ref supplies the encryption key. Migrate on use;
+      // never overwrite a concurrently migrated envelope or resurrect a deleted token.
+      const copy = { ...http, auth: http.auth?.basic ?
+        { basic: { ...http.auth.basic } } : http.auth };
+      cryptHttpSettings(key, copy, true);
+      await db.collections.apiTokens.updateAsync({ _id: entry._id,
+        "frontendRef.http.encryptedSettings": { $exists: false } }, {
+        $set: { "frontendRef.http.encryptedSettings": copy.encryptedSettings },
+        $unset: { "frontendRef.http.connectionHeaders": "", "frontendRef.http.auth.basic.username": "" },
+      });
+    }
   }
 
   return entry;
@@ -178,6 +289,16 @@ async function insertApiToken(db, entry, key) {
 
   if (!key) key = generateSturdyRef();
   entry._id = hashSturdyRef(key);
+  // Detach nested values: saving must not encrypt a live capability's shared template.
+  const field = entry.frontendRef?.http ? "http" : "outboundHttp";
+  if (entry.frontendRef?.[field]) {
+    const http = entry.frontendRef[field];
+    entry.frontendRef = { ...entry.frontendRef, [field]: {
+      ...http, auth: http.auth ? JSON.parse(JSON.stringify(http.auth)) : undefined,
+    } };
+    if (field === "outboundHttp") cryptOutboundCredentials(key, entry.frontendRef[field], true);
+    else cryptHttpSettings(key, entry.frontendRef[field], true);
+  }
   cryptApiToken(key, entry, stringToBuffer, x => x);
   await db.collections.apiTokens.insertAsync(entry);
   return key;

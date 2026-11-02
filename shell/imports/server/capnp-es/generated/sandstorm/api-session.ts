@@ -4,6 +4,16 @@ import * as $ from "capnp-es";
 import { IpAddress, IpInterface, IpInterface$Client, IpNetwork, IpNetwork$Client, IpNetwork_PowerboxTag, IpNetwork_PowerboxTag_Encryption, IpPortPowerboxMetadata, IpRemoteHost, IpRemoteHost$Client, PersistentIpInterface, PersistentIpInterface$Client, PersistentIpNetwork, PersistentIpNetwork$Client, TcpPort, TcpPort$Client, UdpPort, UdpPort$Client } from "./ip";
 import { HttpStatusDescriptor, WebSession, WebSession$Client, WebSession_AcceptedEncoding, WebSession_AcceptedType, WebSession_CachePolicy, WebSession_CachePolicy_Scope, WebSession_Context, WebSession_Context_Header, WebSession_Cookie, WebSession_ETag, WebSession_Options, WebSession_Params, WebSession_PostContent, WebSession_PropfindDepth, WebSession_PutContent, WebSession_RequestStream, WebSession_RequestStream$Client, WebSession_Response, WebSession_Response_ClientErrorCode, WebSession_Response_ErrorBody, WebSession_Response_Header, WebSession_Response_ServerErrorCode, WebSession_Response_SuccessCode, WebSession_WebSocketStream, WebSession_WebSocketStream$Client, type WebSession$Server$Target } from "./web-session";
 export const _capnpFileId = 0xeb014c0c3413cbfbn;
+export const ApiSession_Method = {
+  GET: 0,
+  POST: 1,
+  PUT: 2,
+  PATCH: 3,
+  DELETE: 4,
+  HEAD: 5,
+  OPTIONS: 6
+} as const;
+export type ApiSession_Method = (typeof ApiSession_Method)[keyof typeof ApiSession_Method];
 /**
 * Normally, we strip the remote address from requests, since most applications shouldn't need
 * it.  However, for those that benefit from it (like analytics), clients can opt into passing
@@ -63,6 +73,122 @@ export class ApiSession_PowerboxTag_OAuthScope extends $.Struct {
   }
   toString(): string { return "ApiSession_PowerboxTag_OAuthScope_" + super.toString(); }
 }
+export const ApiSession_PowerboxTag_AuthenticationMethod_Kind = {
+  BEARER: 0,
+  BASIC: 1,
+  API_KEY: 2,
+  RAW_AUTHORIZATION: 3,
+  AUTHORIZATION: 4,
+  /**
+* Explicit grant: the grain supplies credentials in request headers/body.
+*
+*/
+  CALLER: 5,
+  /**
+* Explicitly unauthenticated API; no credential fields are shown.
+*
+*/
+  NONE: 6
+} as const;
+export type ApiSession_PowerboxTag_AuthenticationMethod_Kind = (typeof ApiSession_PowerboxTag_AuthenticationMethod_Kind)[keyof typeof ApiSession_PowerboxTag_AuthenticationMethod_Kind];
+export class ApiSession_PowerboxTag_AuthenticationMethod extends $.Struct {
+  static readonly Kind = ApiSession_PowerboxTag_AuthenticationMethod_Kind;
+  static readonly _capnp = {
+    displayName: "AuthenticationMethod",
+    id: "98a4b8f66b9a9b19",
+    typeId: 0x98a4b8f66b9a9b19n,
+    typeIdHex: "98a4b8f66b9a9b19",
+    size: new $.ObjectSize(8, 2),
+    fields: [
+      { name: "kind", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "enum", typeId: 0x8c93fef64034c75cn, typeIdHex: "8c93fef64034c75c", displayName: "Kind" } },
+      { name: "headerName", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "scheme", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } }
+    ] as const,
+  };
+  get kind(): ApiSession_PowerboxTag_AuthenticationMethod_Kind {
+    return $.utils.getUint16(0, this) as ApiSession_PowerboxTag_AuthenticationMethod_Kind;
+  }
+  set kind(value: ApiSession_PowerboxTag_AuthenticationMethod_Kind) {
+    $.utils.setUint16(0, value, this);
+  }
+  get headerName(): string {
+    return $.utils.getText(0, this);
+  }
+  set headerName(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  /**
+* Required only for authorization, e.g. "Bot". No arbitrary templates.
+* Required only for apiKey: sends the key verbatim in this HTTP header. Authorization,
+* transport, cookies, and identity headers are reserved. Bearer/Basic use Authorization.
+*
+*/
+  get scheme(): string {
+    return $.utils.getText(1, this);
+  }
+  set scheme(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  toString(): string { return "ApiSession_PowerboxTag_AuthenticationMethod_" + super.toString(); }
+}
+export class ApiSession_PowerboxTag_ConnectionField extends $.Struct {
+  static readonly _capnp = {
+    displayName: "ConnectionField",
+    id: "df33e54f5d9e53ef",
+    typeId: 0xdf33e54f5d9e53efn,
+    typeIdHex: "df33e54f5d9e53ef",
+    size: new $.ObjectSize(8, 3),
+    fields: [
+      { name: "headerName", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "label", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "description", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } },
+      { name: "required", codeOrder: 3, ordinal: 3, kind: "slot", offset: 0, type: { kind: "bool" } }
+    ] as const,
+    defaultRequired: $.getBitMask(false, 0)
+  };
+  /**
+* Case-insensitive HTTP header name. Authentication, cookies, transport/framing, and
+* Sandstorm/forwarding/browser security headers are reserved. No arbitrary HTML or scripts.
+*
+*/
+  get headerName(): string {
+    return $.utils.getText(0, this);
+  }
+  set headerName(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  /**
+* Plain text, 1–80 characters. The UI also displays the actual header name.
+*
+*/
+  get label(): string {
+    return $.utils.getText(1, this);
+  }
+  set label(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  /**
+* Optional plain text, at most 300 characters.
+*
+*/
+  get description(): string {
+    return $.utils.getText(2, this);
+  }
+  set description(value: string) {
+    $.utils.setText(2, value, this);
+  }
+  /**
+* Require a non-empty value before connecting. Values are at most 256 printable ASCII bytes.
+*
+*/
+  get required(): boolean {
+    return $.utils.getBit(0, this, ApiSession_PowerboxTag_ConnectionField._capnp.defaultRequired);
+  }
+  set required(value: boolean) {
+    $.utils.setBit(0, value, this, ApiSession_PowerboxTag_ConnectionField._capnp.defaultRequired);
+  }
+  toString(): string { return "ApiSession_PowerboxTag_ConnectionField_" + super.toString(); }
+}
 /**
 * A tag used for PowerboxDescriptors describing HTTP APIs. Such descriptors should typically
 * indicate `ApiSession` as the requested interface and use PowerboxTag to specify what API is
@@ -90,19 +216,26 @@ export class ApiSession_PowerboxTag_OAuthScope extends $.Struct {
 */
 export class ApiSession_PowerboxTag extends $.Struct {
   static readonly OAuthScope = ApiSession_PowerboxTag_OAuthScope;
+  static readonly AuthenticationMethod = ApiSession_PowerboxTag_AuthenticationMethod;
+  static readonly ConnectionField = ApiSession_PowerboxTag_ConnectionField;
   static readonly _capnp = {
     displayName: "PowerboxTag",
     id: "93e1f7ca567dee32",
     typeId: 0x93e1f7ca567dee32n,
     typeIdHex: "93e1f7ca567dee32",
-    size: new $.ObjectSize(0, 3),
+    size: new $.ObjectSize(0, 6),
     fields: [
       { name: "canonicalUrl", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
       { name: "oauthScopes", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "list", elementType: { kind: "struct", typeId: 0xbb95f31093b1fd88n, typeIdHex: "bb95f31093b1fd88", displayName: "OAuthScope" } } },
-      { name: "authentication", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } }
+      { name: "authentication", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "text" } },
+      { name: "authenticationMethods", codeOrder: 3, ordinal: 4, kind: "slot", offset: 4, type: { kind: "list", elementType: { kind: "struct", typeId: 0x98a4b8f66b9a9b19n, typeIdHex: "98a4b8f66b9a9b19", displayName: "AuthenticationMethod" } } },
+      { name: "connectionFields", codeOrder: 4, ordinal: 3, kind: "slot", offset: 3, type: { kind: "list", elementType: { kind: "struct", typeId: 0xdf33e54f5d9e53efn, typeIdHex: "df33e54f5d9e53ef", displayName: "ConnectionField" } } },
+      { name: "methods", codeOrder: 5, ordinal: 5, kind: "slot", offset: 5, type: { kind: "list", elementType: { kind: "enum", typeId: 0xaa56425dfc917273n, typeIdHex: "aa56425dfc917273", displayName: "Method" } } }
     ] as const,
   };
   static _OauthScopes: $.ListCtor<ApiSession_PowerboxTag_OAuthScope>;
+  static _AuthenticationMethods: $.ListCtor<ApiSession_PowerboxTag_AuthenticationMethod>;
+  static _ConnectionFields: $.ListCtor<ApiSession_PowerboxTag_ConnectionField>;
   /**
 * The standard URL at which this service is found. Use this especially for traditional SaaS
 * services. For example, you might request "https://api.github.com" to request access to the
@@ -187,8 +320,8 @@ export class ApiSession_PowerboxTag extends $.Struct {
   }
   /**
 * Authentication hint: "basic" prompts for a username and password; "bearer" prompts for
-* a bearer token. An absent hint preserves the unauthenticated URL card. The arbitrary URL
-* form also lets the user choose authentication. Unsupported hints offer no HTTP driver card.
+* a bearer token; "none" explicitly requests no authentication. Missing or unsupported
+* hints offer no HTTP driver card unless authenticationMethods or OAuth specifies the flow.
 * Credentials are entered in Sandstorm's trusted UI and are never returned to the app.
 *
 * When publishing support of HTTP APIs to the Powerbox, you should usually leave this field
@@ -200,6 +333,86 @@ export class ApiSession_PowerboxTag extends $.Struct {
   }
   set authentication(value: string) {
     $.utils.setText(2, value, this);
+  }
+  _adoptAuthenticationMethods(value: $.Orphan<$.List<ApiSession_PowerboxTag_AuthenticationMethod>>): void {
+    $.utils.adopt(value, $.utils.getPointer(4, this));
+  }
+  _disownAuthenticationMethods(): $.Orphan<$.List<ApiSession_PowerboxTag_AuthenticationMethod>> {
+    return $.utils.disown(this.authenticationMethods);
+  }
+  /**
+* Exactly one authentication mechanism, including `none`. Sandstorm owns credential
+* prompts, encrypted storage, and injection. These declarations never contain credentials.
+* When non-empty this supersedes the legacy `authentication` hint. Older servers ignore it;
+* also set `authentication` to a compatible hint (or an unknown hint to fail closed).
+* Multiple or unknown mechanisms reject the external HTTP card instead of downgrading auth.
+* Generic OAuth is not yet supported here; oauthScopes retains its existing provider flow.
+*
+*/
+  get authenticationMethods(): $.List<ApiSession_PowerboxTag_AuthenticationMethod> {
+    return $.utils.getList(4, ApiSession_PowerboxTag._AuthenticationMethods, this);
+  }
+  _hasAuthenticationMethods(): boolean {
+    return !$.utils.isNull($.utils.getPointer(4, this));
+  }
+  _initAuthenticationMethods(length: number): $.List<ApiSession_PowerboxTag_AuthenticationMethod> {
+    return $.utils.initList(4, ApiSession_PowerboxTag._AuthenticationMethods, length, this);
+  }
+  set authenticationMethods(value: $.List<ApiSession_PowerboxTag_AuthenticationMethod>) {
+    $.utils.copyFrom(value, $.utils.getPointer(4, this));
+  }
+  _adoptConnectionFields(value: $.Orphan<$.List<ApiSession_PowerboxTag_ConnectionField>>): void {
+    $.utils.adopt(value, $.utils.getPointer(3, this));
+  }
+  _disownConnectionFields(): $.Orphan<$.List<ApiSession_PowerboxTag_ConnectionField>> {
+    return $.utils.disown(this.connectionFields);
+  }
+  /**
+* DEPRECATED experimental configuration: new requests with fields are rejected. Apps send
+* ordinary settings in request headers. Kept at the original ordinal for wire compatibility.
+* Historical app-requested non-secret connection settings, rendered as plain text fields
+* and sends supplied values as managed headers on this capability's outgoing requests.
+* Labels/descriptions are untrusted app text, not provider identity. Credentials must use
+* `authentication` above. Header values are never included in returned descriptors.
+* Null/empty preserves the generic form. A maximum of 16 unique fields is supported.
+* Unsupported/unsafe field declarations do not offer an external HTTP connection card.
+* Publishing grains should normally omit this field, allowing normal wildcard matching.
+*
+*/
+  get connectionFields(): $.List<ApiSession_PowerboxTag_ConnectionField> {
+    return $.utils.getList(3, ApiSession_PowerboxTag._ConnectionFields, this);
+  }
+  _hasConnectionFields(): boolean {
+    return !$.utils.isNull($.utils.getPointer(3, this));
+  }
+  _initConnectionFields(length: number): $.List<ApiSession_PowerboxTag_ConnectionField> {
+    return $.utils.initList(3, ApiSession_PowerboxTag._ConnectionFields, length, this);
+  }
+  set connectionFields(value: $.List<ApiSession_PowerboxTag_ConnectionField>) {
+    $.utils.copyFrom(value, $.utils.getPointer(3, this));
+  }
+  _adoptMethods(value: $.Orphan<$.List<ApiSession_Method>>): void {
+    $.utils.adopt(value, $.utils.getPointer(5, this));
+  }
+  _disownMethods(): $.Orphan<$.List<ApiSession_Method>> {
+    return $.utils.disown(this.methods);
+  }
+  /**
+* Optional method attenuation. Empty means all methods supported by this driver.
+* Caller-auth grants must use authentication="caller" as a fail-closed legacy hint.
+*
+*/
+  get methods(): $.List<ApiSession_Method> {
+    return $.utils.getList(5, $.Uint16List, this) as $.List<ApiSession_Method>;
+  }
+  _hasMethods(): boolean {
+    return !$.utils.isNull($.utils.getPointer(5, this));
+  }
+  _initMethods(length: number): $.List<ApiSession_Method> {
+    return $.utils.initList(5, $.Uint16List, length, this) as $.List<ApiSession_Method>;
+  }
+  set methods(value: $.List<ApiSession_Method>) {
+    $.utils.copyFrom(value, $.utils.getPointer(5, this));
   }
   toString(): string { return "ApiSession_PowerboxTag_" + super.toString(); }
 }
@@ -289,12 +502,14 @@ export class ApiSession$Server extends $.Server {
   }
 }
 /**
-* A special case of WebSession but for APIs. It doesn't provide much other
-* than a unique type id that we can identify ApiSessions with
+* The preferred HTTP API interface uses the inherited WebSession methods, including
+* postStreaming and putStreaming. OutboundHttpSession remains a separate legacy interface.
+* Sandstorm injects managed credentials and forbids overriding their headers.
 *
 */
 export class ApiSession extends $.Interface {
   static readonly RESPONSE_HEADER_WHITELIST = $.readRawPointer(new Uint8Array([16, 44, 17, 1, 86, 17, 37, 98, 17, 41, 106, 17, 45, 218, 17, 57, 202, 17, 69, 250, 17, 81, 234, 17, 93, 218, 17, 105, 202, 17, 117, 170, 17, 125, 122, 255, 114, 101, 116, 114, 121, 45, 97, 102, 0, 7, 116, 101, 114, 255, 120, 45, 114, 101, 113, 117, 101, 115, 0, 15, 116, 45, 105, 100, 255, 120, 45, 114, 97, 116, 101, 108, 105, 2, 109, 105, 116, 45, 108, 105, 109, 105, 116, 45, 114, 101, 113, 117, 101, 115, 3, 116, 115, 255, 120, 45, 114, 97, 116, 101, 108, 105, 2, 109, 105, 116, 45, 108, 105, 109, 105, 116, 45, 116, 111, 107, 101, 110, 115, 0, 0, 255, 120, 45, 114, 97, 116, 101, 108, 105, 2, 109, 105, 116, 45, 114, 101, 109, 97, 105, 110, 105, 110, 103, 45, 114, 101, 63, 113, 117, 101, 115, 116, 115, 255, 120, 45, 114, 97, 116, 101, 108, 105, 2, 109, 105, 116, 45, 114, 101, 109, 97, 105, 110, 105, 110, 103, 45, 116, 111, 15, 107, 101, 110, 115, 255, 120, 45, 114, 97, 116, 101, 108, 105, 2, 109, 105, 116, 45, 114, 101, 115, 101, 116, 45, 114, 101, 113, 117, 101, 115, 3, 116, 115, 255, 120, 45, 114, 97, 116, 101, 108, 105, 2, 109, 105, 116, 45, 114, 101, 115, 101, 116, 45, 116, 111, 107, 101, 110, 115, 0, 0, 255, 111, 112, 101, 110, 97, 105, 45, 112, 1, 114, 111, 99, 101, 115, 115, 105, 110, 15, 103, 45, 109, 115, 255, 111, 112, 101, 110, 97, 105, 45, 118, 0, 63, 101, 114, 115, 105, 111, 110]).buffer);
+  static readonly Method = ApiSession_Method;
   static readonly Params = ApiSession_Params;
   static readonly PowerboxTag = ApiSession_PowerboxTag;
   static readonly Client = ApiSession$Client;
@@ -310,3 +525,5 @@ export class ApiSession extends $.Interface {
   toString(): string { return "ApiSession_" + super.toString(); }
 }
 ApiSession_PowerboxTag._OauthScopes = $.CompositeList(ApiSession_PowerboxTag_OAuthScope);
+ApiSession_PowerboxTag._AuthenticationMethods = $.CompositeList(ApiSession_PowerboxTag_AuthenticationMethod);
+ApiSession_PowerboxTag._ConnectionFields = $.CompositeList(ApiSession_PowerboxTag_ConnectionField);

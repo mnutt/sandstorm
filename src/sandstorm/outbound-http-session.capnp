@@ -19,6 +19,7 @@
 $import "/capnp/c++.capnp".namespace("sandstorm");
 
 using Util = import "util.capnp";
+using ApiSession = import "api-session.capnp".ApiSession;
 
 interface OutboundHttpSession @0xbf91271b527d6f33 {
   # Least-authority outbound HTTP access to a user-approved base URL.
@@ -50,6 +51,9 @@ interface OutboundHttpSession @0xbf91271b527d6f33 {
   #
   # Call `getResponse()` on the returned stream to observe response headers and
   # status. The response body is written to `responseStream`.
+  # Call inherited expectSize() before the first write to supply Content-Length.
+  # A later expectSize() declares the remaining bytes without changing sent headers.
+  # Size mismatches cancel the request. done() waits until the upload has been sent.
 
   enum Method {
     get @0;
@@ -79,5 +83,11 @@ interface OutboundHttpSession @0xbf91271b527d6f33 {
   struct PowerboxTag {
     baseUrl @0 :Text;
     methods @1 :List(Method);
+    authenticationMethods @2 :List(ApiSession.PowerboxTag.AuthenticationMethod);
+    # New requests must declare exactly one mechanism, including none for unauthenticated
+    # APIs. Missing/multiple mechanisms are rejected. Credentials are collected by Sandstorm,
+    # stored encrypted, and injected only at the approved destination. Existing saved grants
+    # retain their behavior. Declarations require a supporting server;
+    # older servers ignore this field and cannot supply managed authentication.
   }
 }

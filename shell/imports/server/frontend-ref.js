@@ -40,13 +40,13 @@ class FrontendRefRegistry {
 
     const keys = Object.keys(frontendRef);
     if (keys.length != 1) {
-      throw new Error("invalid frontendRef: " + JSON.stringify(frontendRef));
+      throw new Error("invalid frontendRef");
     }
 
     const key = keys[0];
     const handler = this._frontendRefHandlers[key];
     if (!handler) {
-      throw new Error("invalid frontendRef: " + JSON.stringify(frontendRef));
+      throw new Error("invalid frontendRef");
     }
 
     return handler.restore(db, saveTemplate, frontendRef[key]);
@@ -84,18 +84,17 @@ class FrontendRefRegistry {
 
     const keys = Object.keys(frontendRefRequest);
     if (keys.length != 1) {
-      throw new Error("invalid frontendRefRequest: " + JSON.stringify(frontendRefRequest));
+      throw new Error("invalid frontendRefRequest");
     }
 
     const key = keys[0];
     const handler = this._frontendRefHandlers[key];
     if (!handler) {
-      throw new Error("invalid frontendRefRequest: " + JSON.stringify(frontendRefRequest));
+      throw new Error("invalid frontendRefRequest");
     }
 
     if (!handler.validate) {
-      throw new Error("frontendRef type cannot be created via powerbox: " +
-                      JSON.stringify(frontendRefRequest));
+      throw new Error("frontendRef type cannot be created via powerbox");
     }
 
     const { descriptor, requirements, frontendRef } =

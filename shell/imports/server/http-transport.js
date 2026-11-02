@@ -16,9 +16,9 @@
 
 import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
-import Http from "http";
-import Https from "https";
-import Request from "request";
+import { PassThrough } from "stream";
+import { isIP } from "net";
+import { Client, ProxyAgent, buildConnector } from "undici";
 import { ssrfSafeLookupOrProxy } from "/imports/server/networking";
 
 const BLOCKED_HEADERS = new Set([
@@ -35,6 +35,40 @@ const BLOCKED_HEADERS = new Set([
 export const OUTBOUND_HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
 export const OUTBOUND_HTTP_STREAM_TIMEOUT_MS = 10 * 60 * 1000;
 export const OUTBOUND_HTTP_STREAM_IDLE_TIMEOUT_MS = 60 * 1000;
+export const OUTBOUND_HTTP_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+export const OUTBOUND_HTTP_UPLOAD_IDLE_TIMEOUT_MS = 60 * 1000;
+const MAX_ACTIVE_HTTP_REQUESTS = 256;
+let activeHttpRequests = 0;
+export const HTTP_MAX_BUFFERED_UPLOAD_BYTES = 8 * 1024 * 1024;
+export const HTTP_MAX_BUFFERED_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const HTTP_MAX_UPLOAD_CHUNK_BYTES = 1024 * 1024;
+export const HTTP_MAX_QUEUED_UPLOAD_BYTES = 4 * 1024 * 1024;
+export const HTTP_MAX_QUEUED_UPLOAD_WRITES = 64;
+export const HTTP_MAX_TRANSFER_BYTES = 8 * 1024 * 1024 * 1024;
+const HTTP_MAX_RETAINED_BUFFER_BYTES = 64 * 1024 * 1024;
+let retainedBufferBytes = 0;
+
+export function makeHttpLimitError(message) {
+  const error = new Error(message);
+  error.kjType = "overloaded";
+  return error;
+}
+
+export function reserveHttpBuffer(size) {
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw makeHttpLimitError("Invalid HTTP buffer size.");
+  }
+  if (size > HTTP_MAX_RETAINED_BUFFER_BYTES - retainedBufferBytes) {
+    throw makeHttpLimitError("Outbound HTTP buffer budget exceeded.");
+  }
+  retainedBufferBytes += size;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    retainedBufferBytes -= size;
+  };
+}
 const ENCODED_PATH_SEPARATOR = /%(2f|5c)/i;
 const INVALID_PERCENT_ENCODING = /%(?![0-9a-fA-F]{2})/;
 
@@ -225,13 +259,42 @@ export function buildHttpUrl(baseUrl, path) {
 // address pinning, proxy behavior, deadlines, cancellation, and failure cleanup.
 export function startHttpRequest({ db, url, method, headers, getAuthorization,
   consumeResponse, onFailure = () => {}, timeoutMs = OUTBOUND_HTTP_REQUEST_TIMEOUT_MS,
+  uploadTimeoutMs = OUTBOUND_HTTP_UPLOAD_TIMEOUT_MS,
+  uploadIdleTimeoutMs = OUTBOUND_HTTP_UPLOAD_IDLE_TIMEOUT_MS,
+  maxUploadBytes = HTTP_MAX_TRANSFER_BYTES,
+  maxResponseBytes = HTTP_MAX_TRANSFER_BYTES,
+  maxQueuedUploadBytes = HTTP_MAX_QUEUED_UPLOAD_BYTES,
+  maxQueuedUploadWrites = HTTP_MAX_QUEUED_UPLOAD_WRITES,
   streamTimeoutMs = OUTBOUND_HTTP_STREAM_TIMEOUT_MS,
   streamIdleTimeoutMs = OUTBOUND_HTTP_STREAM_IDLE_TIMEOUT_MS }) {
   let req;
+  let uploadBytes = 0;
+  let responseBytes = 0;
+  let queuedUploadBytes = 0;
+  const pendingWrites = new Set();
+  let admitted = activeHttpRequests < MAX_ACTIVE_HTTP_REQUESTS;
+  if (admitted) activeHttpRequests++;
+  const releaseSlot = () => {
+    if (admitted) { admitted = false; activeHttpRequests--; }
+  };
   let resp;
+  let dispatcher;
   let finished = false;
   let idleTimer;
   let streaming = false;
+  let uploadTimer;
+  let uploadIdleTimer;
+  let uploadSent = false;
+  let resolveUpload;
+  let rejectUpload;
+  const uploadComplete = new Promise((resolve, reject) => {
+    resolveUpload = resolve; rejectUpload = reject;
+  });
+  uploadComplete.catch(() => {});
+  const clearUploadTimers = () => {
+    clearTimeout(uploadTimer);
+    clearTimeout(uploadIdleTimer);
+  };
   let resolveStarted;
   let rejectStarted;
   let resolveResponse;
@@ -258,17 +321,27 @@ export function startHttpRequest({ db, url, method, headers, getAuthorization,
   const fail = err => {
     if (finished) return;
     finished = true;
+    releaseSlot();
     clearTimeout(timer);
     clearTimeout(idleTimer);
+    clearUploadTimers();
     const error = makeTransportError(err);
     rejectStarted(error);
     rejectResponse(error);
     rejectCompletion(error);
+    rejectUpload(error);
+    for (const complete of [...pendingWrites]) complete(error);
     if (resp) resp.destroy();
-    if (req) req.destroy();
+    if (req) req.destroy(error);
+    if (dispatcher) dispatcher.destroy().catch(() => {});
     onFailure(error);
   };
   let timer = setTimeout(() => fail(makeTimeoutError()), timeoutMs);
+  const uploadProgress = () => {
+    if (finished || uploadSent) return;
+    clearTimeout(uploadIdleTimer);
+    uploadIdleTimer = setTimeout(() => fail(makeTimeoutError()), uploadIdleTimeoutMs);
+  };
   const progress = () => {
     if (!streaming || finished) return;
     clearTimeout(idleTimer);
@@ -282,6 +355,13 @@ export function startHttpRequest({ db, url, method, headers, getAuthorization,
     progress();
   };
 
+  if (!admitted) {
+    const error = new Error("Too many active outbound HTTP requests.");
+    error.kjType = "overloaded";
+    fail(error);
+    return { started, response, completion, cancel: () => {} };
+  }
+
   Promise.resolve().then(async () => {
     // Resolve and check network policy on every request, never cache the address on a grant.
     const safe = await ssrfSafeLookupOrProxy(db, url);
@@ -294,29 +374,50 @@ export function startHttpRequest({ db, url, method, headers, getAuthorization,
     }
 
     const original = new URL(url);
-    const parsed = new URL(safe.proxy ? url : safe.url);
-    requestHeaders.host = safe.proxy ? original.host : safe.host;
-    const options = safe.proxy ? {
-      method, url, proxy: safe.proxy, headers: requestHeaders,
-      followRedirect: false, followAllRedirects: false,
-    } : {
-      method, protocol: parsed.protocol,
-      hostname: parsed.hostname.replace(/^\[|\]$/g, ""), port: parsed.port,
-      path: parsed.pathname + parsed.search, headers: requestHeaders,
-      servername: original.hostname.replace(/^\[|\]$/g, ""),
-      // Each new connection must use the address which just passed policy checks.
-      agent: false,
-    };
+    requestHeaders.host = original.host;
+    if (safe.proxy) {
+      // As before, the configured proxy owns destination DNS/network policy.
+      // HTTP uses absolute-form forwarding; HTTPS uses a CONNECT tunnel.
+      dispatcher = new ProxyAgent({ uri: safe.proxy, allowH2: false,
+        requestTls: { allowH2: false }, proxyTls: { allowH2: false } });
+    } else {
+      const pinned = new URL(safe.url);
+      const address = pinned.hostname.replace(/^\[|\]$/g, "");
+      if (!isIP(address) || pinned.protocol !== original.protocol) {
+        throw new Error("Network policy did not return a pinned address.");
+      }
+      const hostname = original.hostname.replace(/^\[|\]$/g, "");
+      const connect = buildConnector({ allowH2: false });
+      dispatcher = new Client(original.origin, {
+        allowH2: false, pipelining: 0,
+        connect(options, callback) {
+          // Never let the connector resolve the original hostname again. TLS still
+          // authenticates that hostname, not the IP selected by the policy lookup.
+          connect({ ...options, hostname: address, port: pinned.port || options.port,
+            servername: isIP(hostname) ? undefined : hostname }, callback);
+        },
+      });
+    }
+
+    req = new PassThrough({ highWaterMark: 64 * 1024 });
+    req.uploadComplete = uploadComplete;
+    req.on("error", error => { if (!resp?.complete) fail(error); });
+    req.on("close", () => {
+      // Undici closes an unfinished upload when the server's final response is complete.
+      // That response remains valid even while our RPC consumer is still reading it.
+      if (!req.writableFinished && !resp?.complete) fail(new Error("Upload closed before completion."));
+    });
     const onResponse = incoming => {
       if (finished) { incoming.destroy(); return; }
       resp = incoming;
+      clearTimeout(timer);
+      timer = setTimeout(() => fail(makeTimeoutError()), timeoutMs);
       resp.on("error", fail);
       resp.on("aborted", () => fail(new Error("Response aborted.")));
       resp.on("close", () => {
         if (!resp.complete) fail(new Error("Incomplete HTTP response."));
       });
-      // Attach the consumer synchronously: request's proxy adapter starts flowing immediately
-      // after emitting "response", so deferring attachment can lose the first body chunks.
+      // Attach before dispatch delivers any body bytes.
       let consumed;
       try {
         consumed = consumeResponse(resp, { beginStreaming, progress });
@@ -330,31 +431,148 @@ export function startHttpRequest({ db, url, method, headers, getAuthorization,
         if (finished) return;
         if (!resp.complete) { fail(new Error("Incomplete HTTP response.")); return; }
         finished = true;
+        releaseSlot();
         clearTimeout(timer);
         clearTimeout(idleTimer);
+        clearUploadTimers();
+        // A server may finish its response before consuming the complete upload.
+        // Release the per-request socket and stop any remaining upload in that case.
+        if (!uploadSent) {
+          rejectUpload(makeTransportError(new Error("Server completed before upload.")));
+          req.destroy();
+        }
+        dispatcher.destroy().catch(() => {});
         resolveCompletion(result);
       }, fail);
     };
 
-    if (safe.proxy) {
-      req = Request(options);
-      req.on("response", onResponse);
-    } else {
-      req = (parsed.protocol === "https:" ? Https : Http).request(options, onResponse);
-    }
-
-    req.on("error", fail);
-    req.on("close", () => {
-      if (!resp) fail(new Error("Request closed without a response."));
+    // No redirect/retry interceptors. The grant lifecycle below owns deadlines,
+    // including time blocked on RPC consumers (not just time waiting on the socket).
+    const dispatch = () => dispatcher.dispatch({ origin: original.origin, path: original.pathname + original.search,
+      method, headers: requestHeaders, body: req, idempotent: false,
+      headersTimeout: 0, bodyTimeout: 0,
+    }, {
+      onRequestStart(controller) {
+        if (finished) { controller.abort(); return; }
+        clearTimeout(timer);
+        uploadTimer = setTimeout(() => fail(makeTimeoutError()), uploadTimeoutMs);
+        uploadProgress();
+      },
+      onBodySent() { uploadProgress(); },
+      onRequestSent() {
+        uploadSent = true;
+        clearUploadTimers();
+        resolveUpload();
+        if (!resp && !finished) {
+          clearTimeout(timer);
+          timer = setTimeout(() => fail(makeTimeoutError()), timeoutMs);
+        }
+      },
+      onResponseStart(controller, statusCode, responseHeaders, statusMessage) {
+        if (statusCode < 200) return; // Informational responses are not the final response.
+        if (finished) { controller.abort(); return; }
+        const incoming = new PassThrough({ highWaterMark: 64 * 1024 });
+        Object.assign(incoming, { statusCode, statusMessage, headers: responseHeaders, complete: false });
+        onResponse(incoming);
+      },
+      onResponseData(controller, chunk) {
+        if (finished || !resp) { controller.abort(); return; }
+        if (chunk.length > maxResponseBytes - responseBytes) {
+          fail(makeHttpLimitError("Outbound HTTP response byte limit exceeded."));
+          return;
+        }
+        responseBytes += chunk.length;
+        if (!resp.write(chunk)) {
+          controller.pause();
+          resp.once("drain", () => { if (!finished) controller.resume(); });
+        }
+      },
+      onResponseEnd(controller, trailers) {
+        if (finished || !resp) return;
+        resp.complete = true;
+        clearUploadTimers();
+        resp.trailers = trailers;
+        resp.end();
+      },
+      onResponseError(controller, error) { fail(error); },
     });
+    // Defer HTTP headers until the first write/end so ByteStream.expectSize() can
+    // supply Content-Length. A late size announcement can still be enforced by the
+    // RPC stream, but cannot change headers already on the wire.
+    let dispatched = false;
+    const start = () => {
+      if (dispatched || finished) return;
+      dispatched = true;
+      try { dispatch(); } catch (error) { fail(error); }
+    };
+    req.setExpectedSize = size => {
+      if (size > maxUploadBytes) {
+        const error = makeHttpLimitError("Outbound HTTP upload byte limit exceeded.");
+        fail(error);
+        throw error;
+      }
+      if (!dispatched) requestHeaders["content-length"] = String(size);
+    };
+    for (const method of ["write", "end"]) {
+      const originalMethod = req[method];
+      req[method] = function (...args) {
+        const callback = typeof args[args.length - 1] === "function" ? args.pop() : undefined;
+        const data = args[0];
+        const size = data == null ? 0 : typeof data === "string" ?
+            Buffer.byteLength(data, typeof args[1] === "string" ? args[1] : undefined) : data.byteLength;
+        let releaseBuffer;
+        try {
+          if (finished || req.destroyed) throw makeTransportError(new Error("Upload is closed."));
+          if (size > maxUploadBytes - uploadBytes) {
+            throw makeHttpLimitError("Outbound HTTP upload byte limit exceeded.");
+          }
+          if (size > maxQueuedUploadBytes - queuedUploadBytes || pendingWrites.size >= maxQueuedUploadWrites) {
+            throw makeHttpLimitError("Outbound HTTP upload queue limit exceeded.");
+          }
+          releaseBuffer = reserveHttpBuffer(size);
+        } catch (error) {
+          fail(error);
+          if (callback) callback(error);
+          return method === "write" ? false : req;
+        }
+        uploadBytes += size;
+        queuedUploadBytes += size;
+        const complete = error => {
+          if (!pendingWrites.delete(complete)) return;
+          queuedUploadBytes -= size;
+          releaseBuffer();
+          if (callback) callback(error);
+        };
+        pendingWrites.add(complete);
+        start();
+        if (finished) return method === "write" ? false : req;
+        try { return originalMethod.apply(this, [...args, complete]); }
+        catch (error) { fail(error); return method === "write" ? false : req; }
+      };
+    }
     resolveStarted(req);
   }).catch(fail);
 
   return { started, response, completion, cancel: () => fail(new Error("Request canceled.")) };
 }
 
-export async function readHttpBody(response) {
+export async function readHttpBody(response, { maxBytes = HTTP_MAX_BUFFERED_RESPONSE_BYTES } = {}) {
   const chunks = [];
-  for await (const chunk of response) chunks.push(chunk);
-  return Buffer.concat(chunks);
+  const reservations = [];
+  let bytes = 0;
+  try {
+    for await (const chunk of response) {
+      if (chunk.length > maxBytes - bytes) {
+        throw makeHttpLimitError("Buffered HTTP response is too large; use streaming.");
+      }
+      reservations.push(reserveHttpBuffer(chunk.length));
+      bytes += chunk.length;
+      chunks.push(chunk);
+    }
+    // Account for the contiguous result while the source chunks still exist.
+    reservations.push(reserveHttpBuffer(bytes));
+    return Buffer.concat(chunks, bytes);
+  } finally {
+    reservations.forEach(release => release());
+  }
 }

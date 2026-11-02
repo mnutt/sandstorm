@@ -279,44 +279,226 @@ with the app that sets the `X-Sandstorm-Passthrough` header on `XMLHttpRequest` 
 does this is
 [Piwik](https://apps.sandstorm.io/app/xuajusd5d4a9v4js71ru0cwj9wn984q1x8kny10htsp8f5dcfep0).
 
-### Managed credentials in Powerbox
+### External HTTP and credential custody through OutboundHttpSession
 
-Request `ApiSession` with `PowerboxTag.authentication` set to `"bearer"` or `"basic"`
-to prompt for a credential in Sandstorm's UI. With a canonical URL, the URL card
-opens the credential form. Without an authentication hint, the existing anonymous
-URL card remains available. Unknown authentication hints produce no HTTP driver
-cards. The arbitrary URL form allows the user to select authentication explicitly.
-Google/GitHub OAuth scope requests retain their existing flow.
+Prefer Sandstorm-managed credentials where supported. Apps opt into this facility
+by declaring a managed authentication mechanism: Sandstorm collects, encrypts and
+injects the credential, while the grain holds a capability to use it. This reduces
+credential exposure and centralizes revocation of access through that capability.
+It does not prevent the grain from exercising the credential's authority, including
+changing data or spending money. The destination receives the credential and could
+return it to the grain; managed custody is not a guarantee against that disclosure.
 
-For OpenAI, request `canonicalUrl = "https://api.openai.com/v1"` and
-`authentication = "bearer"`. The Sandstorm-owned profile labels the secret as an
-API key and offers optional organization and project IDs. The driver validates
-these settings and injects `OpenAI-Organization` / `OpenAI-Project` with the saved
-bearer token. Provider recognition requires the exact base URL (with an optional
-trailing slash); an app-provided label is not provider identity. Generic bearer
-and Basic authentication also work with other HTTP destinations.
+Apps choose exactly one mode before opening Powerbox:
 
-Credentials belong in the form fields, not in the URL. New grants reject URL
-userinfo, fragments, and queries. Previously saved references still restore.
-Changing an editable destination clears credential and connection-setting inputs.
-Secrets use the existing encrypted `frontendRef.http.auth` persistence fields;
-optional `connectionHeaders` contain only the approved non-secret provider settings.
-Descriptors contain the authentication kind, never the credential. Additional
-caller headers cannot override connection-managed headers, regardless of casing.
+| Mode | Declaration | Who holds the credentials? |
+| --- | --- | --- |
+| Sandstorm-managed | `bearer`, `basic`, `apiKey`, `rawAuthorization`, or `authorization` | Sandstorm collects and injects them. |
+| App-managed | `caller` | The grain obtains, stores and sends them. Sandstorm collects none. |
+| Unauthenticated | `none` | No credentials are needed or collected. |
+
+Caller authentication is a supported choice when an integration needs its own
+credential lifecycle or authentication protocol. It retains destination and method
+restrictions, HTTPS requirements, revocation and transport limits. Opting out of
+managed custody does not grant unrestricted network access. This facility provides
+HTTP credential injection, not a general-purpose secret store.
+
+For third-party HTTP APIs, request `OutboundHttpSession` (interface ID
+`0xbf91271b527d6f33`) with an `OutboundHttpSession.PowerboxTag`, for example:
+
+```js
+{
+  baseUrl: "https://api.example.com/v1",
+  methods: ["get", "post"],
+  authenticationMethods: [{ kind: "bearer" }]
+}
+```
+
+The Powerbox collects the credential in Sandstorm's UI. The resulting capability's
+`request` and `requestStreaming` methods inject it; the grain receives no credential.
+Supported mechanisms are `none`, `bearer`, `basic`, `apiKey` with `headerName`,
+`rawAuthorization`, `authorization` with a scheme such as `Bot`, and `caller`.
+Declare exactly one mechanism. Its credential controls are shown directly; `none`
+shows no credential fields. Missing or multiple mechanisms are rejected. The app
+selects the mechanism before opening Powerbox. Provider metadata belongs in ordinary
+per-request headers.
+
+Managed grants require HTTPS, including after restore, and reject caller overrides of
+Authorization and managed key headers. The whole credential, including Basic username,
+uses a randomized AES-GCM envelope keyed by the sturdy ref and authenticated against
+the destination and method scope. Plaintext stored credentials are rejected. Destination/method restrictions,
+redirect handling and revocation apply to both buffered and streaming requests.
+
+Existing saved grants retain their behavior, including legacy HTTP grants. New requests
+must explicitly declare a mechanism; use `none` for unauthenticated APIs. Explicit `caller` grants
+require HTTPS. Older servers ignore the new declaration field and do not provide
+managed authentication; applications must not treat a completed Powerbox request alone
+as proof that the server supports it. No generic OAuth flow or signer is added here.
+
+ApiSession remains available for grain-provided APIs and existing external integrations.
+The [outbound implementation plan](http-transport-parity.md) tracks remaining transport work.
+
+For app-managed authentication, use the same interface with an explicit caller grant:
+
+```js
+{
+  baseUrl: "https://api.example.com/v1",
+  methods: ["get", "post"],
+  authenticationMethods: [{ kind: "caller" }]
+}
+```
+
+The grain supplies its credentials in requests. Token endpoints need separately
+scoped grants. Revoking this capability blocks access through it; it neither erases
+credentials held by the grain nor revokes them at the provider.
+
+Both external drivers now use Undici's low-level dispatcher through the shared transport.
+Direct connections pin the policy-approved IP while validating TLS against the original
+hostname. Configured proxies retain responsibility for destination DNS/network policy.
+The adapter preserves compressed response bytes and does not automatically follow
+redirects or replay failed requests. Each request owns its dispatcher; cross-request
+pooling and HTTP/2 remain disabled. Existing total/idle deadlines and revocation checks
+also cover RPC consumer stalls.
+
+For known-length streaming uploads, call the returned RequestStream's inherited
+`expectSize(size)` before its first `write()`. Sandstorm sends Content-Length and rejects
+size mismatches. Late `expectSize()` calls specify the remaining bytes and must agree
+with previous announcements; already-sent headers cannot change. `done()` waits until
+the request body has been sent, rather than merely queued locally.
+
+Setup and response-header waits each allow up to 120 seconds. Uploads allow ten minutes
+total with a sixty-second idle deadline based on bytes sent. Response streams retain
+their own ten-minute total and sixty-second idle deadlines. A duplex response does not
+disable the upload deadline. Requests exceeding concurrency caps fail with `overloaded`:
+sixteen outbound requests per session and per saved-token ancestry root, plus 256 shared
+transport requests per shell process. Root limits cover restored/delegated sessions;
+unsaved grants use session/process limits. These are not byte or spending budgets.
+
+Body limits also apply: buffered OutboundHttpSession requests are limited to 8 MiB;
+larger uploads must use requestStreaming(). Each streaming write may contain at most
+1 MiB. Waiting for write completion provides backpressure; more than 4 MiB or 64 writes
+outstanding on an upload cancels it. Each request allows up to 8 GiB uploaded and 8 GiB
+received. Buffered response collection (including the external ApiSession driver) is
+limited to 16 MiB. OutboundHttpSession always streams its responses.
+
+The shell tracks a shared 64 MiB budget for retained buffered request bodies, queued
+upload data and buffered-response assembly, including the final contiguous copy.
+Limits fail with overloaded errors; an already-started response stream is released
+without done(), so clients must treat that as failure. These limits start after RPC
+decoding and do not bound all shell/RPC/socket memory or cumulative provider spending.
+They are fixed server policy for now and cannot be raised by an app's request.
+
+### Managed credentials in ApiSession Powerbox
+
+Apps describe authentication through `ApiSession.PowerboxTag.authenticationMethods`.
+The list must contain exactly one mechanism. The form shows its credential inputs
+directly, without an authentication selector.
+Sandstorm renders its own credential controls and keeps the credential inside the
+connection capability:
+
+- `kind = bearer`: injects `Authorization: Bearer <credential>`.
+- `kind = none`: collects no credentials and injects no authentication.
+- `kind = basic`: collects username/password and injects HTTP Basic authentication.
+- `kind = apiKey, headerName = "X-API-Key"`: injects the key verbatim into that header.
+- `kind = rawAuthorization`: injects the credential verbatim into Authorization.
+- `kind = authorization, scheme = "Bot"`: injects `Authorization: Bot <credential>`.
+- `kind = caller`: an explicit grant for grain-supplied credentials; Sandstorm collects no key.
+
+The declaration contains no credential, executable code, or arbitrary string template.
+API-key targets cannot use reserved authentication, cookie, transport, forwarding,
+Sandstorm identity, or browser security headers. Authorization is only available
+through the dedicated mechanisms. Proof/signature schemes require grain-side logic.
+Unknown methods and invalid declarations reject the HTTP driver card instead of
+falling back to an anonymous connection. Missing or multiple mechanisms are rejected.
+An explicit legacy `authentication` hint can still specify a single mechanism for
+ApiSession; the existing provider-specific OAuth flow remains separate.
+
+For example, a provider using an API-key header
+can request this tag (shown as the JavaScript schema representation):
+
+```js
+{
+  canonicalUrl: "https://api.example.com/v1",
+  authentication: "apiKey", // Unknown on old servers: fail closed there.
+  authenticationMethods: [{ kind: "apiKey", headerName: "X-API-Key" }],
+}
+```
+
+Ordinary organization/project/workspace IDs and API-version headers belong in the
+grain's configuration and request headers. For example, OpenAI-compatible llm-proxy
+requests only managed Bearer authentication and sends optional OpenAI metadata itself.
+The shell has no OpenAI-specific form. Experimental `connectionFields` declarations
+are now rejected; previously saved connection-header values remain encrypted and
+usable, and cannot be overridden. Reconnect to replace such an old grant.
+Generalized input/source/binding declarations are [deferred](http-credential-declaration-plan.md).
+
+The legacy `authentication = "bearer" | "basic"` hint remains supported. A non-empty
+`authenticationMethods` list supersedes it on new servers. For compatibility, apps
+can set a legacy hint matching an acceptable fallback. Use an unknown legacy hint
+when connecting on an old server without the requested schema must fail closed.
+Absent declarations preserve the generic form. Google/GitHub OAuth scope requests
+retain their separate existing flow. Complex OAuth and signing should currently run
+in grains using separately scoped caller-auth ApiSession capabilities for their API and
+token endpoints; the grain then owns those credentials. No generic OAuth broker or
+general-purpose form/signing language is provided.
+
+New grants reject URL userinfo, fragments, and queries. Authenticated connections require
+HTTPS both when granted/restored and before each request; anonymous HTTP remains available. Changing an editable
+destination clears credential inputs. Bearer, Basic password, raw/named Authorization
+and named-header API-key values use encrypted `frontendRef.http.auth` persistence.
+The database stores legacy connection-header values and Basic usernames in an AES-256-GCM
+`encryptedSettings` envelope with a random nonce and a domain-separated key derived
+from the sturdy ref. Decrypted `connectionHeaders` exist only in memory. Legacy
+plaintext settings migrate when their sturdy ref is next presented; dormant records
+and existing backups are not retroactively encrypted because the server does not
+retain the encryption key. Descriptors include declarations,
+never entered values. Per-request headers cannot override connection-managed headers,
+regardless of casing. The grant controls where the credential is injected.
 
 This grants the service authority associated with the credential, including
-potentially billable operations. No method restriction or spending limit is
-imposed. Revoking the Sandstorm capability does not revoke the provider's API key.
-SSE response streaming is supported as described below. Streaming request uploads
-remain separate work.
+potentially billable operations. The declared method restrictions apply, but no
+provider-spending limit is imposed. Revoking the Sandstorm capability does not revoke the provider's API key.
+Live HTTP sessions recheck their token ancestry and requirements before each request
+and before credential injection. During active requests, a check runs every second;
+revocation, deletion, expiration, or a failed requirement closes the session and
+cancels its requests/streams without signaling successful stream completion. Revocation
+is not instantaneous: detection includes the polling interval and database latency,
+and cannot undo an upstream operation already accepted. No polling remains while idle.
+
+ApiSession uses its inherited WebSession methods. It does not add request or
+requestStreaming methods or inherit OutboundHttpSession. The two drivers share
+internal transport and grant-lifecycle code. Managed sessions reject caller
+Authorization and overrides of their protected key headers.
+The external ApiSession driver currently supports buffered uploads and SSE responses;
+implementing the existing postStreaming/putStreaming methods remains follow-up work.
+See the [parity checklist and limitations](http-transport-parity.md).
+
+For grain-owned OAuth/signing, request an explicit caller-auth ApiSession grant:
+
+```js
+{
+  canonicalUrl: "https://api.example.com/v1",
+  authentication: "caller", // Old drivers must reject this unknown hint.
+  authenticationMethods: [{ kind: "caller" }],
+  methods: ["get", "post"]
+}
+```
+
+The grant is HTTPS-only, permits caller Authorization, and enforces its method list
+on its WebSession calls. Request separately scoped
+ApiSession caller-mode grants for token endpoints. Empty `methods` allows all supported
+methods; callers should request only what they need. Legacy OutboundHttpSession grants
+remain usable by existing grains.
 
 Focused driver regressions run with the command below.
-They use a local HTTP server and mock the Meteor/Cap'n Proto boundary; they do not
-replace the browser Powerbox and persistence/revocation integration suite.
+They use local HTTPS servers and mock the Meteor boundary. The security suite
+(`tests/http-api-security.test.cjs`) additionally uses the real credential cipher and
+persistence logic, exercises a CONNECT proxy, checks legacy-settings migration, and
+revokes live sessions and streams. These do not replace a deployed browser/DB integration test.
 
 ### External HTTP transport boundaries
 
-The external `ApiSession` driver and the compatibility `OutboundHttpSession` driver
+The external `ApiSession` driver and the `OutboundHttpSession` driver
 share `shell/imports/server/http-transport.js`. A base URL must be HTTP(S), with no
 userinfo, query, fragment, whitespace, backslash, dot segments, encoded separators,
 or malformed percent escapes. These checks also apply when restoring saved grants;
@@ -352,12 +534,14 @@ Run the focused suites after installing shell dependencies:
 
 ```sh
 NODE_PATH="$PWD/shell/node_modules" node --test \
-  tests/http-api-powerbox.test.cjs tests/http-transport.test.cjs
+  tests/http-api-powerbox.test.cjs tests/http-transport.test.cjs \
+  tests/http-api-security.test.cjs tests/http-managed-parity.test.cjs
 ```
 
-These exercise both driver adapters and real local HTTP/proxy servers. The tests
-mock the Meteor and Cap'n Proto boundary; full browser, persistence, revocation,
-and live TLS integration coverage remain separate.
+These exercise both driver adapters with local HTTP, HTTPS, and proxy servers. The
+security suite uses the real persistence code and cipher with an in-memory database
+boundary; a deployed browser/Mongo integration run remains separate. Use Node 24 for
+these suites.
 
 ### API errors and response metadata
 

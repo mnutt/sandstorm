@@ -28,3 +28,40 @@ module.exports["Test outbound HTTP session"] = function (browser) {
 
   browser.end();
 };
+
+module.exports["Test managed outbound Powerbox form save restore and revoke"] = function (browser) {
+  browser.url(browser.launch_url + "/").timeouts("script", medium_wait);
+  browser.executeAsync(function (done) {
+    Meteor.call("testPrepareManagedOutboundHttp", function (error, fixture) {
+      if (error) { done({ error: error.message }); return; }
+      var Blaze = Package.blaze.Blaze;
+      var Template = Package.templating.Template;
+      var container = document.createElement("div");
+      document.body.appendChild(container);
+      var view;
+      var data = { option: fixture.option, powerboxRequest: {
+        completeNewFrontendRef: function (payload) {
+          Meteor.call("newFrontendRef", fixture.sessionId, payload, function (saveError, saved) {
+            if (saveError) { done({ error: saveError.message }); return; }
+            var cleared = container.querySelector("input.bearer").value === "";
+            Meteor.call("testVerifyManagedOutboundHttp", fixture.sessionId, saved.sturdyRef,
+              function (verifyError, result) {
+                Blaze.remove(view); container.remove();
+                done({ error: verifyError && verifyError.message, cleared: cleared, result: result });
+              });
+          });
+        },
+      } };
+      view = Blaze.renderWithData(Template.httpArbitraryPowerboxConfiguration, data, container);
+      Tracker.flush();
+      var secret = container.querySelector("input.bearer");
+      secret.value = "browser-test-key";
+      secret.dispatchEvent(new Event("input", { bubbles: true }));
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }, [], function (result) {
+    browser.assert.ok(!result.value.error, JSON.stringify(result.value));
+    browser.assert.equal(result.value.cleared, true);
+    browser.assert.equal(result.value.result && result.value.result.revoked, true);
+  }).end();
+};
