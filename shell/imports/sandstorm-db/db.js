@@ -722,6 +722,9 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //       outboundHttp :group {
 //         baseUrl :Text;
 //         methods :List(Text);
+//         auth :HttpAuth; # In-memory only; absent for legacy caller-auth grants.
+//         encryptedCredentials :EncryptedOutboundCredentials;
+//         # AES-GCM envelope bound to baseUrl/methods and keyed by the sturdy ref.
 //       }
 //     }
 //     child :group {

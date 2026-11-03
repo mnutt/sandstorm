@@ -6,7 +6,7 @@ const http = require('node:http');
 const test = require('node:test');
 const path = require('node:path');
 const root = path.join(__dirname, '..');
-const { driver, profile, apiHeaders } = require('./helpers/http-api-driver.cjs');
+const { driver, legacyProfile: profile, apiHeaders } = require('./helpers/http-api-driver.cjs');
 
 test('authentication hints open configuration; unknown hints never downgrade', () => {
   const registry = driver();

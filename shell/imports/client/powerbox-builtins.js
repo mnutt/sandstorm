@@ -21,6 +21,10 @@ import { Accounts } from "meteor/accounts-base";
 
 import { httpApiProfile, validateHttpConnection } from "/imports/shared/http-api-profile";
 
+import { validateHttpAuthenticationMethods, validateHttpConnectionFields,
+  httpAuthenticationChoices, validateHttpConnection as validateOutboundHttpConnection }
+  from "/imports/shared/outbound-http-profile";
+
 const prepareViewInfoForDisplay = function (viewInfo) {
   const result = { ...(viewInfo || {}) };
   if (result.permissions) indexElements(result.permissions);
@@ -425,5 +429,105 @@ Template.outboundHttpArbitraryPowerboxConfiguration.events({
         ...outboundHttp,
       },
     });
+  },
+});
+
+Template.outboundHttpCredentialsConfiguration.onCreated(function () {
+  this._httpUrl = new ReactiveVar(this.data.option.httpUrl || "");
+  this._httpMethods = validateHttpAuthenticationMethods(this.data.option.authenticationMethods, true);
+  const choices = httpAuthenticationChoices(this._httpMethods);
+  this._httpAuth = new ReactiveVar(choices[0].id);
+  this._httpError = new ReactiveVar("");
+  this._httpSecretInputs = new Set();
+});
+
+Template.outboundHttpCredentialsConfiguration.helpers({
+  destination: () => Template.instance()._httpUrl.get(),
+  connectionFields: () => Template.instance().data.option.connectionFields || [],
+  callerCredentials: () => Template.instance()._httpAuth.get() === "caller",
+  noCredentials: () => Template.instance()._httpAuth.get() === "none",
+  queryKey: () => Template.instance()._httpMethods[0].kind === "queryKey",
+  queryParameter: () => Template.instance()._httpMethods[0].parameterName,
+  sigV4: () => Template.instance()._httpMethods[0].kind === "sigV4",
+  s3Region: () => Template.instance()._httpMethods[0].region,
+  s3UnsignedPayload: () => Template.instance()._httpMethods[0].allowUnsignedPayload,
+  restrictedMethods: () => Template.instance().data.option.methods?.join(", "),
+  apiKey: () => Template.instance()._httpAuth.get().startsWith("apiKey:"),
+  authorizationToken: () => {
+    const kind = Template.instance()._httpAuth.get();
+    return kind === "rawAuthorization" || kind.startsWith("authorization:");
+  },
+  bearer: () => Template.instance()._httpAuth.get() === "bearer",
+  basic: () => Template.instance()._httpAuth.get() === "basic",
+  urlDetails: () => describeOutboundHttpUrl(Template.instance()._httpUrl.get()),
+  error: () => Template.instance()._httpError.get(),
+});
+
+const clearOutboundHttpSecrets = instance => {
+  instance.findAll("input.secret").forEach(input => { input.value = ""; });
+};
+
+Template.outboundHttpCredentialsConfiguration.onDestroyed(function () {
+  this._httpSecretInputs.forEach(input => { input.value = ""; });
+  this._httpSecretInputs.clear();
+});
+
+Template.outboundHttpCredentialsConfiguration.events({
+  "input input.secret, input input.connection-header": function (event, instance) {
+    instance._httpSecretInputs.add(event.currentTarget);
+  },
+
+  "input input.url": function (event, instance) {
+    clearOutboundHttpSecrets(instance);
+    instance.findAll("input.connection-header").forEach(input => { input.value = ""; });
+    instance._httpUrl.set(event.currentTarget.value);
+  },
+
+  "submit form": function (event, instance) {
+    event.preventDefault();
+    const value = selector => instance.find(selector).value;
+    const kind = instance._httpAuth.get();
+    let auth = { none: null };
+    if (kind === "caller") auth = { caller: null };
+    if (kind.startsWith("queryKey:")) {
+      auth = { queryKey: { parameterName: instance._httpMethods[0].parameterName, value: value("input.query-key") } };
+    }
+    if (kind === "sigV4") {
+      const declaration = instance._httpMethods[0];
+      auth = { sigV4: { region: declaration.region, allowUnsignedPayload: declaration.allowUnsignedPayload,
+        accessKeyId: value("input.s3-access-key"), secretAccessKey: value("input.s3-secret-key"),
+        sessionToken: value("input.s3-session-token") } };
+    }
+    if (kind === "bearer") auth = { bearer: value("input.bearer") };
+    if (kind === "rawAuthorization" || kind.startsWith("authorization:")) {
+      auth = { authorization: { scheme: kind === "rawAuthorization" ? "" : kind.slice(14),
+        value: value("input.authorization-token") } };
+    }
+    if (kind.startsWith("apiKey:")) {
+      auth = { apiKey: { headerName: kind.slice(7), value: value("input.api-key") } };
+    }
+    if (kind === "basic") {
+      auth = { basic: { username: value("input.username"), password: value("input.password") } };
+    }
+
+    const http = { url: instance._httpUrl.get(), auth, authenticationMethods: instance._httpMethods,
+      methods: instance.data.option.methods || [],
+      connectionFields: validateHttpConnectionFields(instance.data.option.connectionFields) };
+    http.connectionHeaders = instance.findAll("input.connection-header")
+        .filter(input => input.value)
+        .map(input => ({ name: input.name, value: input.value }));
+    try {
+      validateOutboundHttpConnection(http);
+    } catch (err) {
+      instance._httpError.set(err.message);
+      return;
+    }
+
+    clearOutboundHttpSecrets(instance);
+    instance.findAll("input.connection-header").forEach(input => { input.value = ""; });
+    this.powerboxRequest.completeNewFrontendRef({ outboundHttp: {
+      baseUrl: http.url, auth: http.auth, authenticationMethods: http.authenticationMethods,
+      methods: http.methods,
+    } });
   },
 });

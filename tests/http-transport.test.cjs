@@ -245,25 +245,7 @@ test('a failed POST is not replayed', { timeout: 3000 }, async t => {
 });
 
 test('legacy outbound adapter shares transport, streams response and drops failed streams', async t => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const vm = require('node:vm');
-  let registration;
-  const source = fs.readFileSync(path.join(__dirname,
-      '../shell/imports/server/drivers/outbound-http-session.js'), 'utf8')
-      .replace(/^import [\s\S]*?;\n/gm, '');
-  vm.runInNewContext(source, {
-    ...loadTransport(), Buffer,
-    Meteor: { startup: fn => fn(), Error: class extends Error {
-      constructor(code, message) { super(message); }
-    } },
-    Match: { Optional() {}, OneOf() {} }, check() {}, PersistentImpl: class {},
-    globalFrontendRefRegistry: { register(value) { registration = value; } },
-    Capnp: {
-      importSystem: () => ({ OutboundHttpSession: { typeId: 'outbound' } }),
-      Capability: class { constructor(value) { return value; } },
-    },
-  });
+  const registration = require('./helpers/http-api-driver.cjs').driver({ outboundOnly: true });
   const baseUrl = await serve(t, (req, res) => {
     res.writeHead(200);
     res.write('first');

@@ -117,6 +117,9 @@ function outboundHttpMethodAccessor(option) {
         } else {
           delete option.frontendRef.outboundHttp.methods;
         }
+        // Managed URL cards submit the form's methods, rather than frontendRef directly.
+        // Keep both views of the grant synchronized after intersection or union.
+        if (option.outboundHttp) option.methods = methods || [];
       },
     };
   } else if (option.outboundHttpArbitrary) {

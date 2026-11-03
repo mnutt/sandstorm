@@ -6,9 +6,14 @@ const path = require('node:path');
 const root = path.join(__dirname, '../..');
 const loadTransport = require('./http-transport.cjs');
 const profileSource = fs.readFileSync(path.join(root,
-    'shell/imports/shared/http-api-profile.js'), 'utf8').replace(/export /g, '');
+    'shell/imports/shared/outbound-http-profile.js'), 'utf8').replace(/export /g, '');
 const profile = vm.runInNewContext(profileSource +
-    '\n({httpApiProfile, httpAuthenticationHint, validateHttpConnection})', { URL });
+    '\n({validateHttpConnectionFields, validateHttpAuthenticationMethods, validateHttpApiKeyHeader, ' +
+    'httpAuthenticationChoices, httpAuthenticationHint, validateHttpConnection, requireHttpCredentialTls, validateHttpAuthorizationScheme, validateHttpMethods})', { URL });
+
+const legacyProfile = vm.runInNewContext(fs.readFileSync(path.join(root,
+  'shell/imports/shared/http-api-profile.js'), 'utf8').replace(/export /g, '') +
+  '\n({httpApiProfile, httpAuthenticationHint, validateHttpConnection})', { URL });
 
 const { stripTypeScriptTypes } = require('node:module');
 const responseCodeSource = stripTypeScriptTypes(fs.readFileSync(path.join(root,
@@ -21,13 +26,15 @@ const headerList = apiSchema.match(/const responseHeaderWhitelist[^=]*=\s*\[([\s
 const apiHeaders = Array.from(headerList.matchAll(/"([^"]+)"/g), match => match[1]);
 
 function driver(overrides = {}) {
+  overrides = { ...require('./http-api-tls.cjs').transport, ...overrides };
+  const transport = loadTransport(overrides);
   let registration;
   const source = fs.readFileSync(path.join(root,
       'shell/imports/server/drivers/external-ui-view.js'), 'utf8')
       .replace(/^import [\s\S]*?;\n/gm, '');
   const context = {
-    ...profile, ...loadTransport(overrides), URL, Buffer, Promise,
-    startHttpRequest: options => loadTransport(overrides).startHttpRequest({
+    ...profile, ...transport, URL, Buffer, Promise, setInterval, clearInterval,
+    startHttpRequest: options => transport.startHttpRequest({
       ...options, ...overrides.requestOptions,
     }),
     Meteor: { startup: fn => fn(), Error: class extends Error {
@@ -35,9 +42,11 @@ function driver(overrides = {}) {
     } },
     Match: { OneOf() {}, Optional() {} }, check() {},
     frontendRefRegistry: { register: value => { registration = value; } },
-    PersistentImpl: class {},
+    PersistentImpl: class {
+      async checkLiveRequirements() { if (overrides.checkLiveRequirements) return overrides.checkLiveRequirements(); }
+    },
     Capnp: {
-      importSystem: () => ({ ApiSession: { typeId: 'api', PowerboxTag: {} } }),
+      importSystem: () => ({ ApiSession: { typeId: 'api', PowerboxTag: {} }, OutboundHttpSession: { typeId: 'outbound', RequestStream: {} } }),
       parse: (schema, value) => value,
       serialize: (schema, value) => value,
       Capability: class { constructor(value) { return value; } },
@@ -49,10 +58,27 @@ function driver(overrides = {}) {
     API_RESPONSE_HEADER_WHITELIST: { matches: name => apiHeaders.includes(name.toLowerCase()) },
     responseCodes,
   };
+  if (overrides.PersistentImpl) context.PersistentImpl = overrides.PersistentImpl;
   if (overrides.Capnp) context.Capnp = overrides.Capnp;
-  vm.runInNewContext(source, context);
+  context.globalFrontendRefRegistry = context.frontendRefRegistry;
+  const outbound = fs.readFileSync(path.join(root,
+    'shell/imports/server/drivers/outbound-http-session.js'), 'utf8')
+    .replace(/^import [\s\S]*?;\n/gm, '').replace(/export /g, '');
+  const sandbox = vm.createContext(context);
+  sandbox.Crypto = require('node:crypto');
+  const signing = fs.readFileSync(path.join(root, 'shell/imports/server/s3-sigv4.js'), 'utf8')
+    .replace(/^import .*;\n/gm, '').replace(/export /g, '');
+  vm.runInContext(signing, sandbox);
+  const sharedSession = fs.readFileSync(path.join(root, 'shell/imports/server/outbound-http-session-base.js'), 'utf8')
+    .replace(/^import [\s\S]*?;\n/gm, '').replace(/export /g, '');
+  vm.runInContext(sharedSession, sandbox);
+  vm.runInContext(outbound, sandbox);
+  if (!overrides.outboundOnly) {
+    Object.assign(sandbox, legacyProfile);
+    vm.runInContext(source, sandbox);
+  }
   return registration;
 }
 
 
-module.exports = { driver, profile, apiHeaders };
+module.exports = { driver, profile, legacyProfile, apiHeaders };

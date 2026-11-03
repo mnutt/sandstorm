@@ -202,3 +202,86 @@
     </div>
   </form>
 </template>
+
+<template name="outboundHttpCredentialsConfiguration">
+  <form class="http-credentials-form">
+    <div class="http-grant-summary">
+      <h3>{{_ "powerboxBuiltins.httpCredentials.grantTitle"}}</h3>
+      {{#with urlDetails}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.grantDestination"}} <strong>{{host}}</strong></p>
+        <p class="http-scope">{{scheme}} · {{basePath}}</p>
+        {{#if isPlainHttp}}<p class="warning-message">{{_ "powerboxBuiltins.httpCredentials.plainHttp"}}</p>{{/if}}
+      {{/with}}
+      {{#if callerCredentials}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.callerAuthority"}}</p>
+      {{else}}
+        {{#if noCredentials}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.noCredentials"}}</p>
+        {{else}}
+        {{#if sigV4}}
+          <p>{{_ "powerboxBuiltins.httpCredentials.s3Custody"}}</p>
+        {{else}}
+          <p>{{_ "powerboxBuiltins.httpCredentials.managedCredentials"}}</p>
+          <p>{{_ "powerboxBuiltins.httpCredentials.authority"}}</p>
+        {{/if}}
+        {{/if}}
+      {{/if}}
+      {{#if restrictedMethods}}<p>{{_ "powerboxBuiltins.httpCredentials.allowedMethods"}} {{restrictedMethods}}</p>{{/if}}
+    </div>
+    <div class="http-form-fields">
+      {{#if queryKey}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.queryPlacement"}} <code>{{queryParameter}}</code></p>
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret query-key" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if sigV4}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.s3Signing"}} <strong>{{s3Region}}</strong></p>
+        {{#if s3UnsignedPayload}}<p>{{_ "powerboxBuiltins.httpCredentials.s3UnsignedPayload"}}</p>{{/if}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.s3AccessKey"}}
+          <input class="secret s3-access-key" type="text" required autocomplete="off" maxlength="128">
+        </label>
+        <label>{{_ "powerboxBuiltins.httpCredentials.s3SecretKey"}}
+          <input class="secret s3-secret-key" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+        <label>{{_ "powerboxBuiltins.httpCredentials.s3SessionToken"}}
+          <input class="secret s3-session-token" type="password" autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      <label>{{_ "powerboxBuiltins.httpCredentials.destination"}}
+        <input class="url" type="url" required value="{{destination}}" readonly="{{option.httpUrl}}"
+               placeholder="https://api.example.com/v1">
+      </label>
+      {{#if bearer}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret bearer" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if apiKey}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret api-key" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if authorizationToken}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret authorization-token" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if basic}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.username"}}
+          <input class="username secret" type="text" required autocomplete="off">
+        </label>
+        <label>{{_ "powerboxBuiltins.httpCredentials.password"}}
+          <input class="secret password" type="password" autocomplete="new-password">
+        </label>
+      {{/if}}
+    </div>
+    {{#unless noCredentials}}
+      <p class="http-revocation-note">{{_ "powerboxBuiltins.httpCredentials.revocation"}}</p>
+    {{/unless}}
+    {{#if error}}<p class="error-message" role="alert">{{error}}</p>{{/if}}
+    <div class="choose-buttons">
+      <button type="submit" class="connect-button">{{_ "powerboxBuiltins.httpArbitraryPowerboxConfiguration.connectButton"}}</button>
+    </div>
+  </form>
+</template>

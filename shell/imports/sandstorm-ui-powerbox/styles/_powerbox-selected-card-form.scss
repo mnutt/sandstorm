@@ -20,3 +20,59 @@
     }
   }
 }
+
+// Keep the API grant form consistent with the shell's plain, compact forms.
+.topbar-popup.request>.frame-container>.frame>.selected-card>form.http-credentials-form {
+  margin-top: 16px;
+  line-height: 1.45;
+  .http-grant-summary {
+    padding: 12px;
+    margin-bottom: 16px;
+    border: 1px solid #ddd;
+    background: #f7f7f7;
+    overflow-wrap: anywhere;
+    h3 { margin: 0 0 8px; font-size: 1.1em; }
+    p { margin: 6px 0 0; }
+    .http-scope { font-family: monospace; }
+  }
+  label {
+    display: block;
+    margin: 12px 0 0;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  input[type="url"], input[type="text"], input[type="password"], select {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    margin-top: 4px;
+    padding: 7px 8px;
+    border: 1px solid #aaa;
+    border-radius: 2px;
+    background: white;
+    color: inherit;
+    font: inherit;
+    font-weight: normal;
+    &:focus-visible { outline: 2px solid #555; outline-offset: 2px; }
+    &[readonly] { background: #f7f7f7; color: #555; }
+  }
+  .http-app-settings {
+    min-width: 0;
+    margin: 20px 0 16px;
+    padding: 12px;
+    border: 1px solid #ddd;
+    legend { padding: 0 5px; font-weight: 600; }
+    >p { margin: 0; }
+  }
+  .http-field-status, .http-header-name, .http-field-description, .http-revocation-note {
+    color: #555;
+    font-size: 0.9em;
+    font-weight: normal;
+  }
+  .http-field-status { margin-left: 6px; }
+  .http-header-name { display: block; margin-top: 3px; font-family: monospace; }
+  .http-app-settings>.http-field-description { margin: 4px 0 0; overflow-wrap: anywhere; }
+  >.http-revocation-note { margin: 16px 0; }
+  .choose-buttons { padding-top: 12px; border-top: 1px solid #ddd; }
+}

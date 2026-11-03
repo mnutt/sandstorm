@@ -183,18 +183,124 @@ export class OutboundHttpSession_RequestStream extends $.Interface {
   };
   toString(): string { return "OutboundHttpSession_RequestStream_" + super.toString(); }
 }
+export const OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind = {
+  BEARER: 0,
+  BASIC: 1,
+  API_KEY: 2,
+  RAW_AUTHORIZATION: 3,
+  AUTHORIZATION: 4,
+  /**
+* Explicit grant: the grain supplies credentials in request headers/body.
+*
+*/
+  CALLER: 5,
+  /**
+* Explicitly unauthenticated API; no credential fields are shown.
+*
+*/
+  NONE: 6,
+  /**
+* Secret query parameter; no path substitution.
+*
+*/
+  QUERY_KEY: 7,
+  /**
+* Access key ID, secret access key and optional session token.
+*
+*/
+  SIG_V4: 8
+} as const;
+export type OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind = (typeof OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind)[keyof typeof OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind];
+export class OutboundHttpSession_PowerboxTag_AuthenticationMethod extends $.Struct {
+  static readonly Kind = OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind;
+  static readonly _capnp = {
+    displayName: "AuthenticationMethod",
+    id: "98a4b8f66b9a9b19",
+    typeId: 0x98a4b8f66b9a9b19n,
+    typeIdHex: "98a4b8f66b9a9b19",
+    size: new $.ObjectSize(8, 4),
+    fields: [
+      { name: "kind", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "enum", typeId: 0x8c93fef64034c75cn, typeIdHex: "8c93fef64034c75c", displayName: "Kind" } },
+      { name: "headerName", codeOrder: 1, ordinal: 1, kind: "slot", offset: 0, type: { kind: "text" } },
+      { name: "scheme", codeOrder: 2, ordinal: 2, kind: "slot", offset: 1, type: { kind: "text" } },
+      { name: "parameterName", codeOrder: 3, ordinal: 3, kind: "slot", offset: 2, type: { kind: "text" } },
+      { name: "region", codeOrder: 4, ordinal: 4, kind: "slot", offset: 3, type: { kind: "text" } },
+      { name: "allowUnsignedPayload", codeOrder: 5, ordinal: 5, kind: "slot", offset: 16, type: { kind: "bool" } }
+    ] as const,
+    defaultAllowUnsignedPayload: $.getBitMask(false, 0)
+  };
+  get kind(): OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind {
+    return $.utils.getUint16(0, this) as OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind;
+  }
+  set kind(value: OutboundHttpSession_PowerboxTag_AuthenticationMethod_Kind) {
+    $.utils.setUint16(0, value, this);
+  }
+  get headerName(): string {
+    return $.utils.getText(0, this);
+  }
+  set headerName(value: string) {
+    $.utils.setText(0, value, this);
+  }
+  /**
+* Required only for authorization, e.g. "Bot". No arbitrary templates.
+*
+*/
+  get scheme(): string {
+    return $.utils.getText(1, this);
+  }
+  set scheme(value: string) {
+    $.utils.setText(1, value, this);
+  }
+  /**
+* queryKey only: one whole query parameter value.
+*
+*/
+  get parameterName(): string {
+    return $.utils.getText(2, this);
+  }
+  set parameterName(value: string) {
+    $.utils.setText(2, value, this);
+  }
+  /**
+* sigV4 only: signing service is fixed to s3.
+*
+*/
+  get region(): string {
+    return $.utils.getText(3, this);
+  }
+  set region(value: string) {
+    $.utils.setText(3, value, this);
+  }
+  /**
+* sigV4 only: allow known-length streaming with UNSIGNED-PAYLOAD.
+* Buffered requests always hash their payload. No signed chunks or automatic renewal.
+* Required only for apiKey: sends the key verbatim in this HTTP header. Authorization,
+* transport, cookies, and identity headers are reserved. Bearer/Basic use Authorization.
+*
+*/
+  get allowUnsignedPayload(): boolean {
+    return $.utils.getBit(16, this, OutboundHttpSession_PowerboxTag_AuthenticationMethod._capnp.defaultAllowUnsignedPayload);
+  }
+  set allowUnsignedPayload(value: boolean) {
+    $.utils.setBit(16, value, this, OutboundHttpSession_PowerboxTag_AuthenticationMethod._capnp.defaultAllowUnsignedPayload);
+  }
+  toString(): string { return "OutboundHttpSession_PowerboxTag_AuthenticationMethod_" + super.toString(); }
+}
 export class OutboundHttpSession_PowerboxTag extends $.Struct {
+  static readonly AuthenticationMethod = OutboundHttpSession_PowerboxTag_AuthenticationMethod;
   static readonly _capnp = {
     displayName: "PowerboxTag",
     id: "e299582f33019281",
     typeId: 0xe299582f33019281n,
     typeIdHex: "e299582f33019281",
-    size: new $.ObjectSize(0, 2),
+    size: new $.ObjectSize(0, 3),
     fields: [
       { name: "baseUrl", codeOrder: 0, ordinal: 0, kind: "slot", offset: 0, type: { kind: "text" } },
-      { name: "methods", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "list", elementType: { kind: "enum", typeId: 0xa2a93eec3244ced7n, typeIdHex: "a2a93eec3244ced7", displayName: "Method" } } }
+      { name: "methods", codeOrder: 1, ordinal: 1, kind: "slot", offset: 1, type: { kind: "list", elementType: { kind: "enum", typeId: 0xa2a93eec3244ced7n, typeIdHex: "a2a93eec3244ced7", displayName: "Method" } } },
+      { name: "authenticationMethods", codeOrder: 2, ordinal: 2, kind: "slot", offset: 2, type: { kind: "list", elementType: { kind: "struct", typeId: 0x98a4b8f66b9a9b19n, typeIdHex: "98a4b8f66b9a9b19", displayName: "AuthenticationMethod" } } }
     ] as const,
   };
+  static _AuthenticationMethods: $.ListCtor<OutboundHttpSession_PowerboxTag_AuthenticationMethod>;
   get baseUrl(): string {
     return $.utils.getText(0, this);
   }
@@ -218,6 +324,32 @@ export class OutboundHttpSession_PowerboxTag extends $.Struct {
   }
   set methods(value: $.List<OutboundHttpSession_Method>) {
     $.utils.copyFrom(value, $.utils.getPointer(1, this));
+  }
+  _adoptAuthenticationMethods(value: $.Orphan<$.List<OutboundHttpSession_PowerboxTag_AuthenticationMethod>>): void {
+    $.utils.adopt(value, $.utils.getPointer(2, this));
+  }
+  _disownAuthenticationMethods(): $.Orphan<$.List<OutboundHttpSession_PowerboxTag_AuthenticationMethod>> {
+    return $.utils.disown(this.authenticationMethods);
+  }
+  /**
+* New requests must declare exactly one mechanism, including none for unauthenticated
+* APIs. Missing/multiple mechanisms are rejected. Credentials are collected by Sandstorm,
+* stored encrypted, and injected only at the approved destination. Existing saved grants
+* retain their behavior. Declarations require a supporting server;
+* older servers ignore this field and cannot supply managed authentication.
+*
+*/
+  get authenticationMethods(): $.List<OutboundHttpSession_PowerboxTag_AuthenticationMethod> {
+    return $.utils.getList(2, OutboundHttpSession_PowerboxTag._AuthenticationMethods, this);
+  }
+  _hasAuthenticationMethods(): boolean {
+    return !$.utils.isNull($.utils.getPointer(2, this));
+  }
+  _initAuthenticationMethods(length: number): $.List<OutboundHttpSession_PowerboxTag_AuthenticationMethod> {
+    return $.utils.initList(2, OutboundHttpSession_PowerboxTag._AuthenticationMethods, length, this);
+  }
+  set authenticationMethods(value: $.List<OutboundHttpSession_PowerboxTag_AuthenticationMethod>) {
+    $.utils.copyFrom(value, $.utils.getPointer(2, this));
   }
   toString(): string { return "OutboundHttpSession_PowerboxTag_" + super.toString(); }
 }
@@ -428,6 +560,9 @@ export class OutboundHttpSession$Client {
 *
 * Call `getResponse()` on the returned stream to observe response headers and
 * status. The response body is written to `responseStream`.
+* Call inherited expectSize() before the first write to supply Content-Length.
+* A later expectSize() declares the remaining bytes without changing sent headers.
+* Size mismatches cancel the request. done() waits until the upload has been sent.
 *
 */
   requestStreaming(paramsFunc?: (params: OutboundHttpSession_RequestStreaming$Params) => void): OutboundHttpSession_RequestStreaming$Results$Promise {
@@ -491,5 +626,6 @@ export class OutboundHttpSession extends $.Interface {
   toString(): string { return "OutboundHttpSession_" + super.toString(); }
 }
 OutboundHttpSession_Response._Headers = $.CompositeList(OutboundHttpSession_Header);
+OutboundHttpSession_PowerboxTag._AuthenticationMethods = $.CompositeList(OutboundHttpSession_PowerboxTag_AuthenticationMethod);
 OutboundHttpSession_Request$Params._Headers = $.CompositeList(OutboundHttpSession_Header);
 OutboundHttpSession_RequestStreaming$Params._Headers = $.CompositeList(OutboundHttpSession_Header);

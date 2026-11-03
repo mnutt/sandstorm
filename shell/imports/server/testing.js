@@ -758,7 +758,7 @@ if(isTesting) {
         const outboundHttpDescriptor = function (tagMethodsList) {
           return Capnp.serializePacked(Powerbox.PowerboxDescriptor, {
             tags: tagMethodsList.map((tagMethods) => {
-              const tag = { baseUrl };
+              const tag = { baseUrl, authenticationMethods: [{ kind: "none" }] };
               if (tagMethods) tag.methods = tagMethods.map(method => method.toLowerCase());
 
               return {
@@ -793,10 +793,14 @@ if(isTesting) {
         const intersectedPowerboxOptions = await publishPowerboxOptions([
           outboundHttpDescriptor([["GET", "POST"], ["POST", "DELETE"]]),
         ]);
+        const urlOption = options => Object.values(options).find(option =>
+          option.frontendRef?.outboundHttp?.baseUrl === baseUrl);
+        const arbitraryOption = options => Object.values(options).find(option =>
+          option.outboundHttpArbitrary);
         const intersectedUrlOption =
-            intersectedPowerboxOptions["outbound-http-url-" + baseUrl];
+            urlOption(intersectedPowerboxOptions);
         const intersectedArbitraryOption =
-            intersectedPowerboxOptions["outbound-http-arbitrary"];
+            arbitraryOption(intersectedPowerboxOptions);
         if (!intersectedUrlOption ||
             intersectedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "POST" ||
             !intersectedArbitraryOption ||
@@ -808,8 +812,7 @@ if(isTesting) {
         const disjointPowerboxOptions = await publishPowerboxOptions([
           outboundHttpDescriptor([["GET"], ["POST"]]),
         ]);
-        if (disjointPowerboxOptions["outbound-http-url-" + baseUrl] ||
-            disjointPowerboxOptions["outbound-http-arbitrary"]) {
+        if (urlOption(disjointPowerboxOptions) || arbitraryOption(disjointPowerboxOptions)) {
           throw new Meteor.Error("outbound-http-method-disjoint",
               "Powerbox offered outbound HTTP methods with an empty intersection.");
         }
@@ -818,8 +821,8 @@ if(isTesting) {
           outboundHttpDescriptor([["GET"]]),
           outboundHttpDescriptor([["POST"]]),
         ]);
-        const unionedUrlOption = unionedPowerboxOptions["outbound-http-url-" + baseUrl];
-        const unionedArbitraryOption = unionedPowerboxOptions["outbound-http-arbitrary"];
+        const unionedUrlOption = urlOption(unionedPowerboxOptions);
+        const unionedArbitraryOption = arbitraryOption(unionedPowerboxOptions);
         if (!unionedUrlOption ||
             unionedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "GET,POST" ||
             !unionedArbitraryOption ||
