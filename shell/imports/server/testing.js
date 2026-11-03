@@ -65,6 +65,7 @@ import Capnp from "/imports/server/capnp";
 import Crypto from "crypto";
 import { EventEmitter } from "events";
 import NodeHttp from "http";
+import { registerOutboundHttpTests } from "/imports/server/testing-outbound-http";
 
 const OutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
@@ -423,6 +424,7 @@ async function runSupervisorBenchmarks(grainId, options) {
 }
 
 if(isTesting) {
+  registerOutboundHttpTests();
   Meteor.methods({
     async runDueJobsAt(whenMillis) {
       await runDueJobs(new Date(whenMillis));
