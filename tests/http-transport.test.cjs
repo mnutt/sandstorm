@@ -2,7 +2,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const http = require('node:http');
-const { EventEmitter } = require('node:events');
 const loadTransport = require('./helpers/http-transport.cjs');
 
 async function serve(t, handler) {
@@ -111,7 +110,7 @@ test('deadline includes unresolved DNS and authorization, without later network 
   let requests = 0;
   let authorizations = 0;
   const transport = loadTransport({
-    Http: { request() { requests++; throw new Error('should not request'); } },
+    Client: class { constructor() { requests++; throw new Error('should not request'); } },
     ssrfSafeLookupOrProxy: () => new Promise(resolve => { finishLookup = resolve; }),
   });
   await assert.rejects(perform(transport, 'http://example.com', {
@@ -156,13 +155,10 @@ test('TLS uses original hostname for verification and pins the approved IP', asy
   let options;
   const transport = loadTransport({
     ssrfSafeLookupOrProxy: async () => ({ url: 'https://192.0.2.1/v1', host: 'approved.example:443' }),
-    Https: { request(value) {
+    buildConnector: () => (value, callback) => {
       options = value;
-      const req = new EventEmitter();
-      req.destroy = () => {};
-      req.end = () => req.emit('error', new Error('TLS failure with secret'));
-      return req;
-    } },
+      callback(new Error('TLS failure with secret'));
+    },
   });
   await assert.rejects(perform(transport, 'https://approved.example/v1'), error => {
     assert.equal(error.kjType, 'disconnected');
@@ -171,7 +167,6 @@ test('TLS uses original hostname for verification and pins the approved IP', asy
   });
   assert.equal(options.hostname, '192.0.2.1');
   assert.equal(options.servername, 'approved.example');
-  assert.equal(options.headers.host, 'approved.example:443');
 });
 
 test('DNS and response-consumer failures reject cleanly', async t => {
@@ -183,6 +178,70 @@ test('DNS and response-consumer failures reject cleanly', async t => {
   await assert.rejects(perform(loadTransport(), base, {
     consumeResponse: async () => { throw new Error('write rejected'); },
   }), { kjType: 'disconnected' });
+});
+
+test('pinned TLS connections authenticate the original host and reject untrusted certificates', async t => {
+  const tls = require('./helpers/http-api-tls.cjs');
+  let calls = 0;
+  const server = tls.createServer((req, res) => {
+    calls++;
+    assert.equal(req.headers.host, `localhost:${server.address().port}`);
+    res.end('verified');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const port = server.address().port;
+  const policy = async () => ({ url: `https://127.0.0.1:${port}/`, host: `localhost:${port}` });
+  const trusted = loadTransport({ ...tls.transport, ssrfSafeLookupOrProxy: policy });
+  assert.equal((await perform(trusted, `https://localhost:${port}/`)).toString(), 'verified');
+  await assert.rejects(perform(trusted, `https://wrong-host.example:${port}/`), { kjType: 'disconnected' });
+  await assert.rejects(perform(loadTransport({ ssrfSafeLookupOrProxy: policy }),
+    `https://localhost:${port}/`), { kjType: 'disconnected' });
+  assert.equal(calls, 1);
+});
+
+test('dispatcher preserves compressed wire bytes and duplicate response headers', async t => {
+  const compressed = require('node:zlib').gzipSync(Buffer.from('original payload'));
+  const base = await serve(t, (req, res) => {
+    res.writeHead(200, { 'content-encoding': 'gzip', 'x-provider': ['one', 'two'],
+      'set-cookie': ['a=1', 'b=2'] });
+    res.end(compressed);
+  });
+  const transport = loadTransport();
+  const operation = transport.startHttpRequest({ db: {}, url: base, method: 'GET', headers: {},
+    consumeResponse: transport.readHttpBody });
+  (await operation.started).end();
+  const response = await operation.response;
+  assert.equal(response.headers['content-encoding'], 'gzip');
+  assert.deepEqual(response.headers['x-provider'], ['one', 'two']);
+  assert.deepEqual(response.headers['set-cookie'], ['a=1', 'b=2']);
+  assert.deepEqual(await operation.completion, compressed);
+});
+
+test('early final response stops an unfinished upload after informational headers', { timeout: 3000 }, async t => {
+  const base = await serve(t, (req, res) => {
+    res.writeEarlyHints({ link: '</style.css>; rel=preload' });
+    req.once('data', () => { res.writeHead(413); res.end('too large'); });
+  });
+  const transport = loadTransport();
+  const operation = transport.startHttpRequest({ db: {}, url: base, method: 'POST', headers: {},
+    consumeResponse: transport.readHttpBody });
+  const upload = await operation.started;
+  upload.write('first chunk');
+  assert.equal((await operation.response).statusCode, 413);
+  assert.equal((await operation.completion).toString(), 'too large');
+  assert.equal(upload.destroyed, true);
+});
+
+test('a failed POST is not replayed', { timeout: 3000 }, async t => {
+  let calls = 0;
+  const base = await serve(t, (req, res) => {
+    calls++;
+    req.once('data', () => req.socket.destroy());
+  });
+  await assert.rejects(perform(loadTransport(), base, { method: 'POST', body: 'charge' }),
+    { kjType: 'disconnected' });
+  assert.equal(calls, 1);
 });
 
 test('legacy outbound adapter shares transport, streams response and drops failed streams', async t => {
