@@ -1,0 +1,7 @@
+#! /bin/sh
+
+if [ "${1:-}" = "-m" ]; then
+  echo i686
+else
+  exec /bin/uname "$@"
+fi

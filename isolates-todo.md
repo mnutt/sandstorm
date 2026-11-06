@@ -1,0 +1,60 @@
+# Isolates TODO
+
+- [x] Add first-class browser helper APIs for common Powerbox flows so authors do not have to wire raw packed descriptors by hand.
+- [x] Add Powerbox descriptor builder helpers for common cases, starting with ApiSession and app-defined provider tags.
+- [x] Add developer-mode diagnostics for unmatched Powerbox queries, including requested descriptor IDs and candidate rejection reasons where practical.
+- [x] Add a developer-facing Powerbox query inspection helper or endpoint that returns readable decoded descriptor fields in addition to packed query strings.
+- [x] Validate provider required permissions before opening Powerbox where possible, with clear errors when the provider app does not define a requested permission.
+- [x] Strengthen author docs around the browser-first Powerbox pattern: browser request, worker claim, worker save/restore/drop, later worker use.
+- [x] Add a narrowly-focused browser-mediated Powerbox example that demonstrates the recommended request/claim/save/use/drop lifecycle.
+- [x] Make `spk dev-isolate` print active app/package identity and warn when reusing an existing grain from a previous dev package.
+- [x] Preserve real shell/browser Powerbox tests because they cover matching, session, and provider UI behavior that lower-level tests cannot.
+- [x] Validate `spk pack` for isolate apps from a clean tree.
+- [x] Validate `spk dev-isolate` from a clean tree after the current helper-module layout changes.
+- [x] Decide whether large static binding payloads need file-path variants instead of inline manifest payloads.
+- [x] Add a minimal "hello isolate" example that is smaller than the feature demos.
+- [x] Add a recommended app skeleton showing the current preferred `sandstorm:api` structure.
+- [x] Document the pre-release compatibility policy for isolate APIs and helper modules in author-facing docs.
+- [x] Document compatibility date and compatibility flag expectations for isolate apps.
+- [x] Document saved-token ownership: where tokens live, who revokes them, and when apps should store/drop them.
+- [x] Document stable object-capability ID ownership and versioning before treating persistent JS object capabilities as stable.
+- [x] Decide whether `SessionContext.request()` should be implemented for worker-side Powerbox requests or whether Powerbox requests should remain browser-first.
+- [x] Add a real shell/browser Powerbox UI test for browser-mediated request, claim, save, restore, and drop.
+- [x] Add a Nightwatch test that installs an isolate app, starts a grain, verifies a health route, writes storage, restarts, and rereads storage.
+- [x] Add Nightwatch coverage for at least one real browser-to-worker Cap'n Web RPC flow.
+- [x] Record that `spk dev-isolate` Nightwatch coverage is deferred because the existing
+  `make test` harness starts Sandstorm without root and therefore does not accept dev sessions.
+- [x] Add example-level validation for the Powerbox consumer flow against a real Sandstorm shell.
+- [x] Add example-level validation for the capability provider flow against a real Sandstorm shell.
+- [x] Decide whether route-backed WebSession capabilities should explicitly support same-request self-fetch from the creating worker.
+- [x] Decide how named service bindings should resolve beyond same-workerd services.
+- [x] Design cross-grain service binding authority and persistence if named service bindings will target other grains.
+- [x] Extend typed Powerbox descriptor support beyond `ApiSession.PowerboxTag` only when a concrete app needs it.
+- [x] Decide whether packed Powerbox descriptor pass-through is needed for app-defined matching flows.
+- [x] Expose `newOfferSession()` descriptor metadata more fully after typed descriptor representation is settled.
+- [x] Expand `ClaimedCapability.fetch()` coverage for non-GET request bodies through route-backed capabilities.
+- [x] Decide whether capability fetch uploads need streaming instead of the current bounded buffered request-body path.
+- [x] Decide whether non-content WebSession response bodies need streaming support.
+- [x] Stress-test storage usage reporting under larger storage trees.
+- [x] Stress-test streaming responses and uploads around the current 64 MiB caps.
+- [x] Review and minimize the sidecar mount root, especially dynamic linker and library exposure for npm `workerd`.
+- [x] Capture workerd syscall traces under representative examples.
+- [x] Move the sidecar seccomp policy from the current denylist toward a measured allowlist.
+- [x] Verify the final bundled `workerd` binary through Sandstorm's reproducible dependency flow.
+- [x] Decide helper module versioning for `sandstorm:api`, `sandstorm:rpc`, and injected `capnweb`.
+- [x] Add a TypeScript authoring guide using the checked-in isolate declarations.
+- [x] Decide whether to integrate a TypeScript transpile path into `spk dev-isolate`; for the first isolate runtime iteration, keep transpilation app-local with `esbuild`.
+- [x] Add a TypeScript isolate example using `esbuild` as the recommended external transpile path.
+- [x] Define the stable public API names before release and remove or rename prototype-only helpers.
+- [x] Standardize isolate examples and docs to import `RpcTarget` from `sandstorm:api`.
+- [x] Replace direct `new ClaimedCapability(env, id)` author-facing examples with a named helper for wrapping claimed handles.
+- [x] Add a higher-level system route helper so common apps can serve Sandstorm helper routes without naming each internal route family.
+- [x] Make one golden-path browser Powerbox API for request, claim, save, restore, use, and revoke flows.
+- [x] Rationalize Powerbox helper names so browser-side and worker-side helpers have a smaller, memorable vocabulary.
+- [x] Normalize lifecycle helper result/error conventions across claim, save, restore, drop, and storage-backed helpers.
+- [x] Factor repeated `/powerbox/*` endpoint validation in `SandstormApiBindingService` once the surface stops moving.
+- [x] Design a fuller bridge from arbitrary Sandstorm Cap'n Proto capabilities to JavaScript object stubs.
+- [x] Design promise pipelining across Sandstorm capability boundaries.
+- [x] Design typed restoration beyond current `ClaimedCapability` and `SavedCapability` handle objects.
+- [x] Decide whether multi-grain isolate host pooling is in scope for the first release.
+- [x] Decide whether a hardened isolate-host process model should replace the per-grain workerd sidecar for the first release.

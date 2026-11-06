@@ -1,0 +1,125 @@
+diff --git a/src/sandstorm/gateway.c++ b/src/sandstorm/gateway.c++
+index aa666fab8..53b34613f 100644
+--- a/src/sandstorm/gateway.c++
++++ b/src/sandstorm/gateway.c++
+@@ -85,6 +85,7 @@ GatewayService::Tables::Tables(kj::HttpHeaderTable::Builder& headerTableBuilder)
+       hDav(headerTableBuilder.add("Dav")),
+       hLocation(headerTableBuilder.add("Location")),
+       hOrigin(headerTableBuilder.add("Origin")),
++      hSecFetchSite(headerTableBuilder.add("Sec-Fetch-Site")),
+       hPermissionsPolicy(headerTableBuilder.add("Permissions-Policy")),
+       hUserAgent(headerTableBuilder.add("User-Agent")),
+       hWwwAuthenticate(headerTableBuilder.add("WWW-Authenticate")),
+@@ -350,20 +351,12 @@ kj::Promise<void> GatewayService::requestHelper(
+       // attacks. So, block them.
+       KJ_IF_MAYBE(o, headers.get(tables.hOrigin)) {
+         auto expected = kj::str(baseUrl.scheme, "://", host);
+-        if (*o != expected) {
+-          // Looks like an attack!
+-          if (*o == "null") {
+-            // TODO(security): Alas, it turns out we have apps that have:
+-            //   <meta name="referrer" content="no-referrer">
+-            // and Chrome sends "Origin: null" in these cases. :( These apps need to switch to:
+-            //   <meta name="referrer" content="same-origin">
+-            // It's important that we don't break apps, so we will accept null origins for now,
+-            // which of course completely defeats any CSRF protection.
+-            //
+-            // The affected apps appear to be limited to Etherpad and Gogs.
+-          } else {
+-            return sendError(403, "Unauthorized", response, "CSRF not allowed");
+-          }
++        // Older apps may suppress the Origin through their referrer policy. Only allow
++        // that case when browser-provided fetch metadata identifies a same-origin request.
++        bool sameOriginOpaque = *o == "null" &&
++            headers.get(tables.hSecFetchSite).orDefault("") == "same-origin";
++        if (*o != expected && !sameOriginOpaque) {
++          return sendError(403, "Unauthorized", response, "Request origin does not match");
+         }
+       }
+ 
+diff --git a/src/sandstorm/gateway.h b/src/sandstorm/gateway.h
+index c89c1b4d1..c0dc74baa 100644
+--- a/src/sandstorm/gateway.h
++++ b/src/sandstorm/gateway.h
+@@ -67,6 +67,7 @@ public:
+     kj::HttpHeaderId hDav;
+     kj::HttpHeaderId hLocation;
+     kj::HttpHeaderId hOrigin;
++    kj::HttpHeaderId hSecFetchSite;
+     kj::HttpHeaderId hPermissionsPolicy;
+     kj::HttpHeaderId hUserAgent;
+     kj::HttpHeaderId hWwwAuthenticate;
+diff --git a/src/sandstorm/util-test.c++ b/src/sandstorm/util-test.c++
+index 22a8c6986..43d1bb4a7 100644
+--- a/src/sandstorm/util-test.c++
++++ b/src/sandstorm/util-test.c++
+@@ -595,6 +595,23 @@ KJ_TEST("Application errors are not mistaken for oversized request bodies") {
+   }
+ }
+ 
++class EmptyPostSession final: public WebSession::Server {
++public:
++  kj::Promise<void> post(PostContext context) override {
++    context.getResults().initNoContent();
++    return kj::READY_NOW;
++  }
++};
++
++class TestGatewayRouter final: public GatewayRouter::Server {
++public:
++  kj::Promise<void> openUiSession(OpenUiSessionContext context) override {
++    context.getResults().setSession(kj::heap<EmptyPostSession>());
++    context.getResults().setParentOrigin("http://shell.example");
++    return kj::READY_NOW;
++  }
++};
++
+ class MissingPublishedFile final: public Supervisor::Server {
+   kj::Promise<void> getWwwFileHack(GetWwwFileHackContext context) override {
+     context.getResults().setStatus(Supervisor::WwwFileStatus::NOT_FOUND);
+@@ -665,10 +682,13 @@ struct GatewayFixture {
+   GatewayService::Tables tables{builder};
+   kj::HttpHeaderId location = builder.add("Location");
+   kj::HttpHeaderId cookie = builder.add("Set-Cookie");
++  kj::HttpHeaderId requestCookie = builder.add("Cookie");
++  kj::HttpHeaderId origin = builder.add("Origin");
++  kj::HttpHeaderId fetchSite = builder.add("Sec-Fetch-Site");
+   kj::Own<kj::HttpHeaderTable> headerTable = builder.build();
+   kj::Own<kj::HttpClient> shell = kj::newHttpClient(
+       io.provider->getTimer(), *headerTable, io.provider->getNetwork(), nullptr);
+-  GatewayService gateway{io.provider->getTimer(), *shell, nullptr, tables,
++  GatewayService gateway{io.provider->getTimer(), *shell, kj::heap<TestGatewayRouter>(), tables,
+       "http://shell.example", "*.example", nullptr, false};
+   kj::Promise<void> cleanup = gateway.cleanupLoop();
+   kj::Own<kj::HttpClient> client = kj::newHttpClient(gateway);
+@@ -707,6 +727,30 @@ KJ_TEST("UI init redirects remain local and session cookies contain only valid I
+   check(kj::str(token.slice(1), ";"), "/", 400);
+ }
+ 
++KJ_TEST("UI requests require matching origins or same-origin fetch metadata") {
++  GatewayFixture fixture;
++  auto check = [&](kj::StringPtr origin, kj::StringPtr site, uint status) {
++    kj::HttpHeaders headers(*fixture.headerTable);
++    headers.set(kj::HttpHeaderId::HOST, "ui-test.example");
++    headers.set(fixture.requestCookie, "sandstorm-sid=test-session");
++    if (origin.size() > 0) headers.set(fixture.origin, origin);
++    if (site.size() > 0) headers.set(fixture.fetchSite, site);
++    auto request = fixture.client->request(kj::HttpMethod::POST, "/", headers, uint64_t(0));
++    request.body = nullptr;
++    auto response = request.response.wait(fixture.io.waitScope);
++    KJ_EXPECT(response.statusCode == status, origin, site);
++    response.body->readAllText().wait(fixture.io.waitScope);
++  };
++  check("http://ui-test.example", "", 204);
++  check("", "", 204);
++  check("http://other.example", "same-origin", 403);
++  check("null", "", 403);
++  check("null", "cross-site", 403);
++  check("null", "same-site", 403);
++  check("null", "none", 403);
++  check("null", "same-origin", 204);
++}
++
+ KJ_TEST("HTTP entity-tag lists preserve values and handle large headers") {
+   capnp::MallocMessageBuilder message;
+   auto parsed = parseETagList(message.getOrphanage(), " \"first\", W/\"second\",\"\"");
