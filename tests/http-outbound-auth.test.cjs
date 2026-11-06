@@ -32,7 +32,7 @@ for (const [declaration, credentials, header, expected] of cases) {
     const request = { baseUrl: `https://127.0.0.1:${server.address().port}/v1`, methods: ['POST'],
       authenticationMethods: [declaration], auth: structuredClone(credentials) };
     const cards = registry.query(null, null, request);
-    assert.equal(cards.length, 2);
+    assert.equal(cards.length, 1);
     for (const card of cards) {
       assert.equal(card.configureTemplate, 'outboundHttpCredentialsConfiguration');
       assert.equal(card.outboundHttp, true);
@@ -109,4 +109,18 @@ test('new HTTP grants require exactly one explicit mechanism, including none', (
     assert.throws(() => registry.validate(null, null, { ...destination,
       authenticationMethods: [{ kind: 'none' }], auth: { bearer: 'secret' } }), /requested/);
   }
+});
+
+
+test('outbound Powerbox requires a valid app-selected destination and offers exactly one card', () => {
+  const registry = driver({ outboundOnly: true });
+  const tag = { methods: ['post'], authenticationMethods: [{ kind: 'bearer' }] };
+  for (const baseUrl of [undefined, '', 'not a URL', 'file:///etc/passwd', 'https://example.com/?key=value']) {
+    assert.equal(registry.query(null, null, { ...tag, baseUrl }).length, 0);
+  }
+  const cards = registry.query(null, null, { ...tag, baseUrl: 'https://api.example.com/v1' });
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].httpUrl, 'https://api.example.com/v1');
+  assert.equal(cards[0].frontendRef.outboundHttp.methods.join(','), 'POST');
+  assert.equal(cards[0].outboundHttpArbitrary, undefined);
 });

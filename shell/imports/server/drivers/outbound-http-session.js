@@ -309,21 +309,10 @@ function registerOutboundHttpFrontendRef(registry) {
             } : {}),
           });
         } catch (err) {
-          // Ignore invalid suggested URLs. The arbitrary URL option below still lets the user
-          // choose a valid endpoint.
+          // A request must identify a valid endpoint; never offer a replacement destination.
+          return [];
         }
       }
-
-      options.push({
-        _id: "outbound-http-arbitrary" + authId,
-        outboundHttpArbitrary: true,
-        methods,
-        cardTemplate: "outboundHttpArbitraryPowerboxCard",
-        configureTemplate: authenticationMethods.length ? "outboundHttpCredentialsConfiguration" :
-            "outboundHttpArbitraryPowerboxConfiguration",
-        outboundHttp: true,
-        authenticationMethods,
-      });
 
       return options;
     },

@@ -33,7 +33,15 @@
     overflow-wrap: anywhere;
     h3 { margin: 0 0 8px; font-size: 1.1em; }
     p { margin: 6px 0 0; }
-    .http-scope { font-family: monospace; }
+    .http-scope {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      margin: 16px 0;
+      font-family: monospace;
+    }
+    .http-scope-methods { flex: 0 0 auto; }
+    .http-scope-url { min-width: 0; overflow-wrap: anywhere; }
   }
   label {
     display: block;
@@ -75,4 +83,10 @@
   .http-app-settings>.http-field-description { margin: 4px 0 0; overflow-wrap: anywhere; }
   >.http-revocation-note { margin: 16px 0; }
   .choose-buttons { padding-top: 12px; border-top: 1px solid #ddd; }
+}
+
+.topbar-popup.request .http-credential-placement {
+  margin: 4px 0 16px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }

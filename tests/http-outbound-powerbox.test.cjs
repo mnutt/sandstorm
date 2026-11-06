@@ -10,7 +10,7 @@ const { profile } = require('./helpers/http-api-driver.cjs');
 test('credential form submits to the shell and clears its secret input', () => {
   const templates = new Proxy({}, { get(target, key) {
     if (!target[key]) target[key] = {
-      helpers() {}, events(value) { this.handlers = value; },
+      helpers(value) { this.helperFunctions = value; }, events(value) { this.handlers = value; },
       onCreated(value) { this.created = value; },
       onDestroyed(value) { this.destroyed = value; },
     };
@@ -20,13 +20,22 @@ test('credential form submits to the shell and clears its secret input', () => {
       'shell/imports/client/powerbox-builtins.js'), 'utf8')
       .replace(/^import [\s\S]*?;\n/gm, '');
   vm.runInNewContext(source, {
-    ...profile, validateOutboundHttpConnection: profile.validateHttpConnection, Template: templates,
+    URL, ...profile, validateOutboundHttpConnection: profile.validateHttpConnection, Template: templates,
     ReactiveVar: class {
       constructor(value) { this.value = value; }
       get() { return this.value; }
       set(value) { this.value = value; }
     },
   });
+  const card = templates.outboundHttpUrlPowerboxCard;
+  const details = card.helperFunctions.urlDetails.call({ option: { frontendRef: {
+    outboundHttp: { baseUrl: 'https://api.openai.com/v1', methods: ['POST'] },
+  } } });
+  assert.equal(details.compactMethods, 'POST');
+  assert.equal(details.url, 'https://api.openai.com/v1');
+  // Inside #with, this property must not be shadowed by a template helper that
+  // expects the outer option context.
+  assert.equal(card.helperFunctions.compactMethods, undefined);
   const template = templates.outboundHttpCredentialsConfiguration;
   const input = { value: 'test-secret' };
   let submitted;
@@ -38,7 +47,10 @@ test('credential form submits to the shell and clears its secret input', () => {
     data, find: () => input,
     findAll: selector => selector === 'input.secret' ? [input] : [],
   };
+  templates.instance = () => instance;
   template.created.call(instance);
+  assert.equal(template.helperFunctions.credentialPlacement(), 'Authorization: Bearer [value]');
+  assert.equal(template.helperFunctions.scopeMethods().join('/'), 'GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS');
   template.handlers['submit form'].call(data, { preventDefault() {} }, instance);
   assert.equal(submitted.outboundHttp.auth.bearer, 'test-secret');
   assert.equal(input.value, '');
@@ -48,6 +60,7 @@ test('credential form submits to the shell and clears its secret input', () => {
   assert.equal(input.value, '');
   data.option.authenticationMethods = [{ kind: 'apiKey', headerName: 'x-provider-key' }];
   template.created.call(instance);
+  assert.equal(template.helperFunctions.credentialPlacement(), 'x-provider-key: [value]');
   input.value = 'private-api-key';
   template.handlers['submit form'].call(data, { preventDefault() {} }, instance);
   assert.equal(submitted.outboundHttp.auth.apiKey.headerName, 'x-provider-key');
@@ -99,6 +112,10 @@ test('credential form submits to the shell and clears its secret input', () => {
   template.handlers['submit form'].call(data, { preventDefault() {} }, instance);
   assert.equal(submitted.outboundHttp.auth.none, null);
   const html = fs.readFileSync(path.join(root, 'shell/imports/client/powerbox-builtins.html'), 'utf8');
+  assert.ok(!html.includes('outboundHttpArbitrary'));
+  assert.ok(html.includes('{{compactMethods}} {{url}}'));
+  assert.ok(!html.slice(html.indexOf('<template name="outboundHttpCredentialsConfiguration">')).includes('input class="url"'));
+  assert.equal(template.handlers['input input.url'], undefined);
   assert.ok(!html.includes('chooseAuthentication'));
   assert.ok(!html.slice(html.indexOf('<template name="outboundHttpCredentialsConfiguration">')).includes('select class="authentication"'));
 });

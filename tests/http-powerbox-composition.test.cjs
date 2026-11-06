@@ -35,10 +35,11 @@ test('authentication-specific cards cannot accidentally union unrelated method p
   const caller = registry.query(null, null, { ...tag, authenticationMethods: [{ kind: 'caller' }] });
   const bearer = registry.query(null, null, { ...tag, authenticationMethods: [{ kind: 'bearer' }] });
   const basic = registry.query(null, null, { ...tag, methods: ['post'], authenticationMethods: [{ kind: 'basic' }] });
-  for (let i = 0; i < 2; i++) {
-    assert.notEqual(bearer[i]._id, basic[i]._id);
-    assert.notEqual(caller[i]._id, bearer[i]._id);
-  }
+  assert.equal(bearer.length, 1);
+  assert.equal(basic.length, 1);
+  assert.equal(caller.length, 1);
+  assert.notEqual(bearer[0]._id, basic[0]._id);
+  assert.notEqual(caller[0]._id, bearer[0]._id);
   const first = registry.query(null, null, { ...tag, authenticationMethods: [{ kind: 'bearer' }, { kind: 'basic' }] });
   const reverse = registry.query(null, null, { ...tag, authenticationMethods: [{ kind: 'basic' }, { kind: 'bearer' }] });
   assert.equal(first.length, 0);

@@ -93,7 +93,9 @@ const describeOutboundHttp = function (url, methods) {
 
   return {
     ...urlParts,
-    methodsSummary: describeOutboundHttpMethods(methods),
+    allowedMethods: describeOutboundHttpMethods(methods),
+    compactMethods: describeOutboundHttpMethods(methods).split(", ").join("/"),
+    url,
   };
 };
 
@@ -389,49 +391,6 @@ Template.outboundHttpUrlPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
 Template.outboundHttpUrlPowerboxCard.helpers(outboundHttpDisclosureHelpers(
     data => data.option.frontendRef.outboundHttp));
 
-Template.outboundHttpArbitraryPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
-Template.outboundHttpArbitraryPowerboxCard.helpers({
-  methodsSummary: function () {
-    return describeOutboundHttpMethods(this.option.methods);
-  },
-});
-Template.outboundHttpArbitraryPowerboxConfiguration.onCreated(function () {
-  this._outboundHttpUrl = new ReactiveVar("");
-});
-Template.outboundHttpArbitraryPowerboxConfiguration.helpers({
-  urlDetails: function () {
-    return describeOutboundHttp(Template.instance()._outboundHttpUrl.get(), this.option.methods);
-  },
-
-  methodsSummary: function () {
-    return describeOutboundHttpMethods(this.option.methods);
-  },
-});
-Template.outboundHttpArbitraryPowerboxConfiguration.events({
-  "input input.url, change input.url": function (event, instance) {
-    instance._outboundHttpUrl.set(event.currentTarget.value);
-  },
-
-  "click .connect-button": function (event, instance) {
-    event.preventDefault();
-    const input = instance.find("form>input.url");
-
-    const outboundHttp = {
-      baseUrl: input.value,
-    };
-
-    if (this.option.methods && this.option.methods.length > 0) {
-      outboundHttp.methods = this.option.methods;
-    }
-
-    this.powerboxRequest.completeNewFrontendRef({
-      outboundHttp: {
-        ...outboundHttp,
-      },
-    });
-  },
-});
-
 Template.outboundHttpCredentialsConfiguration.onCreated(function () {
   this._httpUrl = new ReactiveVar(this.data.option.httpUrl || "");
   this._httpMethods = validateHttpAuthenticationMethods(this.data.option.authenticationMethods, true);
@@ -451,7 +410,18 @@ Template.outboundHttpCredentialsConfiguration.helpers({
   sigV4: () => Template.instance()._httpMethods[0].kind === "sigV4",
   s3Region: () => Template.instance()._httpMethods[0].region,
   s3UnsignedPayload: () => Template.instance()._httpMethods[0].allowUnsignedPayload,
-  restrictedMethods: () => Template.instance().data.option.methods?.join(", "),
+  scopeMethods: () => describeOutboundHttpMethods(Template.instance().data.option.methods).split(", "),
+  credentialPlacement: () => {
+    const method = Template.instance()._httpMethods[0];
+    switch (method.kind) {
+      case "bearer": return "Authorization: Bearer [value]";
+      case "apiKey": return method.headerName + ": [value]";
+      case "rawAuthorization": return "Authorization: [value]";
+      case "authorization": return "Authorization: " + method.scheme + " [value]";
+      case "basic": return "Authorization: Basic base64([username]:[password])";
+      default: return null;
+    }
+  },
   apiKey: () => Template.instance()._httpAuth.get().startsWith("apiKey:"),
   authorizationToken: () => {
     const kind = Template.instance()._httpAuth.get();
@@ -475,12 +445,6 @@ Template.outboundHttpCredentialsConfiguration.onDestroyed(function () {
 Template.outboundHttpCredentialsConfiguration.events({
   "input input.secret, input input.connection-header": function (event, instance) {
     instance._httpSecretInputs.add(event.currentTarget);
-  },
-
-  "input input.url": function (event, instance) {
-    clearOutboundHttpSecrets(instance);
-    instance.findAll("input.connection-header").forEach(input => { input.value = ""; });
-    instance._httpUrl.set(event.currentTarget.value);
   },
 
   "submit form": function (event, instance) {

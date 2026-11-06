@@ -536,3 +536,9 @@ response lifetime, and forwards chunks through a bounded queue. It logs usage fr
 a terminal Responses event only after a successful `done()`. Missing/truncated or
 oversized accounting metadata is left incomplete or unpriced; response bytes are
 still forwarded unchanged.
+
+New `OutboundHttpSession` Powerbox requests must supply a valid `baseUrl`. Sandstorm
+shows that destination read-only and offers no custom-URL alternative. Apps that
+support configurable providers should collect the URL before requesting access.
+Missing or invalid destinations produce no outbound card; existing saved grants
+continue to restore unchanged.

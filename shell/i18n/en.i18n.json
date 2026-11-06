@@ -511,6 +511,8 @@
       "plainHttp": "This destination uses unencrypted HTTP. Authentication requires HTTPS.",
       "grantTitle": "Allow API access",
       "grantDestination": "Give this app access to",
+      "pathPrefix": "with the following path prefix:",
+      "valueSentAs": "Value will be sent as",
       "settingsTitle": "App-requested settings",
       "optional": "Optional",
       "required": "Required",

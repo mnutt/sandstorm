@@ -801,12 +801,9 @@ if(isTesting) {
           option.outboundHttpArbitrary);
         const intersectedUrlOption =
             urlOption(intersectedPowerboxOptions);
-        const intersectedArbitraryOption =
-            arbitraryOption(intersectedPowerboxOptions);
         if (!intersectedUrlOption ||
             intersectedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "POST" ||
-            !intersectedArbitraryOption ||
-            intersectedArbitraryOption.methods.join(",") !== "POST") {
+            arbitraryOption(intersectedPowerboxOptions)) {
           throw new Meteor.Error("outbound-http-method-intersection",
               "Powerbox did not intersect outbound HTTP method constraints.");
         }
@@ -824,11 +821,9 @@ if(isTesting) {
           outboundHttpDescriptor([["POST"]]),
         ]);
         const unionedUrlOption = urlOption(unionedPowerboxOptions);
-        const unionedArbitraryOption = arbitraryOption(unionedPowerboxOptions);
         if (!unionedUrlOption ||
             unionedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "GET,POST" ||
-            !unionedArbitraryOption ||
-            unionedArbitraryOption.methods.join(",") !== "GET,POST") {
+            arbitraryOption(unionedPowerboxOptions)) {
           throw new Meteor.Error("outbound-http-method-union",
               "Powerbox did not union outbound HTTP method constraints.");
         }
