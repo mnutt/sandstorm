@@ -65,6 +65,7 @@ import Capnp from "/imports/server/capnp";
 import Crypto from "crypto";
 import { EventEmitter } from "events";
 import NodeHttp from "http";
+import { registerOutboundHttpTests } from "/imports/server/testing-outbound-http";
 
 const OutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
@@ -423,6 +424,7 @@ async function runSupervisorBenchmarks(grainId, options) {
 }
 
 if(isTesting) {
+  registerOutboundHttpTests();
   Meteor.methods({
     async runDueJobsAt(whenMillis) {
       await runDueJobs(new Date(whenMillis));
@@ -758,7 +760,7 @@ if(isTesting) {
         const outboundHttpDescriptor = function (tagMethodsList) {
           return Capnp.serializePacked(Powerbox.PowerboxDescriptor, {
             tags: tagMethodsList.map((tagMethods) => {
-              const tag = { baseUrl };
+              const tag = { baseUrl, authenticationMethods: [{ kind: "none" }] };
               if (tagMethods) tag.methods = tagMethods.map(method => method.toLowerCase());
 
               return {
@@ -793,14 +795,15 @@ if(isTesting) {
         const intersectedPowerboxOptions = await publishPowerboxOptions([
           outboundHttpDescriptor([["GET", "POST"], ["POST", "DELETE"]]),
         ]);
+        const urlOption = options => Object.values(options).find(option =>
+          option.frontendRef?.outboundHttp?.baseUrl === baseUrl);
+        const arbitraryOption = options => Object.values(options).find(option =>
+          option.outboundHttpArbitrary);
         const intersectedUrlOption =
-            intersectedPowerboxOptions["outbound-http-url-" + baseUrl];
-        const intersectedArbitraryOption =
-            intersectedPowerboxOptions["outbound-http-arbitrary"];
+            urlOption(intersectedPowerboxOptions);
         if (!intersectedUrlOption ||
             intersectedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "POST" ||
-            !intersectedArbitraryOption ||
-            intersectedArbitraryOption.methods.join(",") !== "POST") {
+            arbitraryOption(intersectedPowerboxOptions)) {
           throw new Meteor.Error("outbound-http-method-intersection",
               "Powerbox did not intersect outbound HTTP method constraints.");
         }
@@ -808,8 +811,7 @@ if(isTesting) {
         const disjointPowerboxOptions = await publishPowerboxOptions([
           outboundHttpDescriptor([["GET"], ["POST"]]),
         ]);
-        if (disjointPowerboxOptions["outbound-http-url-" + baseUrl] ||
-            disjointPowerboxOptions["outbound-http-arbitrary"]) {
+        if (urlOption(disjointPowerboxOptions) || arbitraryOption(disjointPowerboxOptions)) {
           throw new Meteor.Error("outbound-http-method-disjoint",
               "Powerbox offered outbound HTTP methods with an empty intersection.");
         }
@@ -818,12 +820,10 @@ if(isTesting) {
           outboundHttpDescriptor([["GET"]]),
           outboundHttpDescriptor([["POST"]]),
         ]);
-        const unionedUrlOption = unionedPowerboxOptions["outbound-http-url-" + baseUrl];
-        const unionedArbitraryOption = unionedPowerboxOptions["outbound-http-arbitrary"];
+        const unionedUrlOption = urlOption(unionedPowerboxOptions);
         if (!unionedUrlOption ||
             unionedUrlOption.frontendRef.outboundHttp.methods.join(",") !== "GET,POST" ||
-            !unionedArbitraryOption ||
-            unionedArbitraryOption.methods.join(",") !== "GET,POST") {
+            arbitraryOption(unionedPowerboxOptions)) {
           throw new Meteor.Error("outbound-http-method-union",
               "Powerbox did not union outbound HTTP method constraints.");
         }

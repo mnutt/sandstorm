@@ -17,261 +17,61 @@
 import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
-import Http from "http";
-import Https from "https";
-import Request from "request";
 
 import Capnp from "/imports/server/capnp";
-import { PersistentImpl } from "/imports/server/persistent";
-import { ssrfSafeLookupOrProxy } from "/imports/server/networking";
+import { validateBaseUrl, makeTransportError, makeHttpLimitError, reserveHttpBuffer,
+  HTTP_MAX_BUFFERED_UPLOAD_BYTES, HTTP_MAX_UPLOAD_CHUNK_BYTES } from "/imports/server/http-transport";
 
 const OutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session.capnp").OutboundHttpSession;
 const PersistentOutboundHttpSession =
     Capnp.importSystem("sandstorm/outbound-http-session-impl.capnp").PersistentOutboundHttpSession;
 
-const METHOD_NAMES = [
-  "GET",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-  "HEAD",
-  "OPTIONS",
-];
-
-const BLOCKED_HEADERS = new Set([
-  "host",
-  "connection",
-  "content-length",
-  "transfer-encoding",
-  "te",
-  "trailer",
-  "upgrade",
-  "keep-alive",
-]);
-
-const OUTBOUND_HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
-const ENCODED_PATH_SEPARATOR = /%(2f|5c)/i;
-const INVALID_PERCENT_ENCODING = /%(?![0-9a-fA-F]{2})/;
-
-function makeTimeoutError() {
-  const err = new Error("Outbound HTTP request timed out.");
-  err.kjType = "overloaded";
-  return err;
-}
-
-function makeTransportError(err) {
-  if (err && err.kjType) return err;
-
-  const message = err && err.message ? err.message : String(err);
-  const result = new Error("Outbound HTTP request failed: " + message);
-  result.kjType = "disconnected";
-  if (err && err.code) result.code = err.code;
-  return result;
-}
-
-function isDotSegment(segment) {
-  const lower = segment.toLowerCase();
-  return lower === "." ||
-      lower === ".." ||
-      lower === "%2e" ||
-      lower === ".%2e" ||
-      lower === "%2e." ||
-      lower === "%2e%2e";
-}
-
-function validatePathScope(pathname, description) {
-  if (INVALID_PERCENT_ENCODING.test(pathname)) {
-    throw new Meteor.Error(400, description + " must not contain malformed percent escapes.");
-  }
-
-  if (pathname.includes("\\") || ENCODED_PATH_SEPARATOR.test(pathname)) {
-    throw new Meteor.Error(400, description + " must not contain encoded slashes.");
-  }
-
-  if (pathname.split("/").some(isDotSegment)) {
-    throw new Meteor.Error(400, description + " must not contain dot segments.");
-  }
-}
-
-function rawPathnameFromHttpUrl(url) {
-  const authority = /^https?:\/\/[^/?#]*/i.exec(url);
-  if (!authority) return null;
-
-  const pathStart = authority[0].length;
-  if (url[pathStart] !== "/") return "/";
-
-  let pathEnd = url.length;
-  const queryStart = url.indexOf("?", pathStart);
-  const fragmentStart = url.indexOf("#", pathStart);
-  if (queryStart !== -1) pathEnd = Math.min(pathEnd, queryStart);
-  if (fragmentStart !== -1) pathEnd = Math.min(pathEnd, fragmentStart);
-
-  return url.slice(pathStart, pathEnd) || "/";
-}
-
-function validateBaseUrl(url) {
-  check(url, String);
-
-  if (url.includes("\\")) {
-    throw new Meteor.Error(400, "URL path must not contain encoded slashes.");
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch (err) {
-    throw new Meteor.Error(400, "Invalid URL.");
-  }
-
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
-  }
-
-  const rawPathname = rawPathnameFromHttpUrl(url);
-  if (!rawPathname) {
-    throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
-  }
-
-  validatePathScope(rawPathname, "URL path");
-
-  if (!parsed.hostname) {
-    throw new Meteor.Error(400, "URL must include a host.");
-  }
-
-  if (parsed.username || parsed.password) {
-    throw new Meteor.Error(400, "URL must not include credentials.");
-  }
-
-  if (parsed.hash) {
-    throw new Meteor.Error(400, "URL must not include a fragment.");
-  }
-
-  if (parsed.search) {
-    throw new Meteor.Error(400, "URL must not include a query string.");
-  }
-
-  return parsed.toString();
-}
-
-function methodName(method) {
-  if (typeof method === "number") {
-    if (!METHOD_NAMES[method]) throw new Meteor.Error(400, "Unsupported HTTP method.");
-    return METHOD_NAMES[method];
-  }
-
-  if (typeof method === "string") {
-    const normalized = method.toUpperCase();
-    if (METHOD_NAMES.indexOf(normalized) === -1) {
-      throw new Meteor.Error(400, "Unsupported HTTP method.");
-    }
-
-    return normalized;
-  }
-
-  if (method && typeof method === "object") {
-    const key = Object.keys(method)[0];
-    if (key) return methodName(key);
-  }
-
-  throw new Meteor.Error(400, "Unsupported HTTP method.");
-}
-
-function schemaMethodName(method) {
-  return methodName(method).toLowerCase();
-}
-
-function headerAllowed(name) {
-  const lower = name.toLowerCase();
-  return !BLOCKED_HEADERS.has(lower) &&
-      !lower.startsWith("proxy-") &&
-      !lower.startsWith("sec-") &&
-      lower !== "forwarded" &&
-      lower !== "via" &&
-      !lower.startsWith("x-forwarded-");
-}
-
-function sanitizeHeaders(headers) {
-  check(headers, Match.Optional([{
-    name: String,
-    value: String,
-  }]));
-
-  const result = {};
-  const seen = new Set();
-
-  (headers || []).forEach((header) => {
-    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(header.name)) {
-      throw new Meteor.Error(400, "Invalid HTTP header name: " + header.name);
-    }
-
-    if (/[\r\n]/.test(header.value)) {
-      throw new Meteor.Error(400, "Invalid HTTP header value for: " + header.name);
-    }
-
-    const lower = header.name.toLowerCase();
-    if (!headerAllowed(lower)) {
-      throw new Meteor.Error(400, "Blocked HTTP header: " + header.name);
-    }
-
-    if (seen.has(lower)) {
-      throw new Meteor.Error(400, "Duplicate HTTP header: " + header.name);
-    }
-
-    seen.add(lower);
-    result[header.name] = header.value;
-  });
-
-  return result;
-}
-
-function responseHeaders(resp) {
-  const headers = [];
-
-  Object.keys(resp.headers).forEach((name) => {
-    const value = resp.headers[name];
-    if (Array.isArray(value)) {
-      value.forEach((item) => headers.push({ name, value: item }));
-    } else if (value !== undefined) {
-      headers.push({ name, value: String(value) });
-    }
-  });
-
-  return headers;
-}
-
-function writeResponseBody(resp, responseStream) {
-  let chain = Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    resp.on("data", (chunk) => {
-      resp.pause();
-      chain = chain.then(() => responseStream.write(chunk))
-          .then(() => resp.resume(), (err) => reject(makeTransportError(err)));
-    });
-
-    resp.on("end", () => {
-      chain.then(() => responseStream.done())
-          .then(resolve, (err) => reject(makeTransportError(err)));
-    });
-
-    resp.on("error", (err) => reject(makeTransportError(err)));
-  });
-}
+import { OutboundHttpSessionBase, methodName, schemaMethodName } from "/imports/server/outbound-http-session-base";
+import { signS3Request, s3PayloadHash } from "/imports/server/s3-sigv4";
+import { validateHttpAuthenticationMethods, validateHttpConnection } from "/imports/shared/outbound-http-profile";
 
 class OutboundRequestStream {
-  constructor(req, responsePromise) {
+  constructor(req, responsePromise, cancel) {
     this._req = req;
     this._responsePromise = responsePromise;
     this._done = false;
+    this._cancel = cancel;
+    this._written = 0;
+    this._expected = undefined;
+  }
+
+  expectSize(size) {
+    if (this._done) throw new Error("expectSize() called after done()");
+    const remaining = Number(size);
+    const total = this._written + remaining;
+    if (!Number.isSafeInteger(remaining) || remaining < 0 || !Number.isSafeInteger(total) ||
+        (this._expected !== undefined && this._expected !== total)) {
+      this._cancel();
+      throw new Error("Invalid or inconsistent upload size.");
+    }
+    this._expected = total;
+    this._req.setExpectedSize(total);
+  }
+
+  close() {
+    if (!this._done) this._cancel();
   }
 
   write(data) {
     if (this._done) throw new Error("write() called after done()");
+    if (data.byteLength > HTTP_MAX_UPLOAD_CHUNK_BYTES) {
+      this._cancel();
+      throw makeHttpLimitError("Upload write is too large; send smaller chunks.");
+    }
+    if (this._expected !== undefined && this._written + data.length > this._expected) {
+      this._cancel();
+      throw new Error("Upload exceeds expected size.");
+    }
+    this._written += data.length;
 
     return new Promise((resolve, reject) => {
-      this._req.write(Buffer.from(data), (err) => {
+      this._req.write(data, (err) => {
         if (err) reject(makeTransportError(err));
         else resolve();
       });
@@ -281,11 +81,15 @@ class OutboundRequestStream {
   done() {
     if (this._done) throw new Error("done() called twice");
     this._done = true;
+    if (this._expected !== undefined && this._written !== this._expected) {
+      this._cancel();
+      throw new Error("Upload does not match expected size.");
+    }
 
     return new Promise((resolve, reject) => {
       this._req.end((err) => {
         if (err) reject(makeTransportError(err));
-        else resolve();
+        else this._req.uploadComplete.then(resolve, reject);
       });
     });
   }
@@ -295,192 +99,132 @@ class OutboundRequestStream {
   }
 }
 
-class OutboundHttpSessionImpl extends PersistentImpl {
-  constructor(baseUrl, methods, db, saveTemplate) {
-    super(db, saveTemplate);
-
-    this._baseUrl = validateBaseUrl(baseUrl);
-    this._methods = methods && methods.length > 0 ? methods.map(methodName) : null;
-    this._db = db;
+class OutboundHttpSessionImpl extends OutboundHttpSessionBase {
+  constructor(baseUrl, methods, db, saveTemplate, auth) {
+    super(baseUrl, methods, db, saveTemplate);
+    if (auth) {
+      if (!Object.keys(auth).every(kind =>
+        ["none", "caller", "bearer", "basic", "apiKey", "authorization", "queryKey", "sigV4"].includes(kind))) {
+        throw new Error("Unsupported outbound HTTP authentication.");
+      }
+      validateHttpConnection({ url: baseUrl, auth });
+    }
+    this._auth = auth;
   }
 
-  _buildUrl(path) {
-    check(path, String);
-
-    if (path.startsWith("/") || path.startsWith("//") ||
-        /^[A-Za-z][A-Za-z0-9+\-.]*:/.test(path)) {
-      throw new Meteor.Error(400, "Request path must be relative to the granted base URL.");
-    }
-
-    const pathOnly = path.split(/[?#]/, 1)[0];
-    validatePathScope(pathOnly, "Request path");
-
-    if (path === "") return this._baseUrl;
-
-    const base = new URL(this._baseUrl);
-    const basePath = base.pathname || "/";
-    const basePrefix = basePath.endsWith("/") ? basePath : basePath + "/";
-
-    const requestBase = new URL(this._baseUrl);
-    requestBase.pathname = basePrefix;
-
-    const resolved = new URL(path || "", requestBase.toString());
-    const expectedOrigin = base.origin;
-
-    if (resolved.origin !== expectedOrigin ||
-        !(resolved.pathname === basePath || resolved.pathname.startsWith(basePrefix))) {
-      throw new Meteor.Error(403, "Request path escapes the granted base URL.");
-    }
-
-    return resolved.toString();
+  _protectsAuthorization() {
+    return !!this._auth && !("caller" in this._auth);
   }
 
-  _startRequest(method, path, headers, responseStream, contentLength) {
-    const fullUrl = this._buildUrl(path);
-    const httpMethod = methodName(method);
-    if (this._methods && this._methods.indexOf(httpMethod) === -1) {
-      throw new Meteor.Error(403, "HTTP method is not allowed by this capability.");
+  _managedRequestHeaders() {
+    const key = this._auth?.apiKey;
+    return key ? { [key.headerName]: key.value } : {};
+  }
+
+  _ensureAuthorization() {
+    const auth = this._auth;
+    if (auth?.bearer) return "Bearer " + auth.bearer;
+    if (auth?.basic) {
+      return "Basic " + Buffer.from(auth.basic.username + ":" + auth.basic.password).toString("base64");
     }
-
-    const requestHeaders = sanitizeHeaders(headers);
-    if (contentLength !== undefined && contentLength > 0) {
-      requestHeaders["content-length"] = String(contentLength);
+    if (auth?.authorization) {
+      return (auth.authorization.scheme ? auth.authorization.scheme + " " : "") + auth.authorization.value;
     }
+    return undefined;
+  }
 
-    return new Promise((resolve, reject) => {
-      let req;
-      let timeoutHandle;
-      let timedOut = false;
-      let timeoutError;
+  _validateRequestAuthentication(url, headers, body) {
+    const query = new URL(url).searchParams;
+    if (this._auth?.queryKey && Array.from(query.keys()).some(name =>
+      name.toLowerCase() === this._auth.queryKey.parameterName.toLowerCase())) {
+      throw new Error("Cannot override a managed credential query parameter.");
+    }
+    if (this._auth?.sigV4) {
+      if (body === undefined && !this._auth.sigV4.allowUnsignedPayload) {
+        throw new Error("S3 streaming requires explicit unsigned-payload permission.");
+      }
+      if (["authorization", "x-amz-date", "x-amz-content-sha256", "x-amz-security-token",
+        "x-amz-decoded-content-length", "x-amz-trailer"].some(name => name in headers) ||
+          /aws-chunked/i.test(headers["content-encoding"] || "") ||
+          Array.from(query.keys()).some(name => /^x-amz-/i.test(name))) {
+        throw new Error("Cannot override managed S3 signing fields.");
+      }
+    }
+  }
 
-      const clearRequestTimeout = () => {
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-          timeoutHandle = undefined;
-        }
-      };
-
-      timeoutHandle = setTimeout(() => {
-        timedOut = true;
-        timeoutError = makeTimeoutError();
-        if (req) req.destroy(timeoutError);
-        reject(timeoutError);
-      }, OUTBOUND_HTTP_REQUEST_TIMEOUT_MS);
-
-      ssrfSafeLookupOrProxy(this._db, fullUrl).then((safe) => {
-        if (timedOut) return;
-
-        try {
-          const parsed = new URL(safe.proxy ? fullUrl : safe.url);
-          requestHeaders.host = safe.proxy ? parsed.host : safe.host;
-
-          const options = safe.proxy ? {
-            method: httpMethod,
-            url: fullUrl,
-            proxy: safe.proxy,
-            followRedirect: false,
-            headers: requestHeaders,
-          } : {
-            method: httpMethod,
-            protocol: parsed.protocol,
-            hostname: parsed.hostname,
-            port: parsed.port,
-            path: parsed.pathname + parsed.search,
-            headers: requestHeaders,
-            servername: safe.host.split(":")[0],
-          };
-
-          const requestMethod = safe.proxy ? Request :
-              parsed.protocol === "https:" ? Https.request : Http.request;
-
-          const responsePromise = new Promise((resolveResponse, rejectResponse) => {
-            const handleResponse = (resp) => {
-              let response;
-              try {
-                response = {
-                  statusCode: resp.statusCode,
-                  statusText: resp.statusMessage || "",
-                  headers: responseHeaders(resp),
-                };
-              } catch (err) {
-                clearRequestTimeout();
-                const transportError = makeTransportError(err);
-                rejectResponse(transportError);
-                req.destroy(transportError);
-                return;
-              }
-
-              resolveResponse(response);
-              writeResponseBody(resp, responseStream).then(clearRequestTimeout, (err) => {
-                clearRequestTimeout();
-                console.error("OutboundHttpSession response stream failed:", err.stack || err);
-                req.destroy(err);
-              });
-            };
-
-            req = safe.proxy ? requestMethod(options) : requestMethod(options, handleResponse);
-            if (safe.proxy) req.on("response", handleResponse);
-
-            req.on("error", (err) => {
-              clearRequestTimeout();
-              rejectResponse(makeTransportError(err));
-            });
-          });
-
-          resolve({ req, responsePromise });
-        } catch (err) {
-          const transportError = makeTransportError(err);
-          if (req) req.destroy(transportError);
-          else {
-            clearRequestTimeout();
-          }
-          reject(transportError);
-        }
-      }, (err) => {
-        clearRequestTimeout();
-        reject(makeTransportError(err));
-      });
-    });
+  _prepareAuthenticatedRequest(request, body) {
+    if (this._auth?.queryKey) {
+      const url = new URL(request.url);
+      const { parameterName, value } = this._auth.queryKey;
+      // Append without reserializing the caller's existing query parameters.
+      url.search += (url.search ? "&" : "?") + encodeURIComponent(parameterName) + "=" + encodeURIComponent(value);
+      return { ...request, url: url.toString() };
+    }
+    if (this._auth?.sigV4) {
+      if (body === undefined && !("content-length" in request.headers)) {
+        throw new Error("S3 streaming requires expectSize before the first write.");
+      }
+      const payloadHash = body === undefined ? "UNSIGNED-PAYLOAD" : body;
+      return { ...request, headers: signS3Request({ ...request, payloadHash, credentials: this._auth.sigV4 }) };
+    }
+    return request;
   }
 
   request(method, path, headers, body, responseStream) {
-    const bodyBuffer = body ? Buffer.from(body) : Buffer.alloc(0);
-
-    return this._startRequest(
-        method, path, headers, responseStream, bodyBuffer.length).then(({ req, responsePromise }) => {
-      try {
-        if (bodyBuffer.length > 0) {
-          req.write(bodyBuffer, (err) => {
-            if (err) req.destroy(makeTransportError(err));
-          });
-        }
-
-        req.end((err) => {
-          if (err) req.destroy(makeTransportError(err));
-        });
-      } catch (err) {
-        const transportError = makeTransportError(err);
-        req.destroy(transportError);
-      }
-
-      return responsePromise;
-    });
+    const size = body?.byteLength || 0;
+    if (size > HTTP_MAX_BUFFERED_UPLOAD_BYTES) {
+      throw makeHttpLimitError("Buffered upload is too large; use requestStreaming().");
+    }
+    const releaseBuffer = reserveHttpBuffer(size);
+    try {
+      // The RPC adapter supplies a Buffer. Keep it without making an additional copy.
+      let bytes = body || Buffer.alloc(0);
+      const payloadHash = this._auth?.sigV4 ? s3PayloadHash(bytes) : null;
+      return this._startRequest(method, path, headers, responseStream, size, payloadHash)
+          .then(({ req, responsePromise }) => {
+        const upload = async () => {
+          try {
+            for (let offset = 0; offset < size; offset += HTTP_MAX_UPLOAD_CHUNK_BYTES) {
+              await new Promise((resolve, reject) => {
+                req.write(bytes.subarray(offset, offset + HTTP_MAX_UPLOAD_CHUNK_BYTES), error => {
+                  if (error) reject(error);
+                  else resolve();
+                });
+              });
+            }
+            req.end(error => { if (error) req.destroy(makeTransportError(error)); });
+            await req.uploadComplete;
+          } catch (error) {
+            req.destroy(makeTransportError(error));
+          } finally {
+            bytes = undefined;
+            releaseBuffer();
+          }
+        };
+        // Response headers must remain observable while this upload is still in progress.
+        upload();
+        return responsePromise;
+      }, error => { releaseBuffer(); throw error; });
+    } catch (error) {
+      releaseBuffer();
+      throw error;
+    }
   }
 
   requestStreaming(method, path, headers, responseStream) {
-    return this._startRequest(method, path, headers, responseStream).then(({ req, responsePromise }) => {
+    return this._startRequest(method, path, headers, responseStream).then(({ req, responsePromise, cancel }) => {
       return {
         requestStream: new Capnp.Capability(
-            new OutboundRequestStream(req, responsePromise),
+            new OutboundRequestStream(req, responsePromise, cancel),
             OutboundHttpSession.RequestStream),
       };
     });
   }
 }
 
-function newOutboundHttpSession(baseUrl, methods, db, saveTemplate) {
+function newOutboundHttpSession(baseUrl, methods, db, saveTemplate, auth) {
   return new Capnp.Capability(
-      new OutboundHttpSessionImpl(baseUrl, methods, db, saveTemplate),
+      new OutboundHttpSessionImpl(baseUrl, methods, db, saveTemplate, auth),
       PersistentOutboundHttpSession);
 }
 
@@ -490,18 +234,33 @@ function registerOutboundHttpFrontendRef(registry) {
     typeId: OutboundHttpSession.typeId,
 
     restore(db, saveTemplate, value) {
-      return newOutboundHttpSession(value.baseUrl, value.methods, db, saveTemplate);
+      return newOutboundHttpSession(value.baseUrl, value.methods, db, saveTemplate, value.auth);
     },
 
     validate(db, session, request) {
       check(request, {
         baseUrl: String,
         methods: Match.Optional([Match.OneOf(String, Number, Object)]),
+        authenticationMethods: Match.Optional([{ kind: String, headerName: Match.Optional(String), scheme: Match.Optional(String),
+          parameterName: Match.Optional(String), region: Match.Optional(String), allowUnsignedPayload: Match.Optional(Boolean) }]),
+        auth: Match.Optional(Match.OneOf(
+            { none: null }, { caller: null }, { bearer: String },
+            { basic: { username: String, password: String } },
+            { apiKey: { headerName: String, value: String } },
+            { queryKey: { parameterName: String, value: String } },
+            { sigV4: { region: String, accessKeyId: String, secretAccessKey: String,
+              sessionToken: Match.Optional(String), allowUnsignedPayload: Match.Optional(Boolean) } },
+            { authorization: { scheme: String, value: String } })),
       });
 
       const baseUrl = validateBaseUrl(request.baseUrl);
       const methods = request.methods ? request.methods.map(methodName) : undefined;
+      const authenticationMethods = validateHttpAuthenticationMethods(request.authenticationMethods, true);
+      if (authenticationMethods.length || request.auth) {
+        validateHttpConnection({ url: baseUrl, auth: request.auth, authenticationMethods });
+      }
       const tagValue = { baseUrl };
+      if (authenticationMethods.length) tagValue.authenticationMethods = authenticationMethods;
       if (methods && methods.length > 0) tagValue.methods = methods.map(schemaMethodName);
 
       const descriptor = {
@@ -512,6 +271,7 @@ function registerOutboundHttpFrontendRef(registry) {
       };
 
       const frontendRef = { baseUrl };
+      if (request.auth) frontendRef.auth = request.auth;
       if (methods && methods.length > 0) frontendRef.methods = methods;
 
       return { descriptor, requirements: [], frontendRef };
@@ -519,7 +279,18 @@ function registerOutboundHttpFrontendRef(registry) {
 
     query(db, userAccountId, tagValue) {
       const tag = tagValue ? Capnp.parse(OutboundHttpSession.PowerboxTag, tagValue) : {};
-      const methods = tag.methods ? tag.methods.map(methodName) : undefined;
+      let authenticationMethods;
+      let methods;
+      try {
+        authenticationMethods = validateHttpAuthenticationMethods(tag.authenticationMethods, true);
+        methods = tag.methods ? tag.methods.map(methodName) : undefined;
+      } catch {
+        return [];
+      }
+      // Distinct authentication alternatives must not merge their method grants. In
+      // particular, POST+Bearer OR GET+Basic must not become GET/POST with either credential.
+      const authId = authenticationMethods.length ? ":auth:" + encodeURIComponent(JSON.stringify(
+        authenticationMethods.map(method => JSON.stringify(method)).sort())) : "";
       const options = [];
 
       if (tag.baseUrl) {
@@ -529,23 +300,19 @@ function registerOutboundHttpFrontendRef(registry) {
           if (methods && methods.length > 0) outboundHttp.methods = methods;
 
           options.push({
-            _id: "outbound-http-url-" + baseUrl,
+            _id: "outbound-http-url-" + baseUrl + authId,
             frontendRef: { outboundHttp },
             cardTemplate: "outboundHttpUrlPowerboxCard",
+            ...(authenticationMethods.length ? {
+              configureTemplate: "outboundHttpCredentialsConfiguration",
+              outboundHttp: true, httpUrl: baseUrl, authenticationMethods, methods,
+            } : {}),
           });
         } catch (err) {
-          // Ignore invalid suggested URLs. The arbitrary URL option below still lets the user
-          // choose a valid endpoint.
+          // A request must identify a valid endpoint; never offer a replacement destination.
+          return [];
         }
       }
-
-      options.push({
-        _id: "outbound-http-arbitrary",
-        outboundHttpArbitrary: true,
-        methods,
-        cardTemplate: "outboundHttpArbitraryPowerboxCard",
-        configureTemplate: "outboundHttpArbitraryPowerboxConfiguration",
-      });
 
       return options;
     },

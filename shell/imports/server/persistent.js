@@ -40,6 +40,28 @@ class PersistentImpl {
     this[privateIsSaved] = !!saveTemplate.parentToken;
   }
 
+  async checkLiveRequirements() {
+    const db = this[privateDb];
+    const template = this[privateTemplate];
+    await checkRequirements(db, template.requirements);
+    const seen = new Set();
+    let id = template.parentToken;
+    let root;
+    while (id) {
+      if (seen.has(id)) throw new Meteor.Error(403, "Invalid capability ancestry.");
+      seen.add(id);
+      const token = await db.collections.apiTokens.findOneAsync(id);
+      if (!token || token.revoked || (token.expires && token.expires <= new Date()) ||
+          (token.expiresIfUnused && token.expiresIfUnused <= new Date())) {
+        throw new Meteor.Error(403, "Connection authorization has expired or been revoked.");
+      }
+      await checkRequirements(db, token.requirements);
+      root = id;
+      id = token.parentToken;
+    }
+    return root;
+  }
+
   isSaved() {
     // Can be called by subclasses to ask whether or not a record currently exists in the ApiTokens
     // table representing this capability.
@@ -137,6 +159,40 @@ function cryptApiToken(key, entry, cryptIn, cryptOut) {
   }
 }
 
+function cryptOutboundCredentials(key, outbound, encrypt) {
+  // New outbound grants have no plaintext credential migration path. Bind credentials to
+  // their exact stored scope so database edits cannot redirect them or broaden methods.
+  const credentialKey = Crypto.createHash("sha256")
+      .update("sandstorm-outbound-credentials-v1\0").update(Buffer.from(key, "base64")).digest();
+  const scope = Buffer.from(JSON.stringify({ baseUrl: outbound.baseUrl, methods: outbound.methods || [] }));
+  if (encrypt) {
+    const nonce = Crypto.randomBytes(12);
+    const cipher = Crypto.createCipheriv("aes-256-gcm", credentialKey, nonce);
+    cipher.setAAD(scope);
+    const data = Buffer.concat([
+      cipher.update(JSON.stringify({ auth: outbound.auth }), "utf8"), cipher.final(),
+    ]);
+    outbound.encryptedCredentials = { version: 1, nonce, data, tag: cipher.getAuthTag() };
+    delete outbound.auth;
+  } else {
+    try {
+      const envelope = outbound.encryptedCredentials;
+      if (envelope.version !== 1 || outbound.auth) throw new Error("Invalid envelope");
+      const decipher = Crypto.createDecipheriv("aes-256-gcm", credentialKey, Buffer.from(envelope.nonce));
+      decipher.setAAD(scope);
+      decipher.setAuthTag(Buffer.from(envelope.tag));
+      const plaintext = Buffer.concat([
+        decipher.update(Buffer.from(envelope.data)), decipher.final(),
+      ]);
+      const { auth } = JSON.parse(plaintext.toString("utf8"));
+      if (auth) outbound.auth = auth;
+      delete outbound.encryptedCredentials;
+    } catch {
+      throw new Error("Unable to decrypt outbound HTTP credentials.");
+    }
+  }
+}
+
 async function fetchApiToken(db, key, moreQuery) {
   // Reads an ApiToken from the database and decrypts its encrypted fields.
 
@@ -155,6 +211,13 @@ async function fetchApiToken(db, key, moreQuery) {
   const entry = await db.collections.apiTokens.findOneAsync(query);
   if (entry) {
     cryptApiToken(key, entry, x => x, bufferToString);
+    const outbound = entry.frontendRef?.outboundHttp;
+    if (outbound?.encryptedCredentials) {
+      cryptOutboundCredentials(key, outbound, false);
+    } else if (outbound?.auth) {
+      throw new Error("Unencrypted outbound HTTP credentials are not supported.");
+    }
+
   }
 
   return entry;
@@ -178,6 +241,15 @@ async function insertApiToken(db, entry, key) {
 
   if (!key) key = generateSturdyRef();
   entry._id = hashSturdyRef(key);
+  // Detach nested values: saving must not encrypt a live capability's shared template.
+  const field = "outboundHttp";
+  if (entry.frontendRef?.[field]) {
+    const http = entry.frontendRef[field];
+    entry.frontendRef = { ...entry.frontendRef, [field]: {
+      ...http, auth: http.auth ? JSON.parse(JSON.stringify(http.auth)) : undefined,
+    } };
+    cryptOutboundCredentials(key, entry.frontendRef[field], true);
+  }
   cryptApiToken(key, entry, stringToBuffer, x => x);
   await db.collections.apiTokens.insertAsync(entry);
   return key;

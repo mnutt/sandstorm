@@ -267,6 +267,8 @@ if(BUILD_TESTING)
   add_test(NAME sandstorm/isolate-host-artifact
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/cmake/TestInstallIsolateHost.py"
       "${CMAKE_COMMAND}" "${PROJECT_SOURCE_DIR}/cmake/InstallIsolateHost.cmake")
+  add_executable(sandstorm-outbound-http-stream-probe outbound-http-stream-probe.c++)
+  target_link_libraries(sandstorm-outbound-http-stream-probe PRIVATE sandstorm_core)
   foreach(_test IN ITEMS appid-replacements id-to-text isolate-util util isolate-host-adapter http-bridge)
     set(_target "sandstorm-${_test}-test")
     add_executable("${_target}" "${_test}-test.c++")

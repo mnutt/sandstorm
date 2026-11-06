@@ -19,6 +19,10 @@ import { Template } from "meteor/templating";
 import { ReactiveVar } from "meteor/reactive-var";
 import { Accounts } from "meteor/accounts-base";
 
+import { validateHttpAuthenticationMethods, validateHttpConnectionFields,
+  httpAuthenticationChoices, validateHttpConnection as validateOutboundHttpConnection }
+  from "/imports/shared/outbound-http-profile";
+
 const prepareViewInfoForDisplay = function (viewInfo) {
   const result = { ...(viewInfo || {}) };
   if (result.permissions) indexElements(result.permissions);
@@ -87,7 +91,9 @@ const describeOutboundHttp = function (url, methods) {
 
   return {
     ...urlParts,
-    methodsSummary: describeOutboundHttpMethods(methods),
+    allowedMethods: describeOutboundHttpMethods(methods),
+    compactMethods: describeOutboundHttpMethods(methods).split(", ").join("/"),
+    url,
   };
 };
 
@@ -327,45 +333,107 @@ Template.outboundHttpUrlPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
 Template.outboundHttpUrlPowerboxCard.helpers(outboundHttpDisclosureHelpers(
     data => data.option.frontendRef.outboundHttp));
 
-Template.outboundHttpArbitraryPowerboxCard.powerboxIconSrc = () => "/web-m.svg";
-Template.outboundHttpArbitraryPowerboxCard.helpers({
-  methodsSummary: function () {
-    return describeOutboundHttpMethods(this.option.methods);
+Template.outboundHttpCredentialsConfiguration.onCreated(function () {
+  this._httpUrl = new ReactiveVar(this.data.option.httpUrl || "");
+  this._httpMethods = validateHttpAuthenticationMethods(this.data.option.authenticationMethods, true);
+  const choices = httpAuthenticationChoices(this._httpMethods);
+  this._httpAuth = new ReactiveVar(choices[0].id);
+  this._httpError = new ReactiveVar("");
+  this._httpSecretInputs = new Set();
+});
+
+Template.outboundHttpCredentialsConfiguration.helpers({
+  destination: () => Template.instance()._httpUrl.get(),
+  connectionFields: () => Template.instance().data.option.connectionFields || [],
+  callerCredentials: () => Template.instance()._httpAuth.get() === "caller",
+  noCredentials: () => Template.instance()._httpAuth.get() === "none",
+  queryKey: () => Template.instance()._httpMethods[0].kind === "queryKey",
+  queryParameter: () => Template.instance()._httpMethods[0].parameterName,
+  sigV4: () => Template.instance()._httpMethods[0].kind === "sigV4",
+  s3Region: () => Template.instance()._httpMethods[0].region,
+  s3UnsignedPayload: () => Template.instance()._httpMethods[0].allowUnsignedPayload,
+  scopeMethods: () => describeOutboundHttpMethods(Template.instance().data.option.methods).split(", "),
+  credentialPlacement: () => {
+    const method = Template.instance()._httpMethods[0];
+    switch (method.kind) {
+      case "bearer": return "Authorization: Bearer [value]";
+      case "apiKey": return method.headerName + ": [value]";
+      case "rawAuthorization": return "Authorization: [value]";
+      case "authorization": return "Authorization: " + method.scheme + " [value]";
+      case "basic": return "Authorization: Basic base64([username]:[password])";
+      default: return null;
+    }
   },
+  apiKey: () => Template.instance()._httpAuth.get().startsWith("apiKey:"),
+  authorizationToken: () => {
+    const kind = Template.instance()._httpAuth.get();
+    return kind === "rawAuthorization" || kind.startsWith("authorization:");
+  },
+  bearer: () => Template.instance()._httpAuth.get() === "bearer",
+  basic: () => Template.instance()._httpAuth.get() === "basic",
+  urlDetails: () => describeOutboundHttpUrl(Template.instance()._httpUrl.get()),
+  error: () => Template.instance()._httpError.get(),
 });
-Template.outboundHttpArbitraryPowerboxConfiguration.onCreated(function () {
-  this._outboundHttpUrl = new ReactiveVar("");
+
+const clearOutboundHttpSecrets = instance => {
+  instance.findAll("input.secret").forEach(input => { input.value = ""; });
+};
+
+Template.outboundHttpCredentialsConfiguration.onDestroyed(function () {
+  this._httpSecretInputs.forEach(input => { input.value = ""; });
+  this._httpSecretInputs.clear();
 });
-Template.outboundHttpArbitraryPowerboxConfiguration.helpers({
-  urlDetails: function () {
-    return describeOutboundHttp(Template.instance()._outboundHttpUrl.get(), this.option.methods);
+
+Template.outboundHttpCredentialsConfiguration.events({
+  "input input.secret, input input.connection-header": function (event, instance) {
+    instance._httpSecretInputs.add(event.currentTarget);
   },
 
-  methodsSummary: function () {
-    return describeOutboundHttpMethods(this.option.methods);
-  },
-});
-Template.outboundHttpArbitraryPowerboxConfiguration.events({
-  "input input.url, change input.url": function (event, instance) {
-    instance._outboundHttpUrl.set(event.currentTarget.value);
-  },
-
-  "click .connect-button": function (event, instance) {
+  "submit form": function (event, instance) {
     event.preventDefault();
-    const input = instance.find("form>input.url");
-
-    const outboundHttp = {
-      baseUrl: input.value,
-    };
-
-    if (this.option.methods && this.option.methods.length > 0) {
-      outboundHttp.methods = this.option.methods;
+    const value = selector => instance.find(selector).value;
+    const kind = instance._httpAuth.get();
+    let auth = { none: null };
+    if (kind === "caller") auth = { caller: null };
+    if (kind.startsWith("queryKey:")) {
+      auth = { queryKey: { parameterName: instance._httpMethods[0].parameterName, value: value("input.query-key") } };
+    }
+    if (kind === "sigV4") {
+      const declaration = instance._httpMethods[0];
+      auth = { sigV4: { region: declaration.region, allowUnsignedPayload: declaration.allowUnsignedPayload,
+        accessKeyId: value("input.s3-access-key"), secretAccessKey: value("input.s3-secret-key"),
+        sessionToken: value("input.s3-session-token") } };
+    }
+    if (kind === "bearer") auth = { bearer: value("input.bearer") };
+    if (kind === "rawAuthorization" || kind.startsWith("authorization:")) {
+      auth = { authorization: { scheme: kind === "rawAuthorization" ? "" : kind.slice(14),
+        value: value("input.authorization-token") } };
+    }
+    if (kind.startsWith("apiKey:")) {
+      auth = { apiKey: { headerName: kind.slice(7), value: value("input.api-key") } };
+    }
+    if (kind === "basic") {
+      auth = { basic: { username: value("input.username"), password: value("input.password") } };
     }
 
-    this.powerboxRequest.completeNewFrontendRef({
-      outboundHttp: {
-        ...outboundHttp,
-      },
-    });
+    const http = { url: instance._httpUrl.get(), auth, authenticationMethods: instance._httpMethods,
+      methods: instance.data.option.methods || [],
+      connectionFields: validateHttpConnectionFields(instance.data.option.connectionFields) };
+    http.connectionHeaders = instance.findAll("input.connection-header")
+        .filter(input => input.value)
+        .map(input => ({ name: input.name, value: input.value }));
+    try {
+      validateOutboundHttpConnection(http);
+    } catch (err) {
+      instance._httpError.set(err.message);
+      return;
+    }
+
+    clearOutboundHttpSecrets(instance);
+    instance.findAll("input.connection-header").forEach(input => { input.value = ""; });
+    this.powerboxRequest.completeNewFrontendRef({ outboundHttp: {
+      baseUrl: http.url, auth: http.auth, authenticationMethods: http.authenticationMethods,
+      methods: http.methods,
+    } });
   },
 });

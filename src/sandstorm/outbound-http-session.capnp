@@ -50,6 +50,9 @@ interface OutboundHttpSession @0xbf91271b527d6f33 {
   #
   # Call `getResponse()` on the returned stream to observe response headers and
   # status. The response body is written to `responseStream`.
+  # Call inherited expectSize() before the first write to supply Content-Length.
+  # A later expectSize() declares the remaining bytes without changing sent headers.
+  # Size mismatches cancel the request. done() waits until the upload has been sent.
 
   enum Method {
     get @0;
@@ -79,5 +82,35 @@ interface OutboundHttpSession @0xbf91271b527d6f33 {
   struct PowerboxTag {
     baseUrl @0 :Text;
     methods @1 :List(Method);
+    authenticationMethods @2 :List(AuthenticationMethod);
+    # New requests must declare exactly one mechanism, including none for unauthenticated
+    # APIs. Missing/multiple mechanisms are rejected. Credentials are collected by Sandstorm,
+    # stored encrypted, and injected only at the approved destination. Existing saved grants
+    # retain their behavior. Declarations require a supporting server;
+    # older servers ignore this field and cannot supply managed authentication.
+
+    struct AuthenticationMethod @0x98a4b8f66b9a9b19 {
+      kind @0 :Kind;
+      headerName @1 :Text;
+      scheme @2 :Text; # Required only for authorization, e.g. "Bot". No arbitrary templates.
+      parameterName @3 :Text; # queryKey only: one whole query parameter value.
+      region @4 :Text; # sigV4 only: signing service is fixed to s3.
+      allowUnsignedPayload @5 :Bool = false;
+      # sigV4 only: allow known-length streaming with UNSIGNED-PAYLOAD.
+      # Buffered requests always hash their payload. No signed chunks or automatic renewal.
+      # Required only for apiKey: sends the key verbatim in this HTTP header. Authorization,
+      # transport, cookies, and identity headers are reserved. Bearer/Basic use Authorization.
+      enum Kind @0x8c93fef64034c75c {
+        bearer @0;
+        basic @1;
+        apiKey @2;
+        rawAuthorization @3;
+        authorization @4;
+        caller @5; # Explicit grant: the grain supplies credentials in request headers/body.
+        none @6; # Explicitly unauthenticated API; no credential fields are shown.
+        queryKey @7; # Secret query parameter; no path substitution.
+        sigV4 @8; # Access key ID, secret access key and optional session token.
+      }
+    }
   }
 }
