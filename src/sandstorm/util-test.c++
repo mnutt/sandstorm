@@ -18,6 +18,7 @@
 #include <kj/test.h>
 #include <kj/async-unix.h>
 #include <sys/wait.h>
+#include <stdlib.h>
 #include <kj/async-io.h>
 
 namespace sandstorm {
@@ -195,6 +196,62 @@ KJ_TEST("Subprocess") {
     KJ_EXPECT(readAll(pipe4.readEnd) == "bar\n");
     child.waitForSuccess();
   }
+}
+
+KJ_TEST("Subprocess bounded wait reports exit, signal, and timeout and reaps exactly once") {
+  {
+    Subprocess child([]() { return 23; });
+    auto result = child.waitForExitOrSignal(1000);
+    KJ_EXPECT(!result.timedOut, WIFEXITED(result.status), WEXITSTATUS(result.status) == 23);
+    KJ_EXPECT(!child.isRunning());
+  }
+  {
+    Subprocess child([]() { raise(SIGKILL); return 0; });
+    auto result = child.waitForExitOrSignal(1000);
+    KJ_EXPECT(!result.timedOut, WIFSIGNALED(result.status), WTERMSIG(result.status) == SIGKILL);
+  }
+  {
+    Subprocess child([]() {
+      signal(SIGTERM, SIG_IGN);
+      for (;;) pause();
+      return 0;
+    });
+    auto pid = child.getPid();
+    auto result = child.waitForExitOrSignal(30);
+    KJ_EXPECT(result.timedOut, WIFSIGNALED(result.status), WTERMSIG(result.status) == SIGKILL);
+    KJ_EXPECT(!child.isRunning());
+    int status;
+    KJ_EXPECT(waitpid(pid, &status, WNOHANG) == -1, errno == ECHILD);
+  }
+}
+
+KJ_TEST("mongosh deleted HOME is bounded (optional real-shell regression)") {
+  const char* shell = getenv("SANDSTORM_TEST_MONGOSH");
+  if (shell == nullptr) return;
+  char dir[] = "/tmp/sandstorm-mongosh-home-XXXXXX";
+  KJ_REQUIRE(mkdtemp(dir) != nullptr);
+  auto home = raiiOpen(dir, O_RDONLY | O_DIRECTORY);
+  KJ_DEFER(if (access(dir, F_OK) == 0) recursivelyDelete(dir));
+  // The shell accesses the directory through an inherited descriptor. Removing the
+  // directory recreates the stale bind-mount failure without requiring mount privileges.
+  auto run = [&]() {
+    Subprocess::Options options({shell, "--nodb", "--quiet", "--norc", "--eval", "quit(0)"});
+    int inherited[] = {home.get()};
+    options.moreFds = inherited;
+    const kj::StringPtr env[] = {"HOME=/proc/self/fd/3", "PATH=/usr/bin:/bin"};
+    options.environment = kj::arrayPtr(env, 2);
+    auto output = raiiOpen("/dev/null", O_WRONLY);
+    options.stdout = options.stderr = output;
+    Subprocess child(kj::mv(options));
+    return child.waitForExitOrSignal(3000);
+  };
+  auto baseline = run();
+  KJ_REQUIRE(!baseline.timedOut && WIFEXITED(baseline.status) &&
+      WEXITSTATUS(baseline.status) == 0, "mongosh must start with a valid HOME");
+  recursivelyDelete(dir);
+  auto result = run();
+  // Fixed mongosh versions may exit with an error instead; either outcome is bounded.
+  KJ_EXPECT(result.timedOut || WIFEXITED(result.status));
 }
 
 KJ_TEST("SubprocessSet") {

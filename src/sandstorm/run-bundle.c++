@@ -3600,7 +3600,7 @@ private:
           "timestamp:", time(nullptr), ","
           "manifest:", toMongoJson(manifest), ","
           "mountProc:", mountProc ? "true" : "false",
-        "})"));
+        "})"), "meteor", "insert", pkgId);
   }
 
   void updateDevPackage(const Config& config, kj::StringPtr pkgId, spk::Manifest::Reader manifest) {
@@ -3609,31 +3609,38 @@ private:
         "void db.devpackages.updateOne({_id:\"", pkgId, "\"}, {$set: {"
           "timestamp:", time(nullptr), ","
           "manifest:", toMongoJson(manifest),
-        "}})"));
+        "}})"), "meteor", "update", pkgId);
   }
 
   void removeDevPackage(const Config& config, kj::StringPtr pkgId) {
     FdBundle fakeBundle(nullptr);
     mongoCommand(config, fakeBundle, kj::str(
-        "void db.devpackages.deleteOne({_id:\"", pkgId, "\"})"));
+        "void db.devpackages.deleteOne({_id:\"", pkgId, "\"})"), "meteor", "remove", pkgId);
   }
 
   void clearDevPackages(const Config& config) {
     FdBundle fakeBundle(nullptr);
-    mongoCommand(config, fakeBundle, kj::str("void db.devpackages.deleteMany({})"));
+    mongoCommand(config, fakeBundle, kj::str("void db.devpackages.deleteMany({})"), "meteor", "clear");
   }
 
   void mongoCommand(const Config& config, FdBundle& fdBundle,
-                    kj::StringPtr command, kj::StringPtr db = "meteor") {
+                    kj::StringPtr command, kj::StringPtr db = "meteor",
+                    kj::StringPtr devPackageOperation = nullptr, kj::StringPtr packageId = "all") {
     // Read password file if it exists (for authenticated connections)
     kj::Maybe<kj::String> maybePassword;
     if (access("/var/mongo/passwd", F_OK) == 0) {
       maybePassword = trim(readAll(raiiOpen("/var/mongo/passwd", O_RDONLY)));
     }
 
+    auto parent = getpid();
     Subprocess process([&]() -> int {
       fdBundle.closeAll();
       dropPrivs(config.uids);
+      clearSignalMask();
+      if (devPackageOperation != nullptr) {
+        KJ_SYSCALL(prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0));
+        if (getppid() != parent) _exit(1);
+      }
       KJ_IF_MAYBE(password, maybePassword) {
         execMongoCommand(config, command, db, nullptr, password->asPtr());
       } else {
@@ -3641,7 +3648,17 @@ private:
       }
       KJ_UNREACHABLE;
     });
-    process.waitForSuccess();
+    if (devPackageOperation != nullptr) {
+      auto pid = process.getPid();
+      auto result = process.waitForExitOrSignal(10000);
+      KJ_REQUIRE(!result.timedOut, "dev MongoDB helper timed out after 10000ms",
+          devPackageOperation, packageId, pid);
+      KJ_REQUIRE(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+          "dev MongoDB helper failed", devPackageOperation, packageId, pid, result.status);
+    } else {
+      // Administrative commands retain their existing unbounded maintenance policy.
+      process.waitForSuccess();
+    }
   }
 
   // Overload for use without FdBundle (e.g., during migration)

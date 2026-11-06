@@ -28,6 +28,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <map>
+#include <chrono>
+#include <time.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/sendfile.h>
@@ -755,6 +757,28 @@ int Subprocess::waitForExitOrSignal() {
   }
   pid = 0;
   return status;
+}
+
+Subprocess::TimedWaitResult Subprocess::waitForExitOrSignal(unsigned timeoutMillis) {
+  KJ_REQUIRE(pid != 0, "already waited for this child");
+  KJ_REQUIRE(subprocessSet == nullptr, "cannot combine timed wait with SubprocessSet");
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMillis);
+  for (;;) {
+    int status;
+    pid_t result;
+    KJ_SYSCALL(result = waitpid(pid, &status, WNOHANG));
+    if (result != 0) {
+      pid = 0;
+      return {status, false};
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      signal(SIGKILL);
+      return {waitForExitOrSignal(), true};
+    }
+    struct timespec pause = {0, 10000000};
+    // A signal may interrupt the sleep; always check the monotonic deadline again.
+    nanosleep(&pause, nullptr);
+  }
 }
 
 void Subprocess::forceFdAbove(int& fd, int minValue) {

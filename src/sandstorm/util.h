@@ -361,6 +361,14 @@ public:
   // Waits for the child to exit and returns the exit status. Throws an exception if it is killed
   // by a signal.
 
+  struct TimedWaitResult {
+    int status;  // waitpid status, including the signal used on timeout.
+    bool timedOut;
+  };
+  TimedWaitResult waitForExitOrSignal(unsigned timeoutMillis);
+  // Opt-in monotonic timeout. Sends SIGKILL and reaps on timeout. Not for use with
+  // SubprocessSet; the caller must exclusively own this child's wait status.
+
   int waitForExitOrSignal() KJ_WARN_UNUSED_RESULT;
   // Waits for the child to exit or be killed by a signal. Returns an exit status that can be
   // interpreted by WIFEXITED(), WEXITSTATUS(), etc. as described in the wait(2) man page.
