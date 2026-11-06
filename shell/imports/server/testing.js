@@ -20,6 +20,7 @@ import { Random } from "meteor/random";
 import { SHA256 } from "meteor/sha";
 import { ServiceConfiguration } from "meteor/service-configuration";
 import "/imports/oidc/oidc-server";
+import inspector from "inspector";
 import { globalDb } from "/imports/db-deprecated";
 import { httpCallAsync } from "/imports/server/http-helpers";
 import { getGlobalBackend } from "/imports/server/backend-instance";
@@ -322,32 +323,82 @@ function summarizeBenchmarkSamples(samples, totalNs) {
   };
 }
 
+function benchmarkProfileName(name) {
+  return name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+}
+
+function inspectorPost(session, method, params) {
+  return new Promise((resolve, reject) => {
+    session.post(method, params || {}, (err, result) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result || {});
+      }
+    });
+  });
+}
+
+async function withCpuProfile(name, options, operation) {
+  if (!options.profile) return await operation();
+
+  const session = new inspector.Session();
+  session.connect();
+
+  let result;
+  let profile;
+  try {
+    await inspectorPost(session, "Profiler.setSamplingInterval", {
+      interval: options.profileSamplingIntervalUs,
+    });
+    await inspectorPost(session, "Profiler.enable");
+    await inspectorPost(session, "Profiler.start");
+    result = await operation();
+    ({ profile } = await inspectorPost(session, "Profiler.stop"));
+  } finally {
+    try {
+      await inspectorPost(session, "Profiler.disable");
+    } catch (_err) {
+      // Ignore profiler shutdown errors after a failed benchmark.
+    }
+    session.disconnect();
+  }
+
+  result.profile = profile;
+  result.profileFileName =
+      `${options.profilePrefix || "node-capnp"}-${benchmarkProfileName(name)}.cpuprofile`;
+
+  return result;
+}
+
 async function runBenchmark(name, options, operation) {
   for (let i = 0; i < options.warmup; ++i) {
     await operation();
   }
 
-  const samples = [];
-  const totalStart = benchmarkNowNs();
-  for (let i = 0; i < options.iterations; ++i) {
-    const start = benchmarkNowNs();
-    await operation();
-    samples.push(benchmarkNowNs() - start);
-  }
+  return await withCpuProfile(name, options, async () => {
+    const samples = [];
+    const totalStart = benchmarkNowNs();
+    for (let i = 0; i < options.iterations; ++i) {
+      const start = benchmarkNowNs();
+      await operation();
+      samples.push(benchmarkNowNs() - start);
+    }
 
-  const summary = summarizeBenchmarkSamples(samples, benchmarkNowNs() - totalStart);
-  summary.name = name;
-  if (options.includeSamples) {
-    summary.samplesMs = samples.map(sample => sample / 1e6);
-  }
+    const summary = summarizeBenchmarkSamples(samples, benchmarkNowNs() - totalStart);
+    summary.name = name;
+    if (options.includeSamples) {
+      summary.samplesMs = samples.map(sample => sample / 1e6);
+    }
 
-  return summary;
+    return summary;
+  });
 }
 
 async function runSupervisorBenchmarks(grainId, options) {
   if (!grainId) return [];
 
-  const grainInfo = await globalThis.globalBackend.continueGrain(grainId);
+  const grainInfo = await getGlobalBackend().continueGrain(grainId);
   const supervisor = grainInfo.supervisor;
 
   try {
@@ -383,6 +434,9 @@ if(isTesting) {
         iterations: benchmarkNumber(raw.iterations, 200, 1, 10000),
         warmup: benchmarkNumber(raw.warmup, 20, 0, 1000),
         includeSamples: !!raw.includeSamples,
+        profile: !!raw.profile,
+        profilePrefix: typeof raw.profilePrefix === "string" ? raw.profilePrefix : undefined,
+        profileSamplingIntervalUs: benchmarkNumber(raw.profileSamplingIntervalUs, 1000, 100, 10000),
       };
 
       const grain = raw.grainId && await globalDb.collections.grains.findOneAsync(
@@ -395,7 +449,7 @@ if(isTesting) {
           (readyPackage && readyPackage._id);
       const grainId = raw.grainId || null;
       const results = [];
-      const backend = globalThis.globalBackend.cap();
+      const backend = getGlobalBackend().cap();
 
       results.push(await runBenchmark("backend.ping", options, async () => {
         await backend.ping();
