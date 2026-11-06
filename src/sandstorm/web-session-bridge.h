@@ -68,6 +68,8 @@ public:
 
     kj::Array<HttpStatusDescriptor::Reader> successCodeTable;
     kj::Array<HttpStatusDescriptor::Reader> errorCodeTable;
+    kj::Array<HttpStatusDescriptor::Reader> serverErrorCodeTable;
+    HeaderWhitelist apiResponseHeaderWhitelist;
     HeaderWhitelist requestHeaderWhitelist;
     HeaderWhitelist responseHeaderWhitelist;
   };
@@ -78,6 +80,9 @@ public:
 
     bool isHttps = false;
     // Will we be serving over HTTPS?
+
+    bool allowApiResponseHeaders = false;
+    // Enabled only for the grain-local capability proxy, not browser-facing sessions.
 
     bool isApi = false;
     // If true, set Access-Control-Allow-Origin and the like as appropriate for an API endpoint.

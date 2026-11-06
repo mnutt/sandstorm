@@ -514,6 +514,8 @@
       "pathPrefix": "with the following path prefix:",
       "valueSentAs": "Value will be sent as",
       "settingsTitle": "App-requested settings",
+      "organization": "Organization (optional)",
+      "project": "Project (optional)",
       "optional": "Optional",
       "required": "Required",
       "authentication": "Authentication",

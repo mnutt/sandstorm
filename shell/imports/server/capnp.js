@@ -96,6 +96,14 @@ WebSession.WebSession.Response.headerWhitelist = [
   "x-oc-mtime",
 ];
 
+ApiSession.ApiSession.responseHeaderWhitelist = [
+  "retry-after", "x-request-id",
+  "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+  "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+  "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+  "openai-processing-ms", "openai-version",
+];
+
 const MODULES = Object.values(SCHEMAS);
 const interfaceByTypeId = new Map();
 const enumByDisplayName = new Map();

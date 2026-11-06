@@ -710,6 +710,8 @@ const ApiTokens = new Mongo.Collection("apiTokens", collectionOptions);
 //       identity :Text;
 //       http :group {
 //         url :Text;
+//         connectionHeaders :List({ name :Text, value :Text });
+//         # Optional validated non-secret provider settings (OpenAI project/organization).
 //         auth :union {
 //           none :Void;
 //           bearer :Text;

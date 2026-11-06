@@ -17,20 +17,20 @@
 import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
-import { inMeteor } from "/imports/server/async-helpers";
 import { httpCallAsync } from "/imports/server/http-helpers";
 import { PersistentImpl } from "/imports/server/persistent";
 import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
-import { ssrfSafeLookup } from "/imports/server/networking";
-import { REQUEST_HEADER_WHITELIST, RESPONSE_HEADER_WHITELIST }
+import {
+  validateBaseUrl, buildHttpUrl, sanitizeHeaders, startHttpRequest, readHttpBody,
+} from "/imports/server/http-transport";
+import { REQUEST_HEADER_WHITELIST, RESPONSE_HEADER_WHITELIST, API_RESPONSE_HEADER_WHITELIST }
     from "/imports/server/header-whitelist";
 import { globalDb } from "/imports/db-deprecated";
 
 import { responseCodes } from "/imports/server/web-session";
 
-import Url from "url";
-import Http from "http";
-import Https from "https";
+import { httpAuthenticationHint, validateHttpConnection } from "/imports/shared/http-api-profile";
+
 import Capnp from "/imports/server/capnp";
 const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
 const PersistentApiSession =
@@ -90,12 +90,12 @@ async function refreshOAuth(url, refreshToken) {
   return response.data;
 }
 
-function newExternalHttpSession(url, auth, db, saveTemplate) {
+function newExternalHttpSession(url, auth, db, saveTemplate, connectionHeaders = []) {
   // `url` and `auth` are the corresponding members of `ApiToken.frontendRef.http`.
 
   const createCap = () => {
     return new Capnp.Capability(new ExternalWebSession(url,
-        {},
+        { headers: Object.fromEntries(connectionHeaders.map(({ name, value }) => [name, value])) },
         auth,
         db, saveTemplate), PersistentApiSession);
   };
@@ -109,12 +109,13 @@ function registerHttpApiFrontendRef(registry) {
     typeId: ApiSession.typeId,
 
     restore(db, saveTemplate, value) {
-      return newExternalHttpSession(value.url, value.auth, db, saveTemplate);
+      return newExternalHttpSession(value.url, value.auth, db, saveTemplate, value.connectionHeaders);
     },
 
     validate(db, session, request) {
       check(request, {
         url: String,
+        connectionHeaders: Match.Optional([{ name: String, value: String }]),
         auth: Match.OneOf(
             { none: null },
             { bearer: String },
@@ -122,37 +123,11 @@ function registerHttpApiFrontendRef(registry) {
             { oauth: { credentialToken: String, credentialSecret: String } }),
       });
 
-      if (!request.url.startsWith("https://") &&
-          !request.url.startsWith("http://")) {
-        throw new Meteor.Error(400, "URL must be HTTP or HTTPS.");
-      }
-
-      // Check for URL patterns.
-      const parsedUrl = Url.parse(request.url);
-
-      if (parsedUrl.auth) {
-        const parts = parsedUrl.auth.split(":");
-        if (parts.length === 2) {
-          if ("none" in request.auth) {
-            request.auth = { basic: { username: parts[0], password: parts[1] } };
-          } else {
-            throw new Meteor.Error(400, "Can't support multiple authentication mechanisms at once");
-          }
-        }
-
-        parsedUrl.auth = null;
-        request.url = Url.format(parsedUrl);
-      }
-
-      if (parsedUrl.hash) {
-        if ("none" in request.auth) {
-          request.auth = { bearer: parsedUrl.hash.slice(1) };
-        } else {
-          throw new Meteor.Error(400, "Can't support multiple authentication mechanisms at once");
-        }
-
-        parsedUrl.hash = null;
-        request.url = Url.format(parsedUrl);
+      try {
+        validateHttpConnection(request);
+        request.url = validateBaseUrl(request.url);
+      } catch (err) {
+        throw new Meteor.Error(400, err.message);
       }
 
       if (request.auth.oauth) {
@@ -177,7 +152,11 @@ function registerHttpApiFrontendRef(registry) {
         //   account? (As a non-login credential.)
       }
 
-      const descriptor = { tags: [{ id: ApiSession.typeId }] };
+      const authentication = request.auth.basic ? "basic" :
+          (request.auth.bearer || request.auth.refresh ? "bearer" : "");
+      const descriptor = { tags: [{ id: ApiSession.typeId,
+        value: Capnp.serialize(ApiSession.PowerboxTag, { authentication }),
+      }] };
       return { descriptor, requirements: [], frontendRef: request };
     },
 
@@ -185,6 +164,9 @@ function registerHttpApiFrontendRef(registry) {
       const tag = tagValue ? Capnp.parse(ApiSession.PowerboxTag, tagValue) : {};
 
       const options = [];
+      const authentication = httpAuthenticationHint(tag.authentication);
+      // Unknown hints must never fall back to an anonymous connection.
+      if (authentication === null) return options;
 
       if (tag.canonicalUrl &&
           (tag.canonicalUrl.startsWith("https://") ||
@@ -203,12 +185,15 @@ function registerHttpApiFrontendRef(registry) {
             oauthScopes: tag.oauthScopes,
           });
         } else {
-          // TODO(soon): Support tag.authentication.
-
           options.push({
             _id: "http-url-" + tag.canonicalUrl,
             frontendRef: { http: { url: tag.canonicalUrl, auth: { none: null } } },
             cardTemplate: "httpUrlPowerboxCard",
+            ...(authentication !== "none" ? {
+              configureTemplate: "httpArbitraryPowerboxConfiguration",
+              httpUrl: tag.canonicalUrl,
+              authentication,
+            } : {}),
           });
         }
       }
@@ -217,6 +202,7 @@ function registerHttpApiFrontendRef(registry) {
       // if canonicalUrl exists.
       options.push({
         _id: "http-arbitrary",
+        authentication,
         cardTemplate: "httpArbitraryPowerboxCard",
         configureTemplate: "httpArbitraryPowerboxConfiguration",
       });
@@ -271,34 +257,17 @@ class ExternalWebSession extends PersistentImpl {
     if (!options) options = {};
     this.options = options;
     this.auth = auth || { none: null };
-    this._url = url;
+    this._url = validateBaseUrl(url);
     this._db = db;
-    this._resolvedTargetPromise = null;
+    this._requests = new Set();
+    this._closed = false;
     this._authorizationPromise = null;
   }
 
-  _ensureResolvedTarget() {
-    if (!this._resolvedTargetPromise) {
-      this._resolvedTargetPromise = ssrfSafeLookup(this._db, this._url).then((safe) => {
-        if (!this.options.headers) this.options.headers = {};
-        this.options.headers.host = safe.host;
-        this.options.servername = safe.host.split(":")[0];
-
-        const parsedUrl = Url.parse(safe.url);
-        this.host = parsedUrl.hostname;
-        if (parsedUrl.path === "/") {
-          // The URL parser says path = "/" for both "http://foo" and "http://foo/".
-          this.path = this._url.endsWith("/") ? "/" : "";
-        } else {
-          this.path = parsedUrl.path;
-        }
-
-        this.port = parsedUrl.port;
-        this.protocol = parsedUrl.protocol;
-      });
-    }
-
-    return this._resolvedTargetPromise;
+  close() {
+    this._closed = true;
+    this._requests.forEach(request => request.cancel());
+    this._requests.clear();
   }
 
   _ensureAuthorization() {
@@ -337,7 +306,7 @@ class ExternalWebSession extends PersistentImpl {
     return this._requestHelper("DELETE", path, context);
   }
 
-  // TODO(someday): implement streaming and websockets for ExternalWebSession
+  // TODO(someday): implement streaming uploads and websockets for ExternalWebSession
   //postStreaming(path, mimeType, context) {
   //}
 
@@ -348,234 +317,258 @@ class ExternalWebSession extends PersistentImpl {
   //}
 
   _requestHelper(method, path, context, content, contentType) {
-    const _this = this;
-    const session = _this;
-    return new Promise((resolve, reject) => {
-      Promise.resolve()
-          .then(() => session._ensureResolvedTarget())
-          .then(() => session._ensureAuthorization())
-          .then((authorization) => {
-      const options = { ...session.options };
-      options.headers = options.headers || {};
-      if (authorization) {
-        options.headers.authorization = authorization;
-      }
+    // Reject paths and headers before DNS, OAuth, or credential injection.
+    if (this._closed) throw new Error("HTTP session is closed.");
+    const url = buildHttpUrl(this._url, path);
+    const options = { headers: { ...this.options.headers } };
+    if (!options.headers["user-agent"]) {
+      options.headers["user-agent"] = "sandstorm app";
+    }
+    if (contentType) {
+      options.headers["content-type"] = contentType;
+    }
 
-      if (!options.headers["user-agent"]) {
-        options.headers["user-agent"] = "sandstorm app";
-      }
-      options.path = this.path + "/" + path;
-      options.method = method;
-      if (contentType) {
-        options.headers["content-type"] = contentType;
-      }
+    // set accept header
+    if ("accept" in context) {
+      options.headers.accept = context.accept.map((acceptedType) => {
+        return acceptedType.mimeType + "; q=" + acceptedType.qValue;
+      }).join(", ");
+    } else if (!("accept" in options.headers)) {
+      options.headers.accept = "*/*";
+    }
 
-      // set accept header
-      if ("accept" in context) {
-        options.headers.accept = context.accept.map((acceptedType) => {
-          return acceptedType.mimeType + "; q=" + acceptedType.qValue;
-        }).join(", ");
-      } else if (!("accept" in options.headers)) {
-        options.headers.accept = "*/*";
-      }
-
-      // set cookies
-      if (context.cookies && context.cookies.length > 0) {
-        options.headers.cookies = options.headers.cookies || "";
-        context.cookies.forEach((keyVal) => {
-          options.headers.cookies += keyVal.key + "=" + keyVal.val + ",";
-        });
-        options.headers.cookies = options.headers.cookies.slice(0, -1);
-      }
-
-      // set precondition
-      if (context.eTagPrecondition) {
-        if (context.eTagPrecondition.none) {
-          // nothing
-        } else if (context.eTagPrecondition.exists) {
-          options.headers["if-match"] = "*";
-        } else if (context.eTagPrecondition.doesntExist) {
-          options.headers["if-none-match"] = "*";
-        } else if (context.eTagPrecondition.matchesOneOf) {
-          options.headers["if-match"] =
-              context.eTagPrecondition.matchesOneOf.map(composeETag).join(", ");
-        } else if (context.eTagPrecondition.matchesNoneOf) {
-          options.headers["if-none-match"] =
-              context.eTagPrecondition.matchesNoneOf.map(composeETag).join(", ");
-        }
-      }
-
-      // set additional headers
-      (context.additionalHeaders || []).forEach(header => {
-        if (REQUEST_HEADER_WHITELIST.matches(header.name)) {
-          options.headers[header.name] = header.value;
-        }
+    // set cookies
+    if (context.cookies && context.cookies.length > 0) {
+      options.headers.cookies = options.headers.cookies || "";
+      context.cookies.forEach((keyVal) => {
+        options.headers.cookies += keyVal.key + "=" + keyVal.val + ",";
       });
+      options.headers.cookies = options.headers.cookies.slice(0, -1);
+    }
 
-      options.host = session.host;
-      options.port = session.port;
+    // set precondition
+    if (context.eTagPrecondition) {
+      if (context.eTagPrecondition.none) {
+        // nothing
+      } else if (context.eTagPrecondition.exists) {
+        options.headers["if-match"] = "*";
+      } else if (context.eTagPrecondition.doesntExist) {
+        options.headers["if-none-match"] = "*";
+      } else if (context.eTagPrecondition.matchesOneOf) {
+        options.headers["if-match"] =
+            context.eTagPrecondition.matchesOneOf.map(composeETag).join(", ");
+      } else if (context.eTagPrecondition.matchesNoneOf) {
+        options.headers["if-none-match"] =
+            context.eTagPrecondition.matchesNoneOf.map(composeETag).join(", ");
+      }
+    }
 
-      let requestMethod = Http.request;
-      if (session.protocol === "https:") {
-        requestMethod = Https.request;
+    // set additional headers
+    const callerHeaders = sanitizeHeaders(context.additionalHeaders);
+    Object.entries(callerHeaders).forEach(([name, value]) => {
+      if (name === "authorization" ||
+          Object.prototype.hasOwnProperty.call(this.options.headers || {}, name)) {
+        throw new Error("Cannot override a connection-managed header.");
       }
 
-      let req = requestMethod(options, (resp) => {
-        try {
-          const buffers = [];
-          const statusInfo = responseCodes[resp.statusCode];
-
-          const rpcResponse = {};
-
-          rpcResponse.additionalHeaders = [];
-          for (const headerName in resp.headers) {
-            if (RESPONSE_HEADER_WHITELIST.matches(headerName)) {
-              rpcResponse.additionalHeaders.push({
-                name: headerName,
-                value: resp.headers[headerName],
-              });
-            }
-          }
-
-          resp.on("data", (buf) => {
-            buffers.push(buf);
-          });
-
-          resp.on("end", () => {
-            try {
-              const data = Buffer.concat(buffers);
-
-              function fillInErrorBody(error) {
-                const contentType = resp.headers["content-type"];
-                if (contentType && (contentType == "text/html" ||
-                                    contentType.startsWith("text/html;"))) {
-                  // TODO(someday): Check for non-UTF-8 charset and translate?
-                  error.descriptionHtml = data.toString("utf8");
-                } else if (contentType || data.length > 0) {
-                  const content = { data };
-                  if (contentType) content.mimeType = contentType;
-                  if ("content-encoding" in resp.headers) content.encoding = resp.headers["content-encoding"];
-                  if ("content-language" in resp.headers) content.language = resp.headers["content-language"];
-                  error.nonHtmlBody = content;
-                }
-              }
-
-              switch (statusInfo ? statusInfo.type : resp.statusCode) {
-                case "content": {
-                  const content = {};
-                  rpcResponse.content = content;
-
-                  content.statusCode = statusInfo.code;
-                  if ("content-encoding" in resp.headers) content.encoding = resp.headers["content-encoding"];
-                  if ("content-language" in resp.headers) content.language = resp.headers["content-language"];
-                  if ("content-type" in resp.headers) content.mimeType = resp.headers["content-type"];
-                  if ("content-disposition" in resp.headers) {
-                    const disposition = resp.headers["content-disposition"];
-                    const parts = disposition.split(";");
-                    if (parts[0].toLowerCase().trim() === "attachment") {
-                      parts.forEach((part) => {
-                        const splitPart = part.split("=");
-                        if (splitPart[0].toLowerCase().trim() === "filename") {
-                          content.disposition = { download: splitPart[1].trim() };
-                        }
-                      });
-                    }
-                  }
-
-                  if (resp.headers.etag) {
-                    content.eTag = parseETag(resp.headers.etag);
-                  }
-
-                  content.body = {};
-                  content.body.bytes = data;
-
-                  resolve(rpcResponse);
-                  break;
-                }
-                case "noContent": {
-                  const noContent = {};
-                  rpcResponse.noContent = noContent;
-                  noContent.setShouldResetForm = statusInfo.shouldResetForm;
-                  if (resp.headers.etag) {
-                    noContent.eTag = parseETag(resp.headers.etag);
-                  }
-
-                  resolve(rpcResponse);
-                  break;
-                }
-                case "redirect": {
-                  const redirect = {};
-                  rpcResponse.redirect = redirect;
-                  redirect.isPermanent = statusInfo.isPermanent;
-                  redirect.switchToGet = statusInfo.switchToGet;
-                  if ("location" in resp.headers) redirect.location = resp.headers.location;
-                  resolve(rpcResponse);
-                  break;
-                }
-                case "clientError": {
-                  const clientError = {};
-                  rpcResponse.clientError = clientError;
-                  clientError.statusCode = statusInfo.clientErrorCode;
-
-                  fillInErrorBody(clientError);
-                  resolve(rpcResponse);
-                  break;
-                }
-                case "serverError": {
-                  const serverError = {};
-                  rpcResponse.serverError = serverError;
-                  fillInErrorBody(serverError);
-                  resolve(rpcResponse);
-                  break;
-                }
-                case "preconditionFailed": {
-                  const preconditionFailed = {};
-                  rpcResponse.preconditionFailed = preconditionFailed;
-                  if (resp.headers.etag) {
-                    preconditionFailed.matchingETag = parseETag(resp.headers.etag);
-                  }
-
-                  resolve(rpcResponse);
-                  break;
-
-                // TODO(soon): Handle token-expired errors by throwing DISCONNECTED -- this will
-                //   force the client to reload the capability which will refresh the token.
-
-                }
-                default: {
-                  // ???
-                  const err = new Error(
-                      "Invalid status code " + resp.statusCode + " received in response.");
-                  reject(err);
-                  break;
-                }
-              }
-            } catch (err) {
-              reject(err);
-            }
-          });
-        } catch (err) {
-          reject(err);
-        }
-      });
-
-      req.on("error", (e) => {
-        reject(e);
-      });
-
-      req.setTimeout(15000, () => {
-        req.abort();
-        const err = new Error("Request timed out.");
-        err.kjType = "overloaded";
-        reject(err);
-      });
-
-      if (content) {
-        req.end(content);
-      } else {
-        req.end();
+      if (REQUEST_HEADER_WHITELIST.matches(name)) {
+        options.headers[name] = value;
       }
-      }).catch(reject);
     });
+
+    let resolveResult;
+    let rejectResult;
+    const result = new Promise((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+    let responseStream = context.responseStream;
+    let pendingWrite;
+    let stopped = false;
+    const releaseStream = () => {
+      if (stopped) return;
+      stopped = true;
+      // Cancel the outstanding RPC as well as releasing the capability. Otherwise a stalled
+      // write can retain the receiver after the HTTP socket has already been canceled.
+      if (pendingWrite && pendingWrite.cancel) pendingWrite.cancel();
+      if (responseStream) {
+        responseStream.close();
+        responseStream = null;
+      }
+    };
+    const operation = startHttpRequest({
+      db: this._db, url, method, headers: options.headers,
+      getAuthorization: () => this._ensureAuthorization(),
+      onFailure: releaseStream,
+      consumeResponse: async (response, lifecycle) => {
+        const mimeType = (response.headers["content-type"] || "").split(";", 1)[0].trim();
+        if (mimeType.toLowerCase() !== "text/event-stream" ||
+            responseCodes[response.statusCode]?.type !== "content" || !responseStream) {
+          return translateResponse(response, await readHttpBody(response));
+        }
+
+        // request's proxy adapter attaches a data listener after this callback returns.
+        // Pause now so it cannot drain SSE bytes while the first RPC write is waiting.
+        response.pause();
+        lifecycle.beginStreaming();
+        const translated = translateResponse(response, Buffer.alloc(0));
+        translated.content.body = {
+          // Return a server object, not an owned Capability: retaining a local capability
+          // here would prevent the remote caller's release from invoking close().
+          stream: { close: () => operation.cancel() },
+        };
+        resolveResult(translated);
+        const write = async (method, ...args) => {
+          if (stopped) throw new Error("Response stream canceled.");
+          pendingWrite = responseStream[method](...args);
+          await pendingWrite;
+          pendingWrite = undefined;
+          if (stopped) throw new Error("Response stream canceled.");
+          lifecycle.progress();
+        };
+        // The bridge starts HTTP headers on the first write. An empty write delivers headers
+        // promptly even when the provider waits before producing its first SSE event.
+        await write("write", Buffer.alloc(0));
+        for await (const chunk of response) {
+          await write("write", chunk);
+        }
+        await write("done");
+        return translated;
+      },
+    });
+    this._requests.add(operation);
+    operation.completion.then(value => {
+      this._requests.delete(operation);
+      releaseStream();
+      resolveResult(value);
+    }, error => {
+      this._requests.delete(operation);
+      releaseStream();
+      rejectResult(error);
+    });
+    operation.started.then(req => {
+      try {
+        req.end(content, err => { if (err) req.destroy(err); });
+      } catch (err) {
+        req.destroy(err);
+      }
+    }, () => {});
+    return result;
+  }
+}
+
+function translateResponse(resp, data) {
+  const statusInfo = responseCodes[resp.statusCode];
+
+  const rpcResponse = {};
+
+  rpcResponse.additionalHeaders = [];
+  for (const headerName in resp.headers) {
+    if (RESPONSE_HEADER_WHITELIST.matches(headerName) ||
+        API_RESPONSE_HEADER_WHITELIST.matches(headerName)) {
+      rpcResponse.additionalHeaders.push({
+        name: headerName,
+        value: resp.headers[headerName],
+      });
+    }
+  }
+
+  function fillInErrorBody(error) {
+    const contentType = resp.headers["content-type"];
+    if (contentType && (contentType == "text/html" ||
+                        contentType.startsWith("text/html;"))) {
+      // TODO(someday): Check for non-UTF-8 charset and translate?
+      error.descriptionHtml = data.toString("utf8");
+    } else if (contentType || data.length > 0) {
+      const content = { data };
+      if (contentType) content.mimeType = contentType;
+      if ("content-encoding" in resp.headers) content.encoding = resp.headers["content-encoding"];
+      if ("content-language" in resp.headers) content.language = resp.headers["content-language"];
+      error.nonHtmlBody = content;
+    }
+  }
+
+  switch (statusInfo ? statusInfo.type : resp.statusCode) {
+    case "content": {
+      const content = {};
+      rpcResponse.content = content;
+
+      content.statusCode = statusInfo.code;
+      if ("content-encoding" in resp.headers) content.encoding = resp.headers["content-encoding"];
+      if ("content-language" in resp.headers) content.language = resp.headers["content-language"];
+      if ("content-type" in resp.headers) content.mimeType = resp.headers["content-type"];
+      if ("content-disposition" in resp.headers) {
+        const disposition = resp.headers["content-disposition"];
+        const parts = disposition.split(";");
+        if (parts[0].toLowerCase().trim() === "attachment") {
+          parts.forEach((part) => {
+            const splitPart = part.split("=");
+            if (splitPart[0].toLowerCase().trim() === "filename") {
+              content.disposition = { download: splitPart[1].trim() };
+            }
+          });
+        }
+      }
+
+      if (resp.headers.etag) {
+        content.eTag = parseETag(resp.headers.etag);
+      }
+
+      content.body = {};
+      content.body.bytes = data;
+
+      return rpcResponse;
+    }
+    case "noContent": {
+      const noContent = {};
+      rpcResponse.noContent = noContent;
+      noContent.setShouldResetForm = statusInfo.shouldResetForm;
+      if (resp.headers.etag) {
+        noContent.eTag = parseETag(resp.headers.etag);
+      }
+
+      return rpcResponse;
+    }
+    case "redirect": {
+      const redirect = {};
+      rpcResponse.redirect = redirect;
+      redirect.isPermanent = statusInfo.isPermanent;
+      redirect.switchToGet = statusInfo.switchToGet;
+      if ("location" in resp.headers) redirect.location = resp.headers.location;
+      return rpcResponse;
+    }
+    case "clientError": {
+      const clientError = {};
+      rpcResponse.clientError = clientError;
+      clientError.statusCode = statusInfo.clientErrorCode;
+
+      fillInErrorBody(clientError);
+      return rpcResponse;
+    }
+    case "serverError": {
+      const serverError = { statusCode: statusInfo.serverErrorCode };
+      rpcResponse.serverError = serverError;
+      fillInErrorBody(serverError);
+      return rpcResponse;
+    }
+    case "preconditionFailed": {
+      const preconditionFailed = {};
+      rpcResponse.preconditionFailed = preconditionFailed;
+      if (resp.headers.etag) {
+        preconditionFailed.matchingETag = parseETag(resp.headers.etag);
+      }
+
+      return rpcResponse;
+
+    // TODO(soon): Handle token-expired errors by throwing DISCONNECTED -- this will
+    //   force the client to reload the capability which will refresh the token.
+
+    }
+    default: {
+      // ???
+      const err = new Error(
+          "Invalid status code " + resp.statusCode + " received in response.");
+      throw err;
+    }
   }
 }

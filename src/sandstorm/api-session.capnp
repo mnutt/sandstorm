@@ -25,6 +25,17 @@ interface ApiSession @0xc879e379c625cdc7 extends(WebSession.WebSession) {
   # A special case of WebSession but for APIs. It doesn't provide much other
   # than a unique type id that we can identify ApiSessions with
 
+  const responseHeaderWhitelist :List(Text) = [
+    # Operational metadata accepted by the external API driver and the grain-local HTTP proxy.
+    # This does not extend browser-facing WebSession policy or permit authentication challenges.
+    "retry-after",
+    "x-request-id",
+    "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens",
+    "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+    "openai-processing-ms", "openai-version",
+  ];
+
   struct Params {
     # Normally, we strip the remote address from requests, since most applications shouldn't need
     # it.  However, for those that benefit from it (like analytics), clients can opt into passing
@@ -120,15 +131,10 @@ interface ApiSession @0xc879e379c625cdc7 extends(WebSession.WebSession) {
     # list to be ignored for matching purposes (always match).
 
     authentication @2 :Text;
-    # If not null, indicates that this endpoint is expected to need old-fashion authentication.
-    # The field contains a text string naming the type of authentication. Currently there is only
-    # one type recognized: "basic", meaning HTTP Basic Auth. Specifying this instructs the HTTP
-    # driver to prompt the user for a username and password.
-    #
-    # Note that even if this isn't specified, the HTTP driver will probe the target server to see
-    # if it demands authentication and, if so, will prompt the user for a password anyway. Thus
-    # this is only needed in cases where the target server supports both authenticated and
-    # unauthenticated use and thus the probe will not notice the need for authentication.
+    # Authentication hint: "basic" prompts for a username and password; "bearer" prompts for
+    # a bearer token. An absent hint preserves the unauthenticated URL card. The arbitrary URL
+    # form also lets the user choose authentication. Unsupported hints offer no HTTP driver card.
+    # Credentials are entered in Sandstorm's trusted UI and are never returned to the app.
     #
     # When publishing support of HTTP APIs to the Powerbox, you should usually leave this field
     # null, so that it is not considered for matching.

@@ -11,10 +11,27 @@ const profile = vm.runInNewContext(profileSource +
     '\n({validateHttpConnectionFields, validateHttpAuthenticationMethods, validateHttpApiKeyHeader, ' +
     'httpAuthenticationChoices, httpAuthenticationHint, validateHttpConnection, requireHttpCredentialTls, validateHttpAuthorizationScheme, validateHttpMethods})', { URL });
 
+const legacyProfile = vm.runInNewContext(fs.readFileSync(path.join(root,
+  'shell/imports/shared/http-api-profile.js'), 'utf8').replace(/export /g, '') +
+  '\n({httpApiProfile, httpAuthenticationHint, validateHttpConnection})', { URL });
+
+const { stripTypeScriptTypes } = require('node:module');
+const responseCodeSource = stripTypeScriptTypes(fs.readFileSync(path.join(root,
+    'shell/imports/server/web-session.ts'), 'utf8')).replace(/export /g, '');
+const responseCodes = vm.runInNewContext(responseCodeSource + '\nresponseCodes');
+// Use the actual schema constants while mocking the Cap'n Proto boundary.
+const apiSchema = fs.readFileSync(path.join(root, 'src/sandstorm/api-session.capnp'), 'utf8');
+const headerList = apiSchema.match(/const responseHeaderWhitelist[^=]*=\s*\[([\s\S]*?)\];/)[1]
+    .replace(/#[^\n]*/g, '');
+const apiHeaders = Array.from(headerList.matchAll(/"([^"]+)"/g), match => match[1]);
+
 function driver(overrides = {}) {
   overrides = { ...require('./http-api-tls.cjs').transport, ...overrides };
   const transport = loadTransport(overrides);
   let registration;
+  const source = fs.readFileSync(path.join(root,
+      'shell/imports/server/drivers/external-ui-view.js'), 'utf8')
+      .replace(/^import [\s\S]*?;\n/gm, '');
   const context = {
     ...profile, ...transport, URL, Buffer, Promise, setInterval, clearInterval,
     startHttpRequest: options => transport.startHttpRequest({
@@ -38,6 +55,8 @@ function driver(overrides = {}) {
     ssrfSafeLookup: async (db, url) => ({ url, host: new URL(url).host }),
     REQUEST_HEADER_WHITELIST: { matches: name => name === 'x-test' },
     RESPONSE_HEADER_WHITELIST: { matches: () => false },
+    API_RESPONSE_HEADER_WHITELIST: { matches: name => apiHeaders.includes(name.toLowerCase()) },
+    responseCodes,
   };
   if (overrides.PersistentImpl) context.PersistentImpl = overrides.PersistentImpl;
   if (overrides.Capnp) context.Capnp = overrides.Capnp;
@@ -54,8 +73,12 @@ function driver(overrides = {}) {
     .replace(/^import [\s\S]*?;\n/gm, '').replace(/export /g, '');
   vm.runInContext(sharedSession, sandbox);
   vm.runInContext(outbound, sandbox);
+  if (!overrides.outboundOnly) {
+    Object.assign(sandbox, legacyProfile);
+    vm.runInContext(source, sandbox);
+  }
   return registration;
 }
 
 
-module.exports = { driver, profile };
+module.exports = { driver, profile, legacyProfile, apiHeaders };
