@@ -18,18 +18,21 @@ import { Meteor } from "meteor/meteor";
 import { Match, check } from "meteor/check";
 
 import { httpCallAsync } from "/imports/server/http-helpers";
-import { PersistentImpl } from "/imports/server/persistent";
+import { OutboundHttpSessionBase as HttpSessionImpl }
+    from "/imports/server/outbound-http-session-base";
 import { frontendRefRegistry } from "/imports/server/frontend-ref-registry-instance";
 import {
   validateBaseUrl, buildHttpUrl, sanitizeHeaders, startHttpRequest, readHttpBody,
 } from "/imports/server/http-transport";
-import { REQUEST_HEADER_WHITELIST, RESPONSE_HEADER_WHITELIST, API_RESPONSE_HEADER_WHITELIST }
+import { RESPONSE_HEADER_WHITELIST, API_RESPONSE_HEADER_WHITELIST }
     from "/imports/server/header-whitelist";
 import { globalDb } from "/imports/db-deprecated";
 
 import { responseCodes } from "/imports/server/web-session";
 
-import { httpAuthenticationHint, validateHttpConnection } from "/imports/shared/http-api-profile";
+import { httpAuthenticationHint, validateHttpConnectionFields, validateHttpAuthenticationMethods,
+  validateHttpApiKeyHeader, validateHttpConnection, requireHttpCredentialTls, validateHttpAuthorizationScheme,
+  validateHttpMethods } from "/imports/shared/http-api-profile";
 
 import Capnp from "/imports/server/capnp";
 const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
@@ -90,14 +93,14 @@ async function refreshOAuth(url, refreshToken) {
   return response.data;
 }
 
-function newExternalHttpSession(url, auth, db, saveTemplate, connectionHeaders = []) {
+function newExternalHttpSession(url, auth, db, saveTemplate, connectionHeaders = [], methods = []) {
   // `url` and `auth` are the corresponding members of `ApiToken.frontendRef.http`.
 
   const createCap = () => {
     return new Capnp.Capability(new ExternalWebSession(url,
         { headers: Object.fromEntries(connectionHeaders.map(({ name, value }) => [name, value])) },
         auth,
-        db, saveTemplate), PersistentApiSession);
+        db, saveTemplate, methods), PersistentApiSession);
   };
 
   return createCap();
@@ -109,22 +112,34 @@ function registerHttpApiFrontendRef(registry) {
     typeId: ApiSession.typeId,
 
     restore(db, saveTemplate, value) {
-      return newExternalHttpSession(value.url, value.auth, db, saveTemplate, value.connectionHeaders);
+      return newExternalHttpSession(value.url, value.auth, db, saveTemplate, value.connectionHeaders, value.methods);
     },
 
     validate(db, session, request) {
       check(request, {
         url: String,
+        methods: Match.Optional([String]),
         connectionHeaders: Match.Optional([{ name: String, value: String }]),
+        authenticationMethods: Match.Optional([{ kind: String, headerName: Match.Optional(String), scheme: Match.Optional(String) }]),
+        connectionFields: Match.Optional([{ headerName: String, label: String,
+          description: Match.Optional(String), required: Match.Optional(Boolean) }]),
         auth: Match.OneOf(
             { none: null },
+            { caller: null },
             { bearer: String },
+            { authorization: { scheme: String, value: String } },
+            { apiKey: { headerName: String, value: String } },
             { basic: { username: String, password: String } },
             { oauth: { credentialToken: String, credentialSecret: String } }),
       });
 
       try {
+        if (!request.auth.oauth) validateHttpAuthenticationMethods(request.authenticationMethods, true);
+        if (request.connectionFields?.length || request.connectionHeaders?.length) {
+          throw new Error("Connection settings must be sent in grain request headers.");
+        }
         validateHttpConnection(request);
+        request.methods = validateHttpMethods(request.methods);
         request.url = validateBaseUrl(request.url);
       } catch (err) {
         throw new Meteor.Error(400, err.message);
@@ -152,10 +167,14 @@ function registerHttpApiFrontendRef(registry) {
         //   account? (As a non-login credential.)
       }
 
-      const authentication = request.auth.basic ? "basic" :
+      const authentication = "caller" in request.auth ? "caller" : request.auth.authorization ? "authorization" : request.auth.apiKey ? "apiKey" : request.auth.basic ? "basic" :
           (request.auth.bearer || request.auth.refresh ? "bearer" : "");
+      const authenticationMethods = validateHttpAuthenticationMethods(request.authenticationMethods);
+      delete request.authenticationMethods;
+      // The descriptor carries declarations only. Persist just the validated header values.
+      delete request.connectionFields;
       const descriptor = { tags: [{ id: ApiSession.typeId,
-        value: Capnp.serialize(ApiSession.PowerboxTag, { authentication }),
+        value: Capnp.serialize(ApiSession.PowerboxTag, { authentication, authenticationMethods, methods: request.methods }),
       }] };
       return { descriptor, requirements: [], frontendRef: request };
     },
@@ -164,9 +183,31 @@ function registerHttpApiFrontendRef(registry) {
       const tag = tagValue ? Capnp.parse(ApiSession.PowerboxTag, tagValue) : {};
 
       const options = [];
+      if (tag.connectionFields?.length) return options;
       const authentication = httpAuthenticationHint(tag.authentication);
       // Unknown hints must never fall back to an anonymous connection.
-      if (authentication === null) return options;
+      if (authentication === null && !tag.authenticationMethods?.length) return options;
+      let connectionFields;
+      let authenticationMethods;
+      let methods;
+      try {
+        methods = validateHttpMethods(tag.methods);
+        connectionFields = validateHttpConnectionFields(tag.connectionFields);
+        authenticationMethods = validateHttpAuthenticationMethods(tag.authenticationMethods);
+        if (!tag.oauthScopes && !authenticationMethods.length) {
+          if (!tag.authentication || authentication === null) return options;
+          authenticationMethods = validateHttpAuthenticationMethods([{ kind: authentication }], true);
+        }
+        if (authenticationMethods.some(method => connectionFields.some(field =>
+          field.headerName === method.headerName))) return options;
+      } catch {
+        return options;
+      }
+      // Combining extra fields with the separate OAuth flow is not implemented yet.
+      if (tag.oauthScopes && (connectionFields.length || authenticationMethods.length)) return options;
+      const authId = authenticationMethods.length ? ":auth:" + encodeURIComponent(JSON.stringify(
+        authenticationMethods.map(method => JSON.stringify(method)).sort())) :
+          authentication !== "none" ? ":auth:" + authentication : "";
 
       if (tag.canonicalUrl &&
           (tag.canonicalUrl.startsWith("https://") ||
@@ -184,25 +225,33 @@ function registerHttpApiFrontendRef(registry) {
             oauthServiceInfo: serviceInfo,
             oauthScopes: tag.oauthScopes,
           });
-        } else {
+        } else if (!tag.oauthScopes) {
           options.push({
-            _id: "http-url-" + tag.canonicalUrl,
+            _id: "http-url-" + tag.canonicalUrl + authId,
             frontendRef: { http: { url: tag.canonicalUrl, auth: { none: null } } },
             cardTemplate: "httpUrlPowerboxCard",
-            ...(authentication !== "none" ? {
+            ...(authentication !== "none" || authenticationMethods.length || connectionFields.length || methods.length ? {
               configureTemplate: "httpArbitraryPowerboxConfiguration",
               httpUrl: tag.canonicalUrl,
               authentication,
+              connectionFields,
+              authenticationMethods,
+              methods,
             } : {}),
           });
         }
       }
 
+      if (tag.oauthScopes) return options;
+
       // Always offer the user the option to connect to an arbitrary URL of their choosing, even
       // if canonicalUrl exists.
       options.push({
-        _id: "http-arbitrary",
+        _id: "http-arbitrary" + authId,
         authentication,
+        connectionFields,
+        authenticationMethods,
+        methods,
         cardTemplate: "httpArbitraryPowerboxCard",
         configureTemplate: "httpArbitraryPowerboxConfiguration",
       });
@@ -250,14 +299,22 @@ function parseETag(input) {
   }
 }
 
-class ExternalWebSession extends PersistentImpl {
-  constructor(url, options, auth, db, saveTemplate) {
-    super(db, saveTemplate);
+class ExternalWebSession extends HttpSessionImpl {
+  constructor(url, options, auth, db, saveTemplate, methods) {
+    super(url, methods, db, saveTemplate);
 
     if (!options) options = {};
     this.options = options;
     this.auth = auth || { none: null };
+    if (this.auth.apiKey) {
+      const name = validateHttpApiKeyHeader(this.auth.apiKey.headerName);
+      if (Object.prototype.hasOwnProperty.call(this.options.headers || {}, name)) {
+        throw new Error("Connection settings cannot override authentication.");
+      }
+      this.options.headers = { ...this.options.headers, [name]: this.auth.apiKey.value };
+    }
     this._url = validateBaseUrl(url);
+    requireHttpCredentialTls(this._url, this.auth);
     this._db = db;
     this._requests = new Set();
     this._closed = false;
@@ -268,12 +325,36 @@ class ExternalWebSession extends PersistentImpl {
     this._closed = true;
     this._requests.forEach(request => request.cancel());
     this._requests.clear();
+    clearInterval(this._revocationTimer);
   }
+
+  async _checkAuthorization() {
+    if (this._closed) throw new Error("HTTP session is closed.");
+    try {
+      requireHttpCredentialTls(this._url, this.auth);
+      await this.checkLiveRequirements();
+      if (this._closed) throw new Error("HTTP session is closed.");
+    } catch (err) {
+      this.close();
+      throw err;
+    }
+  }
+
+  async save(params) {
+    await this._checkAuthorization();
+    return super.save(params);
+  }
+
+  _managedRequestHeaders() { return this.options.headers || {}; }
+  _protectsAuthorization() { return !("caller" in this.auth); }
 
   _ensureAuthorization() {
     if (!this._authorizationPromise) {
       this._authorizationPromise = Promise.resolve().then(async () => {
-        if (this.auth.refresh) {
+        if (this.auth.authorization) {
+          const scheme = validateHttpAuthorizationScheme(this.auth.authorization.scheme);
+          return (scheme ? scheme + " " : "") + this.auth.authorization.value;
+        } else if (this.auth.refresh) {
           const refreshed = await refreshOAuth(this._url, this.auth.refresh);
           return "Bearer " + refreshed.access_token;
         } else if (this.auth.bearer) {
@@ -306,6 +387,10 @@ class ExternalWebSession extends PersistentImpl {
     return this._requestHelper("DELETE", path, context);
   }
 
+  patch(path, content, context) {
+    return this._requestHelper("PATCH", path, context, content.content, content.mimeType);
+  }
+
   // TODO(someday): implement streaming uploads and websockets for ExternalWebSession
   //postStreaming(path, mimeType, context) {
   //}
@@ -316,7 +401,11 @@ class ExternalWebSession extends PersistentImpl {
   //openWebSocket(path, context, protocol, clientStream) {
   //}
 
-  _requestHelper(method, path, context, content, contentType) {
+  async _requestHelper(method, path, context, content, contentType) {
+    await this._checkAuthorization();
+    if (this._methods && !this._methods.includes(method)) {
+      throw new Error("HTTP method is not allowed by this capability.");
+    }
     // Reject paths and headers before DNS, OAuth, or credential injection.
     if (this._closed) throw new Error("HTTP session is closed.");
     const url = buildHttpUrl(this._url, path);
@@ -366,14 +455,12 @@ class ExternalWebSession extends PersistentImpl {
     // set additional headers
     const callerHeaders = sanitizeHeaders(context.additionalHeaders);
     Object.entries(callerHeaders).forEach(([name, value]) => {
-      if (name === "authorization" ||
+      if ((name === "authorization" && this._protectsAuthorization()) ||
           Object.prototype.hasOwnProperty.call(this.options.headers || {}, name)) {
         throw new Error("Cannot override a connection-managed header.");
       }
 
-      if (REQUEST_HEADER_WHITELIST.matches(name)) {
-        options.headers[name] = value;
-      }
+      options.headers[name] = value;
     });
 
     let resolveResult;
@@ -398,7 +485,10 @@ class ExternalWebSession extends PersistentImpl {
     };
     const operation = startHttpRequest({
       db: this._db, url, method, headers: options.headers,
-      getAuthorization: () => this._ensureAuthorization(),
+      getAuthorization: async () => {
+        await this._checkAuthorization();
+        return this._ensureAuthorization();
+      },
       onFailure: releaseStream,
       consumeResponse: async (response, lifecycle) => {
         const mimeType = (response.headers["content-type"] || "").split(";", 1)[0].trim();
@@ -407,8 +497,8 @@ class ExternalWebSession extends PersistentImpl {
           return translateResponse(response, await readHttpBody(response));
         }
 
-        // request's proxy adapter attaches a data listener after this callback returns.
-        // Pause now so it cannot drain SSE bytes while the first RPC write is waiting.
+        // Pause while the first RPC write is waiting; the bounded transport stream
+        // propagates backpressure to the dispatcher.
         response.pause();
         lifecycle.beginStreaming();
         const translated = translateResponse(response, Buffer.alloc(0));
@@ -436,13 +526,21 @@ class ExternalWebSession extends PersistentImpl {
         return translated;
       },
     });
-    this._requests.add(operation);
+    this._trackRequest(operation);
     operation.completion.then(value => {
       this._requests.delete(operation);
+      if (!this._requests.size) {
+        clearInterval(this._revocationTimer);
+        this._revocationTimer = null;
+      }
       releaseStream();
       resolveResult(value);
     }, error => {
       this._requests.delete(operation);
+      if (!this._requests.size) {
+        clearInterval(this._revocationTimer);
+        this._revocationTimer = null;
+      }
       releaseStream();
       rejectResult(error);
     });

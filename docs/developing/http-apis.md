@@ -283,40 +283,26 @@ does this is
 
 Outgoing HTTP has its own [guide](outgoing-http.md).
 
-### Managed credentials in Powerbox
+### Experimental ApiSession credentials
 
-Request `ApiSession` with `PowerboxTag.authentication` set to `"bearer"` or `"basic"`
-to prompt for a credential in Sandstorm's UI. With a canonical URL, the URL card
-opens the credential form. Without an authentication hint, the existing anonymous
-URL card remains available. Unknown authentication hints produce no HTTP driver
-cards. The arbitrary URL form allows the user to select authentication explicitly.
-Google/GitHub OAuth scope requests retain their existing flow.
+This branch restores the deferred ApiSession experiments from
+`wip/api-session-before-outbound-split` above `outgoing-http`. OutboundHttpSession
+remains the recommended interface for third-party HTTP integrations.
 
-For OpenAI, request `canonicalUrl = "https://api.openai.com/v1"` and
-`authentication = "bearer"`. The Sandstorm-owned profile labels the secret as an
-API key and offers optional organization and project IDs. The driver validates
-these settings and injects `OpenAI-Organization` / `OpenAI-Project` with the saved
-bearer token. Provider recognition requires the exact base URL (with an optional
-trailing slash); an app-provided label is not provider identity. Generic bearer
-and Basic authentication also work with other HTTP destinations.
+ApiSession Powerbox requests can declare one authentication mechanism, optional
+method restrictions, and explicit caller-managed credentials. Bearer, Basic, named
+API-key headers, and raw or scheme-prefixed Authorization are supported. Credentials
+require HTTPS. PATCH and broader safe request headers are supported; streaming
+request uploads remain unimplemented in the external ApiSession driver.
 
-Credentials belong in the form fields, not in the URL. New grants reject URL
-userinfo, fragments, and queries. Previously saved references still restore.
-Changing an editable destination clears credential and connection-setting inputs.
-Secrets use the existing encrypted `frontendRef.http.auth` persistence fields;
-optional `connectionHeaders` contain only the approved non-secret provider settings.
-Descriptors contain the authentication kind, never the credential. Additional
-caller headers cannot override connection-managed headers, regardless of casing.
+ApiSession connection settings and Basic usernames are encrypted on save; older
+plaintext settings migrate on use. Live capability revocation cancels active requests.
+Experimental `connectionFields` declarations remain reserved but are rejected for
+new requests. Apps should send provider metadata as ordinary request headers.
 
-This grants the service authority associated with the credential, including
-potentially billable operations. No method restriction or spending limit is
-imposed. Revoking the Sandstorm capability does not revoke the provider's API key.
-SSE response streaming is supported as described below. Streaming request uploads
-remain separate work.
-
-Focused driver regressions run with the command below.
-They use a local HTTP server and mock the Meteor/Cap'n Proto boundary; they do not
-replace the browser Powerbox and persistence/revocation integration suite.
+The experimental ApiSession AuthenticationMethod type has a new ID, distinct from
+the ID retained by OutboundHttpSession when the original experiments were split.
+Consumers of the old experimental ApiSession schema must regenerate their bindings.
 
 ### External HTTP transport boundaries
 
@@ -428,4 +414,3 @@ response lifetime, and forwards chunks through a bounded queue. It logs usage fr
 a terminal Responses event only after a successful `done()`. Missing/truncated or
 oversized accounting metadata is left incomplete or unpriced; response bytes are
 still forwarded unchanged.
-

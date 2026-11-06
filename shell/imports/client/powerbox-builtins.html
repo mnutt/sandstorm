@@ -115,39 +115,59 @@
 </template>
 
 <template name="httpArbitraryPowerboxConfiguration">
-  <form>
-    <label>{{_ "powerboxBuiltins.httpCredentials.destination"}}
-      <input class="url" type="url" required value="{{destination}}" readonly="{{option.httpUrl}}"
-             placeholder="https://api.example.com/v1">
-    </label>
-    {{#with profile}}<p>{{title}}</p>{{/with}}
-    {{#with urlDetails}}
-      <p>{{_ "powerboxBuiltins.httpCredentials.scope"}} {{scheme}} {{host}}{{basePath}}</p>
-      {{#if isPlainHttp}}<p class="warning-message">{{_ "powerboxBuiltins.httpCredentials.plainHttp"}}</p>{{/if}}
-    {{/with}}
-    <label>{{_ "powerboxBuiltins.httpCredentials.authentication"}}
-      <select class="authentication">
-        <option value="none" selected="{{authSelected 'none'}}">{{_ "powerboxBuiltins.httpCredentials.none"}}</option>
-        <option value="bearer" selected="{{authSelected 'bearer'}}">Bearer</option>
-        <option value="basic" selected="{{authSelected 'basic'}}">Basic</option>
-      </select>
-    </label>
-    {{#if bearer}}
-      <label>{{#if profile}}{{profile.secretLabel}}{{else}}{{_ "powerboxBuiltins.httpCredentials.token"}}{{/if}}
-        <input class="secret bearer" type="password" required autocomplete="off">
+  <form class="http-credentials-form">
+    <div class="http-grant-summary">
+      <h3>{{_ "powerboxBuiltins.httpCredentials.grantTitle"}}</h3>
+      {{#with urlDetails}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.grantDestination"}} <strong>{{host}}</strong></p>
+        <p class="http-scope">{{scheme}} · {{basePath}}</p>
+        {{#if isPlainHttp}}<p class="warning-message">{{_ "powerboxBuiltins.httpCredentials.plainHttp"}}</p>{{/if}}
+      {{/with}}
+      {{#if callerCredentials}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.callerAuthority"}}</p>
+      {{else}}
+        {{#if noCredentials}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.noCredentials"}}</p>
+        {{else}}
+        <p>{{_ "powerboxBuiltins.httpCredentials.managedCredentials"}}</p>
+        <p>{{_ "powerboxBuiltins.httpCredentials.authority"}}</p>
+        {{/if}}
+      {{/if}}
+      {{#if restrictedMethods}}<p>{{_ "powerboxBuiltins.httpCredentials.allowedMethods"}} {{restrictedMethods}}</p>{{/if}}
+    </div>
+    <div class="http-form-fields">
+      <label>{{_ "powerboxBuiltins.httpCredentials.destination"}}
+        <input class="url" type="url" required value="{{destination}}" readonly="{{option.httpUrl}}"
+               placeholder="https://api.example.com/v1">
       </label>
-    {{/if}}
-    {{#if basic}}
-      <label>{{_ "powerboxBuiltins.httpCredentials.username"}}<input class="username secret" type="text" required autocomplete="off"></label>
-      <label>{{_ "powerboxBuiltins.httpCredentials.password"}}<input class="secret password" type="password" autocomplete="new-password"></label>
-    {{/if}}
-    {{#if profile}}
-      <label>{{_ "powerboxBuiltins.httpCredentials.organization"}}<input class="connection-header" name="openai-organization" type="text"></label>
-      <label>{{_ "powerboxBuiltins.httpCredentials.project"}}<input class="connection-header" name="openai-project" type="text"></label>
-    {{/if}}
-    <p>{{_ "powerboxBuiltins.httpCredentials.authority"}}</p>
-    <p>{{_ "powerboxBuiltins.httpCredentials.revocation"}}</p>
-    {{#if error}}<p class="error-message">{{error}}</p>{{/if}}
+      {{#if bearer}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret bearer" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if apiKey}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret api-key" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if authorizationToken}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.apiKey"}}
+          <input class="secret authorization-token" type="password" required autocomplete="off" maxlength="4096">
+        </label>
+      {{/if}}
+      {{#if basic}}
+        <label>{{_ "powerboxBuiltins.httpCredentials.username"}}
+          <input class="username secret" type="text" required autocomplete="off">
+        </label>
+        <label>{{_ "powerboxBuiltins.httpCredentials.password"}}
+          <input class="secret password" type="password" autocomplete="new-password">
+        </label>
+      {{/if}}
+    </div>
+    {{#unless noCredentials}}
+      <p class="http-revocation-note">{{_ "powerboxBuiltins.httpCredentials.revocation"}}</p>
+    {{/unless}}
+    {{#if error}}<p class="error-message" role="alert">{{error}}</p>{{/if}}
     <div class="choose-buttons">
       <button type="submit" class="connect-button">{{_ "powerboxBuiltins.httpArbitraryPowerboxConfiguration.connectButton"}}</button>
     </div>

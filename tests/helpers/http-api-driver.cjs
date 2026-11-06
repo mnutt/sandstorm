@@ -11,9 +11,11 @@ const profile = vm.runInNewContext(profileSource +
     '\n({validateHttpConnectionFields, validateHttpAuthenticationMethods, validateHttpApiKeyHeader, ' +
     'httpAuthenticationChoices, httpAuthenticationHint, validateHttpConnection, requireHttpCredentialTls, validateHttpAuthorizationScheme, validateHttpMethods})', { URL });
 
-const legacyProfile = vm.runInNewContext(fs.readFileSync(path.join(root,
-  'shell/imports/shared/http-api-profile.js'), 'utf8').replace(/export /g, '') +
-  '\n({httpApiProfile, httpAuthenticationHint, validateHttpConnection})', { URL });
+const legacyProfileSource = fs.readFileSync(path.join(root,
+    'shell/imports/shared/http-api-profile.js'), 'utf8').replace(/export /g, '');
+const legacyProfile = vm.runInNewContext(legacyProfileSource +
+    '\n({validateHttpConnectionFields, validateHttpAuthenticationMethods, validateHttpApiKeyHeader, ' +
+    'httpAuthenticationChoices, httpAuthenticationHint, validateHttpConnection, requireHttpCredentialTls, validateHttpAuthorizationScheme, validateHttpMethods})', { URL });
 
 const { stripTypeScriptTypes } = require('node:module');
 const responseCodeSource = stripTypeScriptTypes(fs.readFileSync(path.join(root,
@@ -74,6 +76,7 @@ function driver(overrides = {}) {
   vm.runInContext(sharedSession, sandbox);
   vm.runInContext(outbound, sandbox);
   if (!overrides.outboundOnly) {
+    vm.runInContext("const HttpSessionImpl = OutboundHttpSessionBase;", sandbox);
     Object.assign(sandbox, legacyProfile);
     vm.runInContext(source, sandbox);
   }

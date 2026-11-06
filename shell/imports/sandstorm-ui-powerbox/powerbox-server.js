@@ -122,7 +122,8 @@ function outboundHttpMethodAccessor(option) {
         if (option.outboundHttp) option.methods = methods || [];
       },
     };
-  } else if (option.outboundHttpArbitrary) {
+  } else if (option.outboundHttpArbitrary || option.cardTemplate === "httpArbitraryPowerboxCard" ||
+      (option.frontendRef?.http && option.methods)) {
     return {
       methods: option.methods,
       setMethods(methods) {

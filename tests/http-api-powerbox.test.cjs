@@ -2,11 +2,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const http = require('node:http');
+const http = require('./helpers/http-api-tls.cjs');
 const test = require('node:test');
 const path = require('node:path');
 const root = path.join(__dirname, '..');
-const { driver, legacyProfile: profile, apiHeaders } = require('./helpers/http-api-driver.cjs');
+const { driver, profile, apiHeaders } = require('./helpers/http-api-enhanced-driver.cjs');
 
 test('authentication hints open configuration; unknown hints never downgrade', () => {
   const registry = driver();
@@ -16,19 +16,27 @@ test('authentication hints open configuration; unknown hints never downgrade', (
     assert.equal(cards[0].authentication, authentication);
   }
   assert.equal(registry.query(null, null, { authentication: 'unknown' }).length, 0);
-  assert.equal(registry.query(null, null, { canonicalUrl: 'https://example.com' })[0]
-      .configureTemplate, undefined);
+  assert.equal(registry.query(null, null, { canonicalUrl: 'https://example.com' }).length, 0);
+  assert.equal(registry.query(null, null, { canonicalUrl: 'https://example.com', authentication: 'none' })[0]
+      .authenticationMethods[0].kind, 'none');
   assert.equal(registry.query(null, null, {
     canonicalUrl: 'https://api.github.com', oauthScopes: [{ name: 'repo' }],
   })[0].configureTemplate, 'httpOAuthPowerboxConfiguration');
+  assert.equal(registry.query(null, null, {
+    canonicalUrl: 'https://api.github.com', oauthScopes: [{ name: 'repo' }],
+  }).length, 1);
+  assert.equal(registry.query(null, null, {
+    canonicalUrl: 'https://example.com', oauthScopes: [{ name: 'repo' }],
+  }).length, 0);
 });
 
 test('connection validation rejects credential URLs and unapproved headers without secret errors', () => {
   const valid = { url: 'https://api.openai.com/v1', auth: { bearer: 'test-secret' },
-    connectionHeaders: [{ name: 'openai-project', value: 'proj-test' }] };
+    connectionHeaders: [{ name: 'openai-project', value: 'proj-test' }],
+    connectionFields: [{ headerName: 'openai-project', label: 'Project ID' }] };
   profile.validateHttpConnection(valid);
   for (const patch of [
-    { url: 'https://api.openai.com.evil/v1' },
+    { connectionFields: [] },
     { url: 'https://user:secret@example.com' },
     { url: 'https://example.com/#secret' },
     { auth: { bearer: 'secret\r\ninjected' } },
@@ -42,7 +50,8 @@ test('connection validation rejects credential URLs and unapproved headers witho
       return true;
     });
   }
-  const result = driver().validate(null, null, valid);
+  const result = driver().validate(null, null, { url: valid.url, auth: valid.auth,
+    authenticationMethods: [{ kind: 'bearer' }] });
   assert.ok(!JSON.stringify(result.descriptor).includes('test-secret'));
   assert.equal(result.frontendRef.auth.bearer, 'test-secret');
 });
@@ -56,7 +65,7 @@ test('restored grants inject credentials and headers with isolated per-request h
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const session = driver().restore({}, {}, {
-    url: `http://127.0.0.1:${server.address().port}/v1`,
+    url: `https://127.0.0.1:${server.address().port}/v1`,
     auth: { bearer: 'remote-key' },
     connectionHeaders: [{ name: 'openai-project', value: 'proj-test' }],
   });
@@ -71,7 +80,7 @@ test('restored grants inject credentials and headers with isolated per-request h
   });
   assert.equal(received.filter(headers => headers['x-test']).length, 1);
   for (const name of ['Authorization', 'OPENAI-PROJECT', 'OpenAI-Project']) {
-    assert.throws(() => session.get('blocked', {
+    await assert.rejects(() => session.get('blocked', {
       additionalHeaders: [{ name, value: 'override' }],
     }), /Cannot override/);
   }
@@ -92,6 +101,9 @@ test('credential form submits to the shell and clears its secret input', () => {
       .replace(/^import [\s\S]*?;\n/gm, '');
   vm.runInNewContext(source, {
     ...profile, Template: templates,
+    validateApiAuthenticationMethods: profile.validateHttpAuthenticationMethods,
+    validateApiConnectionFields: profile.validateHttpConnectionFields,
+    apiAuthenticationChoices: profile.httpAuthenticationChoices,
     ReactiveVar: class {
       constructor(value) { this.value = value; }
       get() { return this.value; }
@@ -102,7 +114,7 @@ test('credential form submits to the shell and clears its secret input', () => {
   const input = { value: 'test-secret' };
   let submitted;
   const data = {
-    option: { httpUrl: 'https://api.openai.com/v1', authentication: 'bearer' },
+    option: { httpUrl: 'https://api.openai.com/v1', authenticationMethods: [{ kind: 'bearer' }] },
     powerboxRequest: { completeNewFrontendRef(value) { submitted = value; } },
   };
   const instance = {
@@ -114,21 +126,36 @@ test('credential form submits to the shell and clears its secret input', () => {
   assert.equal(submitted.http.auth.bearer, 'test-secret');
   assert.equal(input.value, '');
   input.value = 'another-secret';
-  template.handlers['input input.secret'].call(data, { currentTarget: input }, instance);
+  template.handlers['input input.secret, input input.connection-header'].call(data, { currentTarget: input }, instance);
   template.destroyed.call(instance);
   assert.equal(input.value, '');
+  data.option.authenticationMethods = [{ kind: 'apiKey', headerName: 'x-provider-key' }];
+  template.created.call(instance);
+  input.value = 'private-api-key';
+  template.handlers['submit form'].call(data, { preventDefault() {} }, instance);
+  assert.equal(submitted.http.auth.apiKey.headerName, 'x-provider-key');
+  assert.equal(submitted.http.auth.apiKey.value, 'private-api-key');
+  assert.equal(input.value, '');
+  data.option.authenticationMethods = [{ kind: 'none' }];
+  instance.find = () => { throw new Error('Unauthenticated forms must not read credentials'); };
+  template.created.call(instance);
+  template.handlers['submit form'].call(data, { preventDefault() {} }, instance);
+  assert.equal(submitted.http.auth.none, null);
+  const html = fs.readFileSync(path.join(root, 'shell/imports/client/powerbox-builtins.html'), 'utf8');
+  assert.ok(!html.includes('chooseAuthentication'));
+  assert.ok(!html.includes('select class="authentication"'));
 });
 
-test('ApiSession rejects escaped paths before lookup or credential acquisition', () => {
+test('ApiSession rejects escaped paths before lookup or credential acquisition', async () => {
   let lookups = 0;
   const session = driver({ ssrfSafeLookupOrProxy() { lookups++; } }).restore({}, {}, {
     url: 'https://example.com/v1', auth: { bearer: 'remote-key' },
   });
   session._ensureAuthorization = () => { throw new Error('must not acquire credentials'); };
   for (const path of ['../outside', '//other.example', 'https://other.example', '%2e%2e/outside']) {
-    assert.throws(() => session.get(path, {}));
+    await assert.rejects(() => session.get(path, {}));
   }
-  assert.throws(() => session.get('responses', { additionalHeaders: [
+  await assert.rejects(() => session.get('responses', { additionalHeaders: [
     { name: 'X-Test', value: 'a' }, { name: 'x-test', value: 'b' },
   ] }));
   assert.equal(lookups, 0);
@@ -145,7 +172,7 @@ test('Basic authentication survives restore; closing ApiSession aborts pending r
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
   const session = driver().restore({}, {}, {
-    url: `http://127.0.0.1:${server.address().port}/api`,
+    url: `https://127.0.0.1:${server.address().port}/api`,
     auth: { basic: { username: 'user', password: 'password' } },
   });
   const result = session.get('pending', {});
@@ -153,7 +180,7 @@ test('Basic authentication survives restore; closing ApiSession aborts pending r
   session.close();
   await assert.rejects(result, { kjType: 'disconnected' });
   assert.equal(session._requests.size, 0);
-  assert.throws(() => session.get('again', {}), /closed/);
+  await assert.rejects(() => session.get('again', {}), /closed/);
 });
 
 
@@ -171,7 +198,7 @@ test('external ApiSession preserves API error JSON and only approved operational
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const session = driver().restore({}, {}, {
-    url: `http://127.0.0.1:${server.address().port}/v1`, auth: { bearer: 'remote-key' },
+    url: `https://127.0.0.1:${server.address().port}/v1`, auth: { bearer: 'remote-key' },
   });
   for (const [status, kind, code] of [
     [401, 'clientError', 'unauthorized'], [429, 'clientError', 'tooManyRequests'],
@@ -198,7 +225,7 @@ async function streamingFixture(t, handler, requestOptions = {}) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   return driver({ requestOptions }).restore({}, {}, {
-    url: `http://127.0.0.1:${server.address().port}/v1`, auth: { bearer: 'test' },
+    url: `https://127.0.0.1:${server.address().port}/v1`, auth: { bearer: 'test' },
   });
 }
 
@@ -287,7 +314,7 @@ test('SSE proxy responses retain early bytes while the receiver stalls', async t
   const closed = deferred();
   const firstWrite = deferred();
   const unblock = deferred();
-  const server = http.createServer((req, res) => {
+  const server = require('node:http').createServer((req, res) => {
     assert.equal(req.url, 'http://approved.example/v1/responses');
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end('data: first\n\ndata: last\n\n');
@@ -296,7 +323,7 @@ test('SSE proxy responses retain early bytes while the receiver stalls', async t
   t.after(() => { server.closeAllConnections(); server.close(); });
   const session = driver({ ssrfSafeLookupOrProxy: async () => ({
     proxy: `http://127.0.0.1:${server.address().port}`,
-  }) }).restore({}, {}, { url: 'http://approved.example/v1', auth: { bearer: 'test' } });
+  }) }).restore({}, {}, { url: 'http://approved.example/v1', auth: { none: null } });
   const chunks = [];
   let done = false;
   await session.get('responses', { responseStream: {
@@ -313,4 +340,80 @@ test('SSE proxy responses retain early bytes while the receiver stalls', async t
   await closed.promise;
   assert.equal(done, true);
   assert.equal(Buffer.concat(chunks).toString(), 'data: first\n\ndata: last\n\n');
+});
+
+
+test('generalized field requests are deferred; ordinary settings belong to grain headers', () => {
+  const registry = driver();
+  const fields = [{ headerName: 'x-workspace', label: 'Workspace', required: false }];
+  assert.equal(registry.query(null, null, { canonicalUrl: 'https://example.com', connectionFields: fields }).length, 0);
+  assert.throws(() => registry.validate(null, null, { url: 'https://example.com',
+    auth: { bearer: 'secret' }, authenticationMethods: [{ kind: 'bearer' }],
+    connectionFields: fields }), /grain request headers/);
+  const html = fs.readFileSync(path.join(root, 'shell/imports/client/powerbox-builtins.html'), 'utf8');
+  assert.ok(!html.includes('{{#each connectionFields}}'));
+  const cards = registry.query(null, null, { canonicalUrl: 'https://api.openai.com/v1', authentication: 'bearer' });
+  assert.equal(cards[0].connectionFields.length, 0);
+});
+
+test('typed auth methods reject unknown types and unsafe injection targets', () => {
+  const methods = [{ kind: 'apiKey', headerName: 'X-API-Key' }];
+  const normalized = profile.validateHttpAuthenticationMethods(methods);
+  assert.equal(normalized[0].headerName, 'x-api-key');
+  const cards = driver().query(null, null, { authentication: 'apiKey', authenticationMethods: methods });
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].authenticationMethods.length, 1);
+  for (const bad of [[{ kind: 'oauth' }], [{ kind: 'bearer', headerName: 'x-key' }],
+    [{ kind: 'apiKey', headerName: 'Authorization' }], [{ kind: 'apiKey', headerName: 'Host' }],
+    [{ kind: 'apiKey', headerName: 'Cookie' }], [{ kind: 'apiKey', headerName: 'X-Sandstorm-User-Id' }],
+    [{ kind: 'bearer' }, { kind: 'basic' }], [{ kind: 'bearer' }, { kind: 'bearer' }]]) {
+    assert.throws(() => profile.validateHttpAuthenticationMethods(bad));
+    assert.equal(driver().query(null, null, { authenticationMethods: bad }).length, 0);
+  }
+  const request = { url: 'https://example.com', authenticationMethods: [{ kind: 'bearer' }], auth: { none: null } };
+  assert.throws(() => profile.validateHttpConnection(request), /requested/);
+  request.auth = { bearer: 'secret', none: null };
+  assert.throws(() => profile.validateHttpConnection(request), /Invalid/);
+});
+
+test('API keys inject only the approved header and cannot be overridden', async t => {
+  const received = [];
+  const server = http.createServer((req, res) => { received.push(req.headers); res.end('{}'); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const request = { url: `https://127.0.0.1:${server.address().port}/v1`,
+    auth: { apiKey: { headerName: 'X-API-Key', value: 'remote-secret' } },
+    authenticationMethods: [{ kind: 'apiKey', headerName: 'X-API-Key' }] };
+  const validated = driver().validate(null, null, request);
+  assert.ok(!JSON.stringify(validated.descriptor).includes('remote-secret'));
+  assert.equal(validated.frontendRef.authenticationMethods, undefined);
+  const session = driver().restore({}, {}, validated.frontendRef);
+  await session.get('one', {});
+  assert.equal(received[0]['x-api-key'], 'remote-secret');
+  assert.equal(received[0].authorization, undefined);
+  await assert.rejects(() => session.get('two', { additionalHeaders: [{ name: 'X-API-KEY', value: 'override' }] }), /override/);
+  assert.equal(received.length, 1);
+  for (const headerName of ['Host', 'Authorization', 'X-Sandstorm-User-Id']) {
+    assert.throws(() => driver().restore({}, {}, { ...request,
+      auth: { apiKey: { headerName, value: 'remote-secret' } } }));
+  }
+});
+
+test('ApiSession declarations round-trip independently of outgoing HTTP declarations', () => {
+  const Capnp = require('./helpers/capnp-es.cjs');
+  const api = Capnp.importSystem('sandstorm/api-session.capnp').ApiSession.PowerboxTag;
+  const outbound = Capnp.importSystem('sandstorm/outbound-http-session.capnp').OutboundHttpSession.PowerboxTag;
+  const request = { canonicalUrl: 'https://example.com/v1', methods: ['get', 'patch'],
+    authenticationMethods: [{ kind: 'apiKey', headerName: 'x-provider-key' }] };
+  const restored = Capnp.parse(api, Capnp.serialize(api, request));
+  assert.deepEqual(restored.methods, request.methods);
+  assert.equal(restored.authenticationMethods[0].kind, 'apiKey');
+  assert.equal(restored.authenticationMethods[0].headerName, 'x-provider-key');
+  const outgoing = Capnp.parse(outbound, Capnp.serialize(outbound, {
+    baseUrl: request.canonicalUrl,
+    authenticationMethods: [{ kind: 'sigV4', region: 'auto', allowUnsignedPayload: true }],
+  }));
+  assert.equal(outgoing.authenticationMethods[0].kind, 'sigV4');
+  assert.equal(outgoing.authenticationMethods[0].region, 'auto');
+  assert.equal(outgoing.authenticationMethods[0].allowUnsignedPayload, true);
 });

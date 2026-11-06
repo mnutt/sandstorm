@@ -22,8 +22,12 @@ using WebSession = import "web-session.capnp";
 using IpAddress = import "ip.capnp".IpAddress;
 
 interface ApiSession @0xc879e379c625cdc7 extends(WebSession.WebSession) {
-  # A special case of WebSession but for APIs. It doesn't provide much other
-  # than a unique type id that we can identify ApiSessions with
+  # Experimental enhancements for the WebSession-shaped API interface. External HTTP
+  # integrations should use OutboundHttpSession; its implementation remains independent.
+  # The external ApiSession driver does not yet implement streaming request uploads.
+
+  # Method restrictions for Powerbox grants; this does not add HTTP methods to the interface.
+  enum Method { get @0; post @1; put @2; patch @3; delete @4; head @5; options @6; }
 
   const responseHeaderWhitelist :List(Text) = [
     # Operational metadata accepted by the external API driver and the grain-local HTTP proxy.
@@ -132,11 +136,63 @@ interface ApiSession @0xc879e379c625cdc7 extends(WebSession.WebSession) {
 
     authentication @2 :Text;
     # Authentication hint: "basic" prompts for a username and password; "bearer" prompts for
-    # a bearer token. An absent hint preserves the unauthenticated URL card. The arbitrary URL
-    # form also lets the user choose authentication. Unsupported hints offer no HTTP driver card.
+    # a bearer token; "none" explicitly requests no authentication. Missing or unsupported
+    # hints offer no HTTP driver card unless authenticationMethods or OAuth specifies the flow.
     # Credentials are entered in Sandstorm's trusted UI and are never returned to the app.
     #
     # When publishing support of HTTP APIs to the Powerbox, you should usually leave this field
     # null, so that it is not considered for matching.
+
+    authenticationMethods @4 :List(AuthenticationMethod);
+    # Exactly one authentication mechanism, including `none`. Sandstorm owns credential
+    # prompts, encrypted storage, and injection. These declarations never contain credentials.
+    # When non-empty this supersedes the legacy `authentication` hint. Older servers ignore it;
+    # also set `authentication` to a compatible hint (or an unknown hint to fail closed).
+    # Multiple or unknown mechanisms reject the external HTTP card instead of downgrading auth.
+    # Generic OAuth is not yet supported here; oauthScopes retains its existing provider flow.
+
+    struct AuthenticationMethod @0xb8b98b54b960b6df {
+      kind @0 :Kind;
+      headerName @1 :Text;
+      scheme @2 :Text; # Required only for authorization, e.g. "Bot". No arbitrary templates.
+      # Required only for apiKey: sends the key verbatim in this HTTP header. Authorization,
+      # transport, cookies, and identity headers are reserved. Bearer/Basic use Authorization.
+      enum Kind {
+        bearer @0;
+        basic @1;
+        apiKey @2;
+        rawAuthorization @3;
+        authorization @4;
+        caller @5; # Explicit grant: the grain supplies credentials in request headers/body.
+        none @6; # Explicitly unauthenticated API; no credential fields are shown.
+      }
+    }
+
+    connectionFields @3 :List(ConnectionField);
+    # DEPRECATED experimental configuration: new requests with fields are rejected. Apps send
+    # ordinary settings in request headers. Kept at the original ordinal for wire compatibility.
+    # Historical app-requested non-secret connection settings, rendered as plain text fields
+    # and sends supplied values as managed headers on this capability's outgoing requests.
+    # Labels/descriptions are untrusted app text, not provider identity. Credentials must use
+    # `authentication` above. Header values are never included in returned descriptors.
+    # Null/empty preserves the generic form. A maximum of 16 unique fields is supported.
+    # Unsupported/unsafe field declarations do not offer an external HTTP connection card.
+    # Publishing grains should normally omit this field, allowing normal wildcard matching.
+
+    struct ConnectionField {
+      headerName @0 :Text;
+      # Case-insensitive HTTP header name. Authentication, cookies, transport/framing, and
+      # Sandstorm/forwarding/browser security headers are reserved. No arbitrary HTML or scripts.
+      label @1 :Text;
+      # Plain text, 1–80 characters. The UI also displays the actual header name.
+      description @2 :Text;
+      # Optional plain text, at most 300 characters.
+      required @3 :Bool = false;
+      # Require a non-empty value before connecting. Values are at most 256 printable ASCII bytes.
+    }
+
+    methods @5 :List(Method);
+    # Optional method attenuation. Empty means all methods supported by this driver.
+    # Caller-auth grants must use authentication="caller" as a fail-closed legacy hint.
   }
 }
