@@ -15,6 +15,7 @@
 // limitations under the License.
 
 import { Meteor } from "meteor/meteor";
+// Pinned to upstream v3.1.1's commit: npm 3.1.0 repeats finalization instead of polling the order.
 import ACME from "@root/acme";
 import CSR from "@root/csr";
 import PEM from "@root/pem";

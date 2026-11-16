@@ -26,7 +26,7 @@
   "dependencies": {
     "@babel/runtime": "^7.20.7",
     "@google-cloud/dns": "^5.3.2",
-    "@root/acme": "^3.1.0",
+    "@root/acme": "git+https://github.com/therootcompany/acme.js.git#45fd6962f259c6399de05589848d68be42894316",
     "@root/csr": "^0.8.1",
     "@root/keypairs": "^0.10.3",
     "@root/pem": "^1.0.4",
