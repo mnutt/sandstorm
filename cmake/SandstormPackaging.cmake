@@ -199,6 +199,7 @@ function(sandstorm_add_packaging_targets)
       "${SANDSTORM_NATIVE_STAGE_STAMP}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
       "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
+      "${PROJECT_SOURCE_DIR}/recover-sandcats.sh"
       "${PROJECT_SOURCE_DIR}/localedata-C"
       "${PROJECT_SOURCE_DIR}/meteor-bundle-main.js"
       ${_bundle_capnp_schemas}

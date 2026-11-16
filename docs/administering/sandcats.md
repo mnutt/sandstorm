@@ -1,4 +1,115 @@
-# About Sandcats.io
+# Sandcats.org / Sandhost backend
+
+Sandstorm supports an opt-in Sandhost Installation API alongside legacy Sandcats.io.
+The new backend's default domain is **sandcats.org**. The test deployment uses
+**sandhost.org**. Existing `.sandcats.io` installations are not migrated automatically.
+
+There are three separate addresses to keep straight:
+
+* The server hostname, for example `alice.sandhost.org`.
+* The managed domain, `sandhost.org` for testing or `sandcats.org` by default.
+* The Installation API webkey, exported by the DNS grain as `https://api-…/#TOKEN`.
+  The grain's `/grain/...` browser URL is not an API endpoint. Use the actual export;
+  no fixed `api.sandcats.org` endpoint or built-in bearer token is assumed.
+
+In the DNS grain, set **API origin** to the webkey URL's origin (everything before
+`#TOKEN`, without a trailing slash). Restart its DNS listeners after saving the
+configuration. A mismatched origin causes `invalid_signature`; stopped listeners
+prevent public DNS resolution and certificate validation even when registration succeeds.
+
+## New installations
+
+Set `SANDCATS_API_WEBKEY` to the **full URL, including `#TOKEN`**:
+
+```sh
+sudo env SANDCATS_API_WEBKEY='https://api-…/#TOKEN' SANDCATS_BACKEND=sandhost \
+  OVERRIDE_SANDCATS_BASE_DOMAIN=sandhost.org \
+  bash install.sh /absolute/path/to/new-sandstorm-bundle.tar.xz
+```
+
+Use a bundle built with the new backend support. Omit `OVERRIDE_SANDCATS_BASE_DOMAIN`
+to use `sandcats.org`. If you omit `SANDCATS_API_WEBKEY`, the interactive installer
+prompts for the URL. You can paste a URL with or without a slash before `#TOKEN`.
+The installer stores it in `var/sandcats/api-webkey` for subsequent API requests.
+This public Installation API webkey routes requests to the DNS grain through Sandstorm;
+it does not need to be kept secret. The installation's private signing key proves
+hostname ownership and must remain private.
+
+Choose `observed` for a public IPv4 server, or `explicit` and a Tailscale IPv4 address
+for a server reachable through your tailnet. The DNS records are public in either case;
+an explicit Tailscale address is only reachable by clients with tailnet connectivity.
+DNS-01 certificate validation does not require public inbound HTTP connectivity.
+
+For unattended installs, provide `DESIRED_SANDCATS_NAME`, `SANDCATS_REGISTRATION_EMAIL`,
+`SANDCATS_ADDRESS_MODE` and, for explicit mode, `SANDCATS_IP_ADDRESS`, in addition to
+the usual unattended installer settings. Legacy reservation tokens are not used by
+this backend. Registration and recovery use Bash, OpenSSL and curl before bundle extraction.
+
+## Existing installations and API updates
+
+Register or recover the intended new hostname first; switching backend settings alone
+does not transfer ownership of a legacy name. For an already registered new-backend name,
+put its PEM installation key in `var/sandcats/id_rsa` and its API webkey in
+`var/sandcats/api-webkey`, and configure:
+
+```
+SANDCATS_BACKEND=sandhost
+SANDCATS_BASE_DOMAIN=sandhost.org
+SANDCATS_ADDRESS_MODE=observed
+BASE_URL=https://alice.sandhost.org
+WILDCARD_HOST=*.alice.sandhost.org
+```
+
+Keep the rest of the installation's settings, including `HTTPS_PORT`. The private
+directory must have mode `0700` and belong to `SERVER_USER`; the webkey and
+signing key must be readable by that user. Restart Sandstorm after changes.
+
+The updater fetches signed ownership status on startup, then checks approximately once
+a minute with jitter. Public-IP updates are sent only when the observed IP changes.
+Requests use IPv4 and respect `BIND_IP`, except loopback/unspecified binding. Failures
+back off to roughly 15 minutes without overlapping requests. In explicit mode the
+configured Tailscale address is applied without public-IP discovery. Change
+`SANDCATS_IP_ADDRESS` and restart when that address changes.
+
+Replace `var/sandcats/api-webkey` with another valid exported URL to change the API
+endpoint/token, keeping it readable by `SERVER_USER`, then restart. Keep the DNS-hosting
+Sandstorm server at its existing hostname; it need not use the managed domain.
+
+## Recovery and backups
+
+The installer accepts `recover` at the name prompt. For an existing installation run:
+
+```sh
+sudo bash /opt/sandstorm/latest/recover-sandcats.sh /opt/sandstorm
+```
+
+The script reads the backend and domain from `sandstorm.conf`; legacy recovery remains
+available. The new backend uses `/recover` and signed `/recover/confirm`. It stages a
+new key as `id_rsa.recovery` and replaces `id_rsa` only after the API accepts it, retaining
+the old key as `id_rsa.before-recovery`. A failure retains the candidate for retry.
+If confirmation succeeds remotely but the connection drops, that candidate may already
+own the name: retain it and repeat recovery rather than deleting it. Restart Sandstorm
+after recovery. The new protocol does not use the legacy X.509 certificate files.
+
+Back up the installation key securely and retain the API webkey URL.
+The webkey grants access to the public API; the private key proves hostname ownership. Revoking
+the API export prevents updates until its replacement is installed; ownership recovery
+replaces the registered public key so the old installation key no longer works.
+
+## HTTPS verification
+
+The certificate UI selects this backend automatically from configuration. DNS-01 uses
+the same API webkey and installation signing key and supports simultaneous wildcard and base-hostname TXT
+values with selective cleanup. Arbitrary challenge hostnames are rejected, so the ACME
+library's synthetic dry run is skipped. Other DNS providers retain their existing behavior.
+
+Before using a deployment for production certificates, confirm public delegation and
+base/wildcard DNS answers, then issue and renew using the Let's Encrypt **staging**
+directory (`https://acme-staging-v02.api.letsencrypt.org/directory`). The automated tests
+exercise the protocol and adapter; they do not establish successful public certificate
+issuance or replica failover.
+
+# About legacy Sandcats.io
 
 Sandcats.io is a free-of-cost dynamic DNS service run by the Sandstorm
 development team. In a nutshell:

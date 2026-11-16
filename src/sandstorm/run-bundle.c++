@@ -2897,6 +2897,8 @@ private:
                 "/meteor", authSuffix).cStr(),
         true));
     KJ_SYSCALL(setenv("BIND_IP", config.bindIp.cStr(), true));
+    KJ_SYSCALL(setenv("SANDCATS_ADDRESS_MODE", config.sandcatsAddressMode.cStr(), true));
+    KJ_SYSCALL(setenv("SANDCATS_IP_ADDRESS", config.sandcatsIpAddress.cStr(), true));
     if (config.mailUrl != nullptr) {
       KJ_SYSCALL(setenv("MAIL_URL", config.mailUrl.cStr(), true));
     }
@@ -2938,6 +2940,7 @@ private:
           ", \"isTesting\":", config.isTesting ? "true" : "false",
           ", \"hideTroubleshooting\":", config.hideTroubleshooting ? "true" : "false",
           ", \"wildcardHost\":\"", config.wildcardHost, "\"",
+          ", \"sandcatsBackend\":\"", config.sandcatsBackend, "\"",
           config.sandcatsHostname.size() > 0
               ? kj::str(", \"sandcatsHostname\":\"", config.sandcatsHostname, "\"")
               : kj::String(nullptr),
@@ -3258,6 +3261,18 @@ private:
     // var/sandcats should be 0700, with corrected owner/group
     if (access("../var/sandcats", F_OK) == 0) {
         setOwnerGroupAndMode(kj::str("../var/sandcats"), 0700, config.uids.uid, config.uids.gid);
+    }
+
+    auto webkeyPath = kj::str("../var/sandcats/api-webkey");
+    if (access(webkeyPath.cStr(), F_OK) == 0) {
+      int rawFd;
+      KJ_SYSCALL(rawFd = open(webkeyPath.cStr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+      kj::AutoCloseFd webkeyFd(rawFd);
+      struct stat webkeyStat;
+      KJ_SYSCALL(fstat(webkeyFd, &webkeyStat));
+      KJ_REQUIRE(S_ISREG(webkeyStat.st_mode), "Sandcats API webkey must be a regular file");
+      KJ_SYSCALL(fchmod(webkeyFd, 0600));
+      KJ_SYSCALL(fchown(webkeyFd, config.uids.uid, config.uids.gid));
     }
 
     // Same issue with https directory & its subdirectories.

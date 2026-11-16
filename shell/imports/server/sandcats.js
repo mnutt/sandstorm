@@ -22,12 +22,15 @@ import https from "https";
 import fs from "fs";
 import dgram from "dgram";
 import Url from "url";
+import SandhostConfig from "./sandcats-v2/config";
+import SandhostUpdater from "./sandcats-v2/updater";
 
 import { SANDSTORM_ALTHOME } from "/imports/server/constants";
 
 const SANDCATS_HOSTNAME = (Meteor.settings && Meteor.settings.public &&
                            Meteor.settings.public.sandcatsHostname);
 const SANDCATS_VARDIR = (SANDSTORM_ALTHOME || "") + "/var/sandcats";
+const SANDCATS_BACKEND = Meteor.settings.public?.sandcatsBackend || "legacy";
 
 const Sandcats = {};
 
@@ -96,6 +99,15 @@ const pingUdp = () => {
 };
 
 export function getSandcatsAcmeOptions() {
+  if (SANDCATS_BACKEND === "sandhost") {
+    return {
+      hostname: getSandcatsName(),
+      baseDomain: SANDCATS_HOSTNAME,
+      key: fs.readFileSync(SANDCATS_VARDIR + "/id_rsa"),
+      bindIp: SandhostConfig.localAddress(process.env.BIND_IP),
+      ...SandhostConfig.readWebkey(SANDCATS_VARDIR + "/api-webkey"),
+    };
+  }
   // Get options for acme-dns-01-sandcats challenge module.
   return {
     hostname: SANDCATS_NAME,
@@ -149,6 +161,26 @@ const performSandcatsRequest = (path, hostname, postData, errorCallback, respons
 };
 
 Sandcats.initializeSandcats = () => {
+  if (SANDCATS_BACKEND === "sandhost") {
+    SANDCATS_NAME = getSandcatsName();
+    if (!SANDCATS_NAME || !/^[a-z0-9](?:[a-z0-9-]{0,18}[a-z0-9])?$/.test(SANDCATS_NAME)) {
+      throw new Error("Sandcats HOSTNAME must be a single registered name under SANDCATS_BASE_DOMAIN");
+    }
+    const options = getSandcatsAcmeOptions();
+    const updater = new SandhostUpdater.Updater({
+      ...options,
+      rawHostname: SANDCATS_NAME,
+      privateKey: options.key,
+      localAddress: options.bindIp,
+      addressMode: process.env.SANDCATS_ADDRESS_MODE || "observed",
+      ipAddress: process.env.SANDCATS_IP_ADDRESS || "",
+    });
+    SandhostUpdater.startUpdater(updater, {
+      // Do not log request objects or provider-supplied error text: they can contain credentials.
+      onError: () => console.error("Sandcats IP update failed; retrying with backoff."),
+    });
+    return;
+  }
   const i = HOSTNAME.lastIndexOf(SANDCATS_HOSTNAME);
   if (i < 0) {
     console.error("SANDCATS_BASE_DOMAIN is configured but your HOSTNAME doesn't appear to contain it:",
@@ -171,4 +203,11 @@ export function getSandcatsName() {
   } else {
     return null;
   }
+}
+
+export function getSandcatsAcmeModule() {
+  if (SANDCATS_BACKEND === "sandhost" && getSandcatsName()) return "sandhost";
+  // Preserve legacy certificate selection, including installations without an explicit backend.
+  if (SANDCATS_BACKEND === "legacy" && HOSTNAME.endsWith(".sandcats.io")) return "sandcats";
+  return null;
 }

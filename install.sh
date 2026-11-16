@@ -301,7 +301,14 @@ DEFAULT_DIR_FOR_NON_ROOT="${OVERRIDE_SANDSTORM_DEFAULT_DIR:-${HOME:-opt}/sandsto
 DEFAULT_SMTP_PORT="30025"
 DEFAULT_UPDATE_CHANNEL="dev"
 DEFAULT_SERVER_USER="${OVERRIDE_SANDSTORM_DEFAULT_SERVER_USER:-sandstorm}"
-SANDCATS_BASE_DOMAIN="${OVERRIDE_SANDCATS_BASE_DOMAIN:-sandcats.io}"
+SANDCATS_BACKEND="${SANDCATS_BACKEND:-legacy}"
+case "$SANDCATS_BACKEND" in
+  legacy) SANDCATS_BASE_DOMAIN="${OVERRIDE_SANDCATS_BASE_DOMAIN:-sandcats.io}" ;;
+  sandhost) SANDCATS_BASE_DOMAIN="${OVERRIDE_SANDCATS_BASE_DOMAIN:-sandcats.org}" ;;
+  *) fail "E_SANDCATS_BACKEND" "SANDCATS_BACKEND must be legacy or sandhost." ;;
+esac
+SANDCATS_ADDRESS_MODE="${SANDCATS_ADDRESS_MODE:-}"
+SANDCATS_IP_ADDRESS="${SANDCATS_IP_ADDRESS:-}"
 ALLOW_DEV_ACCOUNTS="false"
 
 # Define functions for each stage of the install process.
@@ -406,6 +413,12 @@ rerun_script_as_root() {
   # to 'bash -c' the command gets cut off at the newline. ($@ contains newlines
   # because at the call site we used escaped newlines for readability.)
   local ENVVARS=$(echo $@)
+  # Preserve the API URL across the sudo handoff.
+  local SUDO_WEBKEY_ARGS=()
+  if [ "${SANDCATS_API_WEBKEY+x}" = x ]; then
+    export SANDCATS_API_WEBKEY
+    SUDO_WEBKEY_ARGS=(--preserve-env=SANDCATS_API_WEBKEY)
+  fi
 
   # Add CURL_USER_AGENT to ENVVARS, since we always need to pass this
   # through.
@@ -415,14 +428,14 @@ rerun_script_as_root() {
     # Probably ran like "curl https://sandstorm.org/install.sh | bash"
     echo "Re-running script as root..."
 
-    exec sudo bash -euo pipefail -c "curl -fs -A $CURL_USER_AGENT https://install.sandstorm.org | $ENVVARS bash"
+    exec sudo "${SUDO_WEBKEY_ARGS[@]}" bash -euo pipefail -c "curl -fs -A $CURL_USER_AGENT https://install.sandstorm.org | $ENVVARS bash"
   elif [ "$(basename $SCRIPT_NAME)" == install.sh ] && [ -e "$0" ]; then
     # Probably ran like "bash install.sh" or "./install.sh".
     echo "Re-running script as root..."
     if [ ${#ORIGINAL_ARGS[@]} = 0 ]; then
-      exec sudo $ENVVARS bash "$SCRIPT_NAME"
+      exec sudo "${SUDO_WEBKEY_ARGS[@]}" $ENVVARS bash "$SCRIPT_NAME"
     else
-      exec sudo $ENVVARS bash "$SCRIPT_NAME" "${ORIGINAL_ARGS[@]}"
+      exec sudo "${SUDO_WEBKEY_ARGS[@]}" $ENVVARS bash "$SCRIPT_NAME" "${ORIGINAL_ARGS[@]}"
     fi
   fi
 
@@ -843,7 +856,7 @@ full_server_install() {
       MSG="$MSG If you need support for non-sandcats full-server unattended installs, please file a bug."
       fail "E_USE_DEFAULTS_NEEDS_DESIRED_SANDCATS_NAME" "$MSG"
     else
-      if [ -z "${SANDCATS_DOMAIN_RESERVATION_TOKEN:-}" ] ; then
+      if [ "$SANDCATS_BACKEND" = legacy ] && [ -z "${SANDCATS_DOMAIN_RESERVATION_TOKEN:-}" ] ; then
         local MSG="When operating in USE_DEFAULTS mode, if you want a sandcats.io domain,"
         MSG="$MSG you must pre-reserve it before running this script. Specify it via the"
         MSG="$MSG SANDCATS_DOMAIN_RESERVATION_TOKEN environment variable."
@@ -870,7 +883,7 @@ full_server_install() {
     echo ""
     echo "* Install Sandstorm in $DEFAULT_DIR_FOR_ROOT"
     echo "* Automatically keep Sandstorm up-to-date"
-    echo "* Configure auto-renewing HTTPS if you use a subdomain of sandcats.io"
+    echo "* Configure auto-renewing HTTPS if you use a subdomain of $SANDCATS_BASE_DOMAIN"
     echo "* Create a service user ($DEFAULT_SERVER_USER) that owns Sandstorm's files"
     if [ "unknown" == "$INIT_SYSTEM" ]; then
       echo "*** WARNING: Could not detect how to run Sandstorm at startup on your system. ***"
@@ -934,6 +947,9 @@ full_server_install() {
                              DESIRED_SANDCATS_NAME="${DESIRED_SANDCATS_NAME:-}" \
                              SANDCATS_REGISTRATION_EMAIL="${SANDCATS_REGISTRATION_EMAIL:-}" \
                              ACME_EMAIL="${ACME_EMAIL:-}" \
+                             SANDCATS_BACKEND="$SANDCATS_BACKEND" \
+                             SANDCATS_ADDRESS_MODE="$SANDCATS_ADDRESS_MODE" \
+                             SANDCATS_IP_ADDRESS="$SANDCATS_IP_ADDRESS" \
                              OVERRIDE_SANDCATS_BASE_DOMAIN="${OVERRIDE_SANDCATS_BASE_DOMAIN:-}" \
                              OVERRIDE_SANDCATS_API_BASE="${OVERRIDE_SANDCATS_API_BASE:-}" \
                              OVERRIDE_NC_PATH="${OVERRIDE_NC_PATH:-}" \
@@ -967,7 +983,229 @@ full_server_install() {
   fi
 }
 
+sandhost_configure() {
+  SANDHOST_DIR="$PWD/var/sandcats"
+  [[ "$SANDCATS_BASE_DOMAIN" =~ ^[a-z0-9]+([.-][a-z0-9]+)*\.[a-z]{2,}$ ]] ||
+    fail "E_SANDCATS_DOMAIN" "Invalid SANDCATS_BASE_DOMAIN."
+  sandcats_generate_keys
+  if [ -n "${SANDCATS_API_WEBKEY:-}" ]; then
+    printf '%s\n' "$SANDCATS_API_WEBKEY" > "$SANDHOST_DIR/api-webkey"
+    unset SANDCATS_API_WEBKEY
+  elif [ ! -f "$SANDHOST_DIR/api-webkey" ]; then
+    if [ "$USE_DEFAULTS" = yes ]; then
+      fail "E_SANDCATS_WEBKEY" "Set SANDCATS_API_WEBKEY to the full exported API webkey URL."
+    fi
+    echo "Enter the Installation API webkey URL for $SANDCATS_BASE_DOMAIN:" >&3
+    local webkey
+    IFS= read -r -u 3 webkey
+    echo >&3
+    printf '%s\n' "$webkey" > "$SANDHOST_DIR/api-webkey"
+    unset webkey
+  fi
+  if [ "$CURRENTLY_UID_ZERO" = yes ]; then
+    chown "$SERVER_USER:$SERVER_USER" "$SANDHOST_DIR/api-webkey"
+  fi
+  sandhost_validate_webkey || fail "E_SANDCATS_WEBKEY" "Expected a file containing https://API-HOST/#TOKEN."
+  unset SANDHOST_TOKEN
+  SANDCATS_ADDRESS_MODE="${SANDCATS_ADDRESS_MODE:-$(prompt 'Address mode: observed (public IPv4) or explicit (Tailscale)?' observed)}"
+  if [ "$SANDCATS_ADDRESS_MODE" = explicit ] && [ -z "$SANDCATS_IP_ADDRESS" ]; then
+    SANDCATS_IP_ADDRESS=$(prompt 'Tailscale IPv4 address (100.64.0.0/10):' '')
+  fi
+  sandhost_validate_address || fail "E_SANDCATS_ADDRESS" "Use observed with no address, or explicit with a Tailscale IPv4."
+  while true; do
+    DESIRED_SANDCATS_NAME="${DESIRED_SANDCATS_NAME:-$(prompt "Choose a name under $SANDCATS_BASE_DOMAIN (none to skip, recover for recovery):" '')}"
+    case "$DESIRED_SANDCATS_NAME" in
+      none) return ;;
+      recover)
+        DESIRED_SANDCATS_NAME=$(prompt 'Name to recover (without the base domain):' '')
+        [[ "$DESIRED_SANDCATS_NAME" =~ ^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$ ]] ||
+          fail "E_SANDCATS_NAME" "Invalid Sandcats name."
+        sandhost_request /recover '' rawHostname "$DESIRED_SANDCATS_NAME" ||
+          fail "E_SANDCATS_RECOVER" "Could not request recovery email."
+        set +x
+        echo 'Recovery token from your email (input hidden):' >&3
+        local token token_file
+        IFS= read -r -s -u 3 token
+        echo >&3
+        token_file=$(mktemp "$SANDHOST_DIR/recovery-token.XXXXXXXX")
+        printf '%s' "$token" > "$token_file"
+        unset token
+        if ! sandhost_confirm_recovery "$token_file"; then
+          rm -f "$token_file"
+          fail "E_SANDCATS_RECOVER" "Recovery failed; the candidate key is retained in var/sandcats/id_rsa.recovery."
+        fi
+        rm -f "$token_file"
+        break ;;
+    esac
+    if [[ "$DESIRED_SANDCATS_NAME" =~ ^[a-z0-9]([a-z0-9-]{0,18}[a-z0-9])?$ ]]; then
+      SANDCATS_REGISTRATION_EMAIL="${SANDCATS_REGISTRATION_EMAIL:-$(prompt 'Recovery email address:' '')}"
+      if [ -n "$SANDCATS_REGISTRATION_EMAIL" ] && sandhost_register; then break; fi
+    fi
+    if [ "$USE_DEFAULTS" = yes ]; then
+      fail "E_SANDCATS_REGISTER" "Registration failed. Check name, email, webkey and address settings."
+    fi
+    echo 'Registration failed. Check the API settings or try another name (none to skip).'
+    unset DESIRED_SANDCATS_NAME SANDCATS_REGISTRATION_EMAIL
+  done
+  SS_HOSTNAME="${DESIRED_SANDCATS_NAME}.${SANDCATS_BASE_DOMAIN}"
+  USE_EXTERNAL_INTERFACE=yes
+  USE_HTTPS=yes
+  SANDCATS_SUCCESSFUL=yes
+  echo "Sandcats accepted $SS_HOSTNAME. DNS publication may still be pending."
+}
+
+# BEGIN EMBEDDED SANDHOST CLIENT
+# Bash/OpenSSL client for the Sandhost v1 protocol. No Node or jq required.
+# Embedded in install.sh and recover-sandcats.sh to keep both scripts self-contained.
+# After editing, run tests/sync-sandcats-installer.py and the protocol tests.
+
+sandhost_base64url() {
+  openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+sandhost_urlencode() {
+  local LC_ALL=C value="$1" i char
+  for ((i=0; i<${#value}; i++)); do
+    char="${value:i:1}"
+    case "$char" in
+      [a-zA-Z0-9.~_-]) printf '%s' "$char" ;;
+      *) printf '%%%02X' "'$char" ;;
+    esac
+  done
+}
+
+sandhost_validate_address() {
+  case "${SANDCATS_ADDRESS_MODE:-observed}" in
+    observed) [ -z "${SANDCATS_IP_ADDRESS:-}" ] ;;
+    explicit)
+      local a b c d
+      [[ ${SANDCATS_IP_ADDRESS:-} =~ ^100\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+      IFS=. read -r a b c d <<< "$SANDCATS_IP_ADDRESS"
+      [[ "$b" != 0* && "$c" != 0[0-9]* && "$d" != 0[0-9]* ]] || return 1
+      ((b >= 64 && b <= 127 && c <= 255 && d <= 255)) ;;
+    *) return 1 ;;
+  esac
+}
+
+sandhost_validate_webkey() {
+  # Accept the exported webkey, not a grain UI URL.
+  local webkey
+  [ -f "$SANDHOST_DIR/api-webkey" ] && [ ! -L "$SANDHOST_DIR/api-webkey" ] || return 1
+  [ "$(stat -c %s "$SANDHOST_DIR/api-webkey")" -le 8192 ] || return 1
+  webkey=$(cat "$SANDHOST_DIR/api-webkey")
+  [[ "$webkey" =~ ^https://([a-zA-Z0-9][a-zA-Z0-9.-]*)(:([0-9]+))?/?#([a-zA-Z0-9_-]+)$ ]] || return 1
+  SANDHOST_ORIGIN="https://${BASH_REMATCH[1],,}"
+  if [ -n "${BASH_REMATCH[3]}" ] && [ "${BASH_REMATCH[3]}" != 443 ]; then
+    SANDHOST_ORIGIN+=":${BASH_REMATCH[3]}"
+  fi
+  SANDHOST_TOKEN="${BASH_REMATCH[4]}"
+}
+
+sandhost_request() (
+  set +x
+  set -euo pipefail
+  umask 077
+  local path="$1" key="$2"
+  shift 2
+  sandhost_validate_webkey || { echo 'Invalid Sandcats API webkey file.' >&2; exit 1; }
+  local work body timestamp nonce digest signature status name value
+  work=$(mktemp -d "$SANDHOST_DIR/request.XXXXXXXX") || exit 1
+  chmod 700 "$work"
+  trap 'rm -rf "$work"' EXIT
+  trap 'exit 1' HUP INT TERM
+  body="$work/body"
+  : > "$body"
+  chmod 600 "$body"
+  while [ "$#" -gt 0 ]; do
+    name="$1"; value="$2"; shift 2
+    [ ! -s "$body" ] || printf '&' >> "$body"
+    sandhost_urlencode "$name" >> "$body"
+    printf '=' >> "$body"
+    sandhost_urlencode "$value" >> "$body"
+  done
+  {
+    printf 'Authorization: Bearer %s\n' "$SANDHOST_TOKEN"
+    printf '%s\n' 'X-Sandstorm-Passthrough: address' 'X-Sandstorm-App-Sandhost: cats'
+    printf '%s\n' 'Content-Type: application/x-www-form-urlencoded' 'Accept: application/json'
+  } > "$work/headers"
+  chmod 600 "$work/headers"
+  if [ -n "$key" ]; then
+    timestamp=$(date +%s%3N) || exit 1
+    nonce=$(openssl rand 24 | sandhost_base64url) || exit 1
+    digest=$(openssl dgst -sha256 -binary "$body" | sandhost_base64url) || exit 1
+    signature=$(printf 'sandhost-v1\n%s\nPOST\n%s\n%s\n%s\n%s' \
+      "$SANDHOST_ORIGIN" "$path" "$timestamp" "$nonce" "$digest" |
+      openssl dgst -sha256 -sign "$key" | sandhost_base64url) || exit 1
+    printf 'X-Sandstorm-App-Sandhost-Timestamp: %s\nX-Sandstorm-App-Sandhost-Nonce: %s\nX-Sandstorm-App-Sandhost-Signature: %s\n' \
+      "$timestamp" "$nonce" "$signature" >> "$work/headers"
+  fi
+  local bind=()
+  case "${BIND_IP:-}" in
+    ''|127.*|0.0.0.0|::1) ;;
+    *) bind=(--interface "$BIND_IP") ;;
+  esac
+  # No redirects, curlrc, raw response logging, or credentials in argv. IPv4 on every request.
+  # Use curl's config format for compatibility with versions predating --header @file.
+  sed 's/^/header = "/; s/$/"/' "$work/headers" > "$work/curl-config"
+  if ! status=$(curl -q --config "$work/curl-config" --silent --max-time 20 --max-filesize 65536 \
+      --proto '=https' --ipv4 "${bind[@]}" --request POST --data-binary "@$body" \
+      --output "$work/response" --write-out '%{http_code}' "$SANDHOST_ORIGIN$path"); then
+    echo 'Sandcats API connection failed. Check the endpoint and connectivity.' >&2
+    exit 1
+  fi
+  case "$status" in
+    200|201|202) ;;
+    *) echo "Sandcats API request failed (HTTP $status)." >&2; exit 1 ;;
+  esac
+  if [ -n "${SANDCATS_BASE_DOMAIN:-}" ] && [ "$path" != /recover ]; then
+    local hostname
+    hostname=$(sed -n 's/.*"hostname"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$work/response")
+    if [ "$hostname" != "$DESIRED_SANDCATS_NAME.$SANDCATS_BASE_DOMAIN" ]; then
+      echo 'Sandcats API returned a different hostname; check SANDCATS_BASE_DOMAIN and the webkey.' >&2
+      exit 1
+    fi
+  fi
+)
+
+sandhost_register() {
+  local key="$SANDHOST_DIR/id_rsa" public_key
+  sandhost_validate_address || { echo 'Invalid Sandcats address configuration.' >&2; return 1; }
+  public_key=$(openssl pkey -in "$key" -pubout -outform DER | sandhost_base64url) || return 1
+  local address=()
+  [ "${SANDCATS_ADDRESS_MODE:-observed}" != explicit ] || address=(ipAddress "$SANDCATS_IP_ADDRESS")
+  sandhost_request /register "$key" rawHostname "$DESIRED_SANDCATS_NAME" \
+    publicKey "$public_key" email "$SANDCATS_REGISTRATION_EMAIL" \
+    addressMode "${SANDCATS_ADDRESS_MODE:-observed}" "${address[@]}"
+}
+
+sandhost_confirm_recovery() (
+  set +x
+  set -euo pipefail
+  # Keep the old active key until the server accepts the replacement. Retain the candidate
+  # on failure, including ambiguous network failures, so ownership can always be recovered.
+  local candidate="$SANDHOST_DIR/id_rsa.recovery" public_key token
+  if [ ! -e "$candidate" ]; then
+    (umask 077; openssl genrsa -out "$candidate" 4096 2>/dev/null) || exit 1
+    if [ -e "$SANDHOST_DIR/id_rsa" ]; then
+      chown --reference="$SANDHOST_DIR/id_rsa" "$candidate" || exit 1
+    fi
+  fi
+  public_key=$(openssl pkey -in "$candidate" -pubout -outform DER | sandhost_base64url) || exit 1
+  token=$(cat "$1") || exit 1
+  sandhost_request /recover/confirm "$candidate" rawHostname "$DESIRED_SANDCATS_NAME" \
+    publicKey "$public_key" token "$token" || exit 1
+  if [ -e "$SANDHOST_DIR/id_rsa" ]; then
+    cp -p "$SANDHOST_DIR/id_rsa" "$SANDHOST_DIR/id_rsa.before-recovery" || exit 1
+  fi
+  mv -f "$candidate" "$SANDHOST_DIR/id_rsa"
+)
+# END EMBEDDED SANDHOST CLIENT
+
 sandcats_configure() {
+  if [ "$SANDCATS_BACKEND" = sandhost ]; then
+    sandhost_configure
+    return
+  fi
   # We generate the public key before prompting for a desired hostname
   # so that when the user presses enter, we can try to register the
   # hostname, and if that succeeds, we are totally done. This avoids a
@@ -1347,6 +1585,9 @@ save_config() {
   writeConfig SERVER_USER PORT MONGO_PORT BIND_IP BASE_URL WILDCARD_HOST UPDATE_CHANNEL ALLOW_DEV_ACCOUNTS SMTP_LISTEN_PORT > sandstorm.conf
   if [ "yes" = "$SANDCATS_SUCCESSFUL" ] ; then
     writeConfig SANDCATS_BASE_DOMAIN >> sandstorm.conf
+    if [ "$SANDCATS_BACKEND" = sandhost ]; then
+      writeConfig SANDCATS_BACKEND SANDCATS_ADDRESS_MODE SANDCATS_IP_ADDRESS >> sandstorm.conf
+    fi
   fi
   if [ "yes" = "$USE_HTTPS" ] ; then
     writeConfig HTTPS_PORT >> sandstorm.conf

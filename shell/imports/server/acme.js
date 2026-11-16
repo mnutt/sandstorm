@@ -24,7 +24,8 @@ import { pki, asn1 } from "node-forge";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import URL from "url";
-import { getSandcatsAcmeOptions } from "/imports/server/sandcats";
+import { getSandcatsAcmeOptions, getSandcatsAcmeModule } from "/imports/server/sandcats";
+import SandhostAcme from "./sandcats-v2/acme";
 import Crypto from "crypto";
 
 // Relevant settings in database `Settings` table:
@@ -35,7 +36,7 @@ import Crypto from "crypto";
 //                                 key: {<jwk>}}}
 // * {_id: "acmeChallenge", value: {module: "whatever", options: {...}}}
 //   The module name will be prefixed with "acme-dns-01-" and imported. Ignored when hostname is
-//   sandcats.io.
+//   a hostname managed by the configured Sandcats backend.
 // * {_id: "tlsStatus", value: {expires: Date, renewAt: Date, currentlyRenewing: Boolean}}
 //   A fake setting that is directly managed by this file in order to report the current status.
 //   TODO(cleanup): Implement a proper pseudo-collection.
@@ -109,9 +110,10 @@ export async function renewCertificateNow() {
   }
 
   let challengeOpts;
-  if (URL.parse(process.env.ROOT_URL).hostname.endsWith(".sandcats.io")) {
+  const sandcatsModule = getSandcatsAcmeModule();
+  if (sandcatsModule) {
     challengeOpts = {
-      module: "sandcats",
+      module: sandcatsModule,
       options: getSandcatsAcmeOptions()
     };
   } else {
@@ -141,8 +143,8 @@ export async function renewCertificateNow() {
 }
 
 async function renewCertificateNowImpl(accountInfo, challengeOpts) {
-  let challenge = Npm.require("acme-dns-01-" + challengeOpts.module)
-      .create(challengeOpts.options);
+  let challenge = (challengeOpts.module === "sandhost" ? SandhostAcme
+      : Npm.require("acme-dns-01-" + challengeOpts.module)).create(challengeOpts.options);
 
   // Compute domains list.
   let baseHost = URL.parse(process.env.ROOT_URL).hostname;
@@ -184,7 +186,7 @@ async function renewCertificateNowImpl(accountInfo, challengeOpts) {
 
     // Sandcats doesn't support setting TXT on arbitrary hostnames, therefore doesn't support dry
     // runs.
-    skipDryRun: baseHost.endsWith(".sandcats.io")
+    skipDryRun: !!getSandcatsAcmeModule()
   });
 
   let certChain = pems.cert + "\n" + pems.chain + "\n";

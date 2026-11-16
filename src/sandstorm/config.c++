@@ -2,6 +2,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
 #include <stdlib.h>
 #include <kj/debug.h>
 #include <kj/parse/char.h>
@@ -235,6 +236,14 @@ Config readConfig(const char *path, bool parseUids) {
       } else {
         config.updateChannel = kj::mv(value);
       }
+    } else if (key == "SANDCATS_BACKEND") {
+      KJ_REQUIRE(value == "legacy" || value == "sandhost", "Invalid SANDCATS_BACKEND");
+      config.sandcatsBackend = kj::mv(value);
+    } else if (key == "SANDCATS_ADDRESS_MODE") {
+      KJ_REQUIRE(value == "observed" || value == "explicit", "Invalid SANDCATS_ADDRESS_MODE");
+      config.sandcatsAddressMode = kj::mv(value);
+    } else if (key == "SANDCATS_IP_ADDRESS") {
+      config.sandcatsIpAddress = kj::mv(value);
     } else if (key == "SANDCATS_BASE_DOMAIN") {
       config.sandcatsHostname = kj::mv(value);
     } else if (key == "ALLOW_DEMO_ACCOUNTS") {
@@ -289,6 +298,22 @@ Config readConfig(const char *path, bool parseUids) {
   KJ_IF_MAYBE(portValue, maybePortValue) {
     auto ports = parsePorts(config.httpsPort, *portValue);
     config.ports = kj::mv(ports);
+  }
+
+  if (config.sandcatsBackend == "sandhost" && config.sandcatsHostname.size() == 0) {
+    config.sandcatsHostname = kj::str("sandcats.org");
+  }
+  KJ_REQUIRE(config.sandcatsBackend == "sandhost" ||
+      (config.sandcatsAddressMode == "observed" && config.sandcatsIpAddress.size() == 0),
+      "Sandcats address configuration requires SANDCATS_BACKEND=sandhost");
+  if (config.sandcatsAddressMode == "explicit") {
+    struct in_addr address;
+    KJ_REQUIRE(inet_pton(AF_INET, config.sandcatsIpAddress.cStr(), &address) == 1 &&
+        (ntohl(address.s_addr) & 0xffc00000u) == 0x64400000u,
+        "SANDCATS_IP_ADDRESS must be a Tailscale IPv4 in 100.64.0.0/10");
+  } else {
+    KJ_REQUIRE(config.sandcatsIpAddress.size() == 0,
+        "SANDCATS_IP_ADDRESS requires SANDCATS_ADDRESS_MODE=explicit");
   }
 
   return config;

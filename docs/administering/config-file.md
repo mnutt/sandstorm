@@ -138,17 +138,46 @@ UPDATE_CHANNEL=dev
 
 ### SANDCATS_BASE_DOMAIN
 
-A hostname that is used as the API host for the built-in
+A managed DNS domain for the built-in
 [sandcats dynamic DNS and free HTTPS certificates](sandcats.md) service. By default, `sandcats.io`
-if the user chooses to use sandcats; otherwise, missing. The presence/absence of this setting
-controls if Sandstorm will connect to the sandcats service. By setting it to a different hostname,
-you can use a different implementation of the sandcats protocol.
+if the user chooses legacy Sandcats; otherwise, missing. For the legacy backend this is also
+the API host. For the new `sandhost` backend it defaults to `sandcats.org`, and the API endpoint
+is taken from a separate webkey file. Set it to `sandhost.org` for the test deployment.
+Changing this setting alone does not change protocols or migrate a registered name.
 
 Example:
 
 ```
 SANDCATS_BASE_DOMAIN=sandcats.io
 ```
+
+### SANDCATS_BACKEND
+
+`legacy` (the default) uses the existing client-certificate/UDP Sandcats protocol.
+`sandhost` opts into the new signed-request Installation API. Existing installations keep
+their legacy behavior. New-backend setup and webkey storage are described in
+[Sandcats.org / Sandhost](sandcats.md).
+
+### SANDCATS_ADDRESS_MODE and SANDCATS_IP_ADDRESS
+
+For `SANDCATS_BACKEND=sandhost`, `observed` (the default) detects the server's public IPv4
+through the Installation API. Leave `SANDCATS_IP_ADDRESS` empty in this mode.
+`explicit` requires `SANDCATS_IP_ADDRESS` to be a Tailscale IPv4 in `100.64.0.0/10`.
+The updater reconciles the registered mode/address with this configuration. It never
+performs public-IP discovery in explicit mode. Update the configured address and restart
+Sandstorm if the Tailscale address changes; Sandstorm does not monitor the Tailscale daemon.
+
+```
+SANDCATS_BACKEND=sandhost
+SANDCATS_BASE_DOMAIN=sandhost.org
+SANDCATS_ADDRESS_MODE=explicit
+SANDCATS_IP_ADDRESS=100.64.1.2
+```
+
+The full API webkey URL belongs in `var/sandcats/api-webkey`, **not** in `sandstorm.conf`.
+This file must be readable by `SERVER_USER`; its contents need not be secret. The endpoint can be any
+HTTPS Installation API export implementing the Sandhost protocol; it does not need to
+be under the managed domain. Restart Sandstorm after replacing the webkey.
 
 ### ALLOW_DEMO_ACCOUNTS
 

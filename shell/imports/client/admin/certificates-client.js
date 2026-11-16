@@ -73,7 +73,12 @@ Template.newAdminCertificates.helpers({
   },
 
   acmeChallenge() {
-    if (window.location.hostname.endsWith(".sandcats.io")) {
+    const settings = Meteor.settings.public;
+    if (settings.sandcatsBackend === "sandhost" && settings.sandcatsHostname &&
+        window.location.hostname.endsWith("." + settings.sandcatsHostname)) {
+      return { module: "sandhost" };
+    }
+    if (settings.sandcatsBackend !== "sandhost" && window.location.hostname.endsWith(".sandcats.io")) {
       return { module: "sandcats" };
     } else {
       return globalDb.getSetting("acmeChallenge");
@@ -81,7 +86,9 @@ Template.newAdminCertificates.helpers({
   },
 
   providerName() {
-    if (this.module == "sandcats") {
+    if (this.module === "sandhost") {
+      return "Sandcats (" + Meteor.settings.public.sandcatsHostname + ")";
+    } else if (this.module == "sandcats") {
       return "Sandcats.io";
     } else {
       return DNS_PROVIDERS[this.module];
@@ -89,7 +96,7 @@ Template.newAdminCertificates.helpers({
   },
 
   isSandcats() {
-    return this.module == "sandcats";
+    return this.module === "sandcats" || this.module === "sandhost";
   },
 
   modal() {

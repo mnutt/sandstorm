@@ -1,6 +1,7 @@
 #ifndef SANDSTORM_CONFIG_H_
 #define SANDSTORM_CONFIG_H_
 
+#include <sys/types.h>
 #include <kj/string.h>
 
 namespace sandstorm {
@@ -23,6 +24,9 @@ struct Config {
   kj::String mailUrl = nullptr;
   kj::String updateChannel = nullptr;
   kj::String sandcatsHostname = nullptr;
+  kj::String sandcatsBackend = kj::str("legacy");
+  kj::String sandcatsAddressMode = kj::str("observed");
+  kj::String sandcatsIpAddress = nullptr;
   bool allowDemoAccounts = false;
   bool isTesting = false;
   bool allowDevAccounts = false;
