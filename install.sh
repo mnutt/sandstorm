@@ -947,6 +947,7 @@ full_server_install() {
                              DESIRED_SANDCATS_NAME="${DESIRED_SANDCATS_NAME:-}" \
                              SANDCATS_REGISTRATION_EMAIL="${SANDCATS_REGISTRATION_EMAIL:-}" \
                              ACME_EMAIL="${ACME_EMAIL:-}" \
+                             ACME_DIRECTORY="${ACME_DIRECTORY:-}" \
                              SANDCATS_BACKEND="$SANDCATS_BACKEND" \
                              SANDCATS_ADDRESS_MODE="$SANDCATS_ADDRESS_MODE" \
                              SANDCATS_IP_ADDRESS="$SANDCATS_IP_ADDRESS" \
@@ -969,7 +970,7 @@ full_server_install() {
 
   # Accepting this indicates a few things.
   if [ "yes" = "${ACCEPTED_FULL_SERVER_INSTALL}" ]; then
-    UPDATE_CHANNEL="$DEFAULT_UPDATE_CHANNEL"
+    UPDATE_CHANNEL="${UPDATE_CHANNEL:-$DEFAULT_UPDATE_CHANNEL}"
     DIR="$DEFAULT_DIR_FOR_ROOT"
     USE_EXTERNAL_INTERFACE="yes"
     USE_SANDCATS="yes"
@@ -2395,7 +2396,11 @@ configure_https() {
     ACME_EMAIL="$(prompt "Your email address for Let's Encrypt:" "${SANDCATS_REGISTRATION_EMAIL:-}")"
   fi
 
-  $DIR/sandstorm create-acme-account "$ACME_EMAIL" --accept-terms ||
+  local ACME_DIRECTORY_ARGS=()
+  if [ -n "${ACME_DIRECTORY:-}" ]; then
+    ACME_DIRECTORY_ARGS=(--directory "$ACME_DIRECTORY")
+  fi
+  $DIR/sandstorm create-acme-account "$ACME_EMAIL" --accept-terms "${ACME_DIRECTORY_ARGS[@]}" ||
       fail "E_CREATE_ACME_ACCOUNT" "Failed to create Let's Encrypt account."
 
   echo "Your Let's Encrypt account has been created. Now we'll fetch a certificate!"

@@ -332,3 +332,23 @@ rerun_script_as_root CHOSEN_INSTALL_MODE=production
     env: { ...process.env, PATH: bin + ":" + process.env.PATH, SANDCATS_API_WEBKEY: "https://api.example#test-token" } });
   assert.match(result.stdout, /preserved/);
 });
+
+test("installer passes an explicit ACME directory and preserves the production default", async () => {
+  const root = path.resolve(__dirname, "..");
+  const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
+  const configure = installer.slice(installer.indexOf("\nconfigure_https() {"),
+    installer.indexOf("\n# Now that the steps exist"));
+  const fixture = path.join(dir, "acme-installer");
+  fs.mkdirSync(fixture);
+  const calls = path.join(fixture, "calls");
+  fs.writeFileSync(path.join(fixture, "sandstorm"), '#!/bin/bash\nprintf "%s\\n" "$@" >> "$CALLS"\n', { mode: 0o700 });
+  const script = configure + '\nUSE_HTTPS=yes\nACME_EMAIL=test@example.com\nconfigure_https\n';
+  for (const directory of ["", "https://acme-staging-v02.api.letsencrypt.org/directory"]) {
+    fs.writeFileSync(calls, "");
+    await run("bash", ["-eu", "-c", script], { env: { ...process.env, DIR: fixture, CALLS: calls, ACME_DIRECTORY: directory } });
+    assert.deepEqual(fs.readFileSync(calls, "utf8").trim().split("\n"), [
+      "create-acme-account", "test@example.com", "--accept-terms",
+      ...(directory ? ["--directory", directory] : []), "renew-certificate",
+    ]);
+  }
+});

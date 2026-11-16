@@ -105,7 +105,9 @@ library's synthetic dry run is skipped. Other DNS providers retain their existin
 
 Before using a deployment for production certificates, confirm public delegation and
 base/wildcard DNS answers, then issue and renew using the Let's Encrypt **staging**
-directory (`https://acme-staging-v02.api.letsencrypt.org/directory`). The automated tests
+directory (`https://acme-staging-v02.api.letsencrypt.org/directory`). Set `ACME_DIRECTORY`
+to that URL during installation to test staging issuance through the installer.
+Staging certificates are intentionally untrusted by browsers. The automated tests
 exercise the protocol and adapter; they do not establish successful public certificate
 issuance or replica failover.
 
