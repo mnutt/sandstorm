@@ -40,18 +40,10 @@ import * as Supervisor from "./capnp-es/generated/sandstorm/supervisor";
 import * as TestApp from "./capnp-es/generated/sandstorm/test-app/test-app";
 import * as Util from "./capnp-es/generated/sandstorm/util";
 import * as WebSession from "./capnp-es/generated/sandstorm/web-session";
-import * as IsolateAuthoring from "./capnp-es/generated/sandstorm/isolate-authoring";
-import * as IsolateAuthoringImpl from "./capnp-es/generated/sandstorm/isolate-authoring-impl";
-import * as OutboundHttpSession from "./capnp-es/generated/sandstorm/outbound-http-session";
-import * as OutboundHttpSessionImpl from "./capnp-es/generated/sandstorm/outbound-http-session-impl";
 
 const CAPNP_ES_DISPOSE = Symbol.for("capnp-es.dispose");
 
 const SCHEMAS = {
-  "sandstorm/outbound-http-session-impl.capnp": OutboundHttpSessionImpl,
-  "sandstorm/outbound-http-session.capnp": OutboundHttpSession,
-  "sandstorm/isolate-authoring-impl.capnp": IsolateAuthoringImpl,
-  "sandstorm/isolate-authoring.capnp": IsolateAuthoring,
   "sandstorm/activity.capnp": Activity,
   "sandstorm/api-session.capnp": ApiSession,
   "sandstorm/api-session-impl.capnp": ApiSessionImpl,
