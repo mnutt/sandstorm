@@ -115,16 +115,17 @@ rm -f "$BUNDLE_DIR/README"
 cp "$SOURCE_ROOT/meteor-bundle-main.js" "$BUNDLE_DIR/sandstorm-main.js"
 
 # Meteor wants us to do `npm install` in the bundle to prepare it. Its generated server manifest
-# pins build helpers that have since received security fixes, so update those pins before install.
-# Native extensions must use Meteor's Node and build helpers rather than whatever is first on the
-# host PATH.
+# includes native build helpers that this shell does not need: uWebSockets.js ships prebuilt
+# binaries, and the remaining shell dependencies are JavaScript. Remove those helpers from the
+# runtime manifest and update underscore before install. Use Meteor's Node and npm for rebuilds.
 (cd "$BUNDLE_DIR/programs/server" && \
  chmod u+w package.json npm-shrinkwrap.json && \
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
    "$METEOR_DEV_BUNDLE/bin/npm" pkg set \
-     dependencies.underscore=1.13.8 \
-     dependencies.node-gyp=12.4.0 \
-     dependencies.@mapbox/node-pre-gyp=2.0.3 && \
+     dependencies.underscore=1.13.8 && \
+ PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
+   "$METEOR_DEV_BUNDLE/bin/npm" pkg delete \
+     dependencies.node-gyp dependencies.@mapbox/node-pre-gyp && \
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
    "$METEOR_DEV_BUNDLE/bin/npm" install --omit=dev --no-audit && \
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
