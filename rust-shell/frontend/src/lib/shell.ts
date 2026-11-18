@@ -129,7 +129,13 @@ export class ShellService {
           },
         }).client();
         const result = await shell.watch((params) => { params.observer = observer; }).promise();
-        if (generation === this.generation) this.subscription = result.subscription;
+        if (generation === this.generation) {
+          this.subscription = result.subscription;
+          void result.subscription.whenClosed().promise().then(
+            () => fail(new Error('Live updates stopped. Reconnecting…')),
+            () => fail(new Error('Live updates failed. Reconnecting…')),
+          );
+        }
       } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
     };
   }

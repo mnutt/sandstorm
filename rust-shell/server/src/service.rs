@@ -139,6 +139,7 @@ impl Shell {
 
 struct Subscription {
     task: tokio::task::JoinHandle<()>,
+    closed: watch::Sender<Option<String>>,
     watching: Rc<Cell<bool>>,
     active: Cell<bool>,
 }
@@ -147,6 +148,13 @@ impl Subscription {
         if self.active.replace(false) {
             self.task.abort();
             self.watching.set(false);
+            self.closed.send_if_modified(|state| {
+                if state.is_some() {
+                    return false;
+                }
+                *state = Some(String::new());
+                true
+            });
         }
     }
 }
@@ -156,6 +164,25 @@ impl Drop for Subscription {
     }
 }
 impl subscription::Server for Subscription {
+    async fn when_closed(
+        self: Rc<Self>,
+        _: subscription::WhenClosedParams,
+        _: subscription::WhenClosedResults,
+    ) -> capnp::Result<()> {
+        let mut receiver = self.closed.subscribe();
+        let reason = receiver
+            .wait_for(|state| state.is_some())
+            .await
+            .map_err(|_| capnp::Error::disconnected("Subscription ended".into()))?
+            .clone()
+            .unwrap();
+        if reason.is_empty() {
+            Ok(())
+        } else {
+            Err(capnp::Error::failed(reason))
+        }
+    }
+
     async fn cancel(
         self: Rc<Self>,
         _: subscription::CancelParams,
@@ -228,6 +255,8 @@ impl shell::Server for Shell {
             ));
         }
         let mut receiver = self.state.subscribe();
+        let (closed, _) = watch::channel(None);
+        let ended = closed.clone();
         let task = tokio::task::spawn_local(async move {
             loop {
                 let snapshot = receiver.borrow_and_update().clone();
@@ -270,9 +299,11 @@ impl shell::Server for Shell {
                     tokio::time::timeout(Duration::from_secs(10), request.send().promise).await,
                     Ok(Ok(_))
                 ) {
+                    ended.send_replace(Some("Live update delivery failed or timed out".into()));
                     break;
                 }
                 if receiver.changed().await.is_err() {
+                    ended.send_replace(Some("Live update source closed".into()));
                     break;
                 }
             }
@@ -281,6 +312,7 @@ impl shell::Server for Shell {
             .get()
             .set_subscription(capnp_rpc::new_client(Subscription {
                 task,
+                closed,
                 watching: self.watching.clone(),
                 active: Cell::new(true),
             }));

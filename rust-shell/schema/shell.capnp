@@ -41,6 +41,9 @@ interface Observer {
 interface Subscription {
   cancel @0 () -> ();
   # Dropping this capability also cancels observation.
+  whenClosed @1 () -> ();
+  # Pending while observation is healthy. Resolves on explicit cancellation;
+  # rejects on delivery failure. Reconnect for a fresh authorized snapshot.
 }
 
 struct GrainView {

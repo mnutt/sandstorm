@@ -1,6 +1,7 @@
 import { Conn } from 'capnp-es';
 import { Observer, Shell } from '../src/generated/shell';
 import { WebSocketTransport } from '../src/lib/transport';
+import { ShellService } from '../src/lib/shell';
 
 export async function probe() {
   const socket = new WebSocket(location.origin.replace('http', 'ws') + '/rpc');
@@ -42,7 +43,12 @@ export async function probe() {
     catch { oldCancelSafe = true; }
     await shell.addFixture().promise();
     await waitFor(() => latest === 1 && entries === 2, 'first change');
+    let closed = false;
+    const closure = active.whenClosed().promise().then(() => { closed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    if (closed) throw new Error('Healthy subscription reported closed');
     await active.cancel().promise();
+    await closure;
     const cancelledCalls = calls;
     await shell.addFixture().promise();
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -58,6 +64,41 @@ export async function probe() {
     resumed.client.close();
     const replacement = (await shell.watch((p) => { p.observer = observer(); }).promise()).subscription;
     await replacement.cancel().promise();
+    replacement.client.close();
+    // A rejected callback and a stalled callback both report terminal failure.
+    for (const stalled of [false, true]) {
+      const broken = (await shell.watch((p) => {
+        p.observer = new Observer.Server({ replace: async () => {
+          if (stalled) await new Promise(() => {});
+          else throw new Error('Deliberate observer failure');
+        } }).client();
+      }).promise()).subscription;
+      let failed = false;
+      try { await broken.whenClosed().promise(); }
+      catch (error) { failed = String(error).includes('Live update delivery failed'); }
+      if (!failed) throw new Error('Observer failure was not reported');
+      await broken.cancel().promise();
+      // Cleanup must not erase the failure for callers arriving later.
+      try { await broken.whenClosed().promise(); throw new Error('Lost terminal failure'); }
+      catch (error) { if (!String(error).includes('Live update delivery failed')) throw error; }
+      broken.client.close();
+    }
+    // Exercise the actual frontend recovery path after a callback exception.
+    let rejectOnce = true;
+    let recovering = false;
+    let recovered = false;
+    const service = new ShellService(state => {
+      if (state.status === 'ready' && rejectOnce) {
+        rejectOnce = false;
+        throw new Error('Deliberate UI callback failure');
+      }
+      if (state.status === 'reconnecting') recovering = true;
+      if (state.status === 'ready' && recovering) recovered = true;
+    });
+    try {
+      service.start();
+      await waitFor(() => recovered, 'service recovery');
+    } finally { service.stop(); }
     return { fixtureDisabled, duplicateRejected, oldCancelSafe, cancelled, limitRejected, entries };
   } finally { conn.shutdown(); }
 }

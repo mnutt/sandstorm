@@ -335,6 +335,11 @@ enabled; the Rust frontend's development-tool advisory below is separate.
   Components receive plain values. Disconnect clears old state; reconnect uses
   exponential backoff and a fresh authorized snapshot (or fixture). Mutations are never automatically replayed.
 - Explicit cancel, capability release and disconnect end subscriptions.
+- `Subscription.whenClosed()` stays pending while delivery is healthy, resolves
+  on explicit cancellation, and rejects if a callback fails or exceeds its
+  ten-second deadline. Failure remains observable after cleanup. The frontend
+  monitors this capability and reconnects for a fresh authorized snapshot; it
+  clears stale state and grain frames without replaying mutations or grain opens.
 - An opt-in `interop()` capability forwards to a C++ fixture over a Unix socket.
   Tests cover returned counter capabilities, pipelined calls, reentrant browser
   callbacks, exceptions, streaming, backpressure and resource cleanup.
@@ -421,7 +426,7 @@ Connections expire after an hour and reconnect with revalidated authority.
 
 These limits bound the fixture and adapter, not all possible internal RPC
 allocations under hostile pipelining. Aggregate admission, call budgets, heartbeat,
-subscription-failure signaling, and load testing remain necessary before exposure
+and load testing remain necessary before exposure
 outside a local experiment. Origin checking is not account authentication.
 
 ## Validation
