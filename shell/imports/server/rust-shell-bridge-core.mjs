@@ -171,7 +171,7 @@ export function bridgeHandler(bridge) {
       let bytes = 0;
       for await (const part of req) {
         bytes += part.length;
-        if (bytes > 4096) throw Object.assign(new Error("Request too large."), { status: 413 });
+        if (bytes > (req.url === "/renderTemplate" ? 8192 : 4096)) throw Object.assign(new Error("Request too large."), { status: 413 });
         parts.push(part);
       }
       let input;

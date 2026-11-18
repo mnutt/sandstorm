@@ -120,7 +120,7 @@ impl grain_session::Server for Lease {
             return Err(capnp::Error::failed("Grain session closed".into()));
         }
         let options = params.get()?.get_options()?.to_str()?;
-        if options.len() > 2048 {
+        if options.len() > 6144 {
             return Err(capnp::Error::failed("Template options too large".into()));
         }
         let options: serde_json::Value = serde_json::from_str(options)

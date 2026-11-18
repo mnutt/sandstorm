@@ -250,8 +250,9 @@ the Meteor chooser through an embedded provider to return a capability to an app
 
 `renderTemplate` supports text containing `$API_TOKEN`, `$API_HOST`, and
 `$GRAIN_TITLE_SLUG`, with `petname`, `roleAssignment`, `forSharing`, color, and
-left/right copy buttons. `clientapp` and `unauthenticated` options explicitly
-require the main shell for now. HTML is displayed as text.
+left/right copy buttons. `unauthenticated` discovery metadata uses Meteor’s
+existing validation and API-host resources (including Davros status and DAV
+options). `clientapp` links still explicitly require the main shell. HTML is displayed as text.
 
 The scoped `GrainSession` capability asks Meteor to create a token using the
 existing `createNewApiToken` permission path. The bridge checks linked-login
@@ -260,6 +261,12 @@ revokes a late-created token if the lease closes or authorization ends. Tokens
 retain the existing five-minute unused expiry. Issued API access is separate
 from UI-session lifetime: an API token already copied and used remains subject
 to the existing permission and revocation rules.
+
+The frontend coalesces concurrent requests with identical token options and
+memoizes their result for 2.5 minutes, matching the main-shell behavior. This is
+necessary for Davros's separate URL, username, and password fields to agree on
+the same token-specific API host. Different issuances are queued; display records
+are limited to 32 per grain view. Closing the view clears both records and cache.
 
 The trusted frontend stores the result in tab-local sessionStorage and gives the
 app only a random fragment URL to `/offer-template.html`. That document renders
@@ -275,6 +282,8 @@ Browser tests check placeholder substitution, text-only rendering, origin
 isolation, reply contents, and storage cleanup. Lease tests cover issuance limits
 and cancellation during creation; the real-grain test checks canonical token
 ownership, expiry, gateway keepalive, and rejection after sharing revocation.
+Davros regression coverage checks simultaneous field rendering, shared tokens,
+public status/DAV discovery, denial of unlisted paths, and malformed metadata.
 
 ### Packaging audit policy
 

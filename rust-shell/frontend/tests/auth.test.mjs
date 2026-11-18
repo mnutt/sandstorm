@@ -199,10 +199,29 @@ test('authenticated notifications: handoff, shared writes, account switching and
       try { return !!document.getElementById('offer').contentWindow.document.body; } catch { return false; }
     }), false, 'app must not read shell-origin token text');
     assert.equal(await page.evaluate(() => window.injected), undefined);
-    await app.evaluate(() => parent.postMessage({renderTemplate:{rpcId:'unsupported',template:'$API_TOKEN',unauthenticated:{}}}, '*'));
+    await app.evaluate(() => parent.postMessage({renderTemplate:{rpcId:'unsupported',template:'$API_TOKEN',clientapp:'davros'}}, '*'));
     await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('unsupported');
     assert.match(await app.evaluate(() => window.reply.error), /requires the main shell/);
     assert.equal(templates, 1);
+    // Davros renders these simultaneously; token-specific host and password must match.
+    await app.evaluate(() => {
+      window.templateReplies = {};
+      window.addEventListener('message', e => { if (e.data?.rpcId?.startsWith('davros-')) window.templateReplies[e.data.rpcId] = e.data; });
+      const unauthenticated = { resources: { '/status.php': { type: 'text/json', language: 'en', body: '{"installed":true}' } },
+        options: { dav: ['1', '2', '3', 'mkcol-extended'] } };
+      for (const [id, template] of [['host','$API_HOST'],['user','$GRAIN_TITLE_SLUG'],['password','$API_TOKEN']]) {
+        parent.postMessage({renderTemplate:{rpcId:'davros-'+id, template, unauthenticated, clipboardButton:'right'}}, '*');
+      }
+    });
+    await expect.poll(() => app.evaluate(() => Object.keys(window.templateReplies).length)).toBe(3);
+    const davrosReplies = await app.evaluate(() => window.templateReplies);
+    for (const reply of Object.values(davrosReplies)) assert.ok(reply.uri, JSON.stringify(reply));
+    assert.equal(templates, 2, 'three matching requests issue only one additional token');
+    const records = await page.evaluate(replies => Object.values(replies).map(reply =>
+      JSON.parse(sessionStorage.getItem('rustOfferTemplate:' + new URL(reply.uri).hash.slice(1)))), davrosReplies);
+    assert.equal(new Set(records.map(record => record.token)).size, 1);
+    assert.equal(new Set(records.map(record => record.host)).size, 1);
+
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
     await page.getByRole('button', { name: 'Choose in Sandstorm' }).waitFor();
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'duplicate' } }, '*'));
@@ -211,6 +230,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const popupPromise = context.waitForEvent('page');
     await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
     const popup = await popupPromise;
+    await popup.waitForURL(mainOrigin + '/rust-shell-powerbox');
     await popup.waitForLoadState('domcontentloaded');
     await expect.poll(() => popup.evaluate(() => !!window.request)).toBe(true);
     assert.equal(await popup.evaluate(() => window.request.sessionId), String(serial));

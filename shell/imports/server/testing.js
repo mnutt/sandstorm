@@ -1442,8 +1442,11 @@ if(isTesting) {
       }
       if (!record) throw new Meteor.Error(404, "No test session");
       if (operation === "template") {
+        const discovery = { resources: { "/status.php": { type: "text/json", language: "en",
+          body: JSON.stringify({ installed: true, maintenance: false, version: "9.1.0.14", versionstring: "9.1.0 RC4", edition: "" }) } },
+          options: { dav: ["1", "2", "3", "mkcol-extended"] } };
         const result = await createRustTemplateToken(globalDb, record,
-            { petname: "Rust template test", roleAssignment: { allAccess: null }, forSharing: false });
+            { petname: "Rust template test", roleAssignment: { allAccess: null }, forSharing: false, unauthenticated: discovery });
         try {
           const row = await globalDb.collections.apiTokens.findOneAsync(result.id);
           if (!result.token || !result.host || row.grainId !== grainId ||
@@ -1455,6 +1458,18 @@ if(isTesting) {
               { method: "POST", headers: { Authorization: "Bearer " + result.token,
                 "X-Sandstorm-Token-Keepalive": "300000" } });
           if (response.status !== 200) throw new Error("Template token keepalive failed: " + response.status);
+          const base = new URL(process.env.ROOT_URL).protocol + "//" + result.host;
+          const status = await fetch(base + "/status.php");
+          if (status.status !== 200 || !(await status.json()).installed) throw new Error("Davros public discovery failed");
+          const options = await fetch(base, { method: "OPTIONS" });
+          if (!options.ok || !options.headers.get("dav")?.includes("mkcol-extended")) throw new Error("Davros DAV options missing");
+          const privatePath = await fetch(base + "/not-public");
+          if (privatePath.status < 400) throw new Error("Unlisted path became public");
+          let rejected = false;
+          try { await createRustTemplateToken(globalDb, record, { petname: "invalid", roleAssignment: { allAccess: null },
+            forSharing: false, unauthenticated: { resources: { "/bad": { type: "text/plain\r\nBad: header", body: "bad" } } } }); }
+          catch { rejected = true; }
+          if (!rejected) throw new Error("Invalid discovery metadata was accepted");
           return true;
         } finally { await globalDb.removeApiTokens({ _id: result.id }); }
       }

@@ -959,11 +959,12 @@ export async function rustGrainPowerboxContext(db, accountId, sessionId) {
 
 export async function createRustTemplateToken(db, handle, options) {
   await rustGrainPowerboxContext(db, handle.accountId, handle.sessionId);
-  check(options, { petname: String, roleAssignment: db.roleAssignmentPattern, forSharing: Boolean });
+  check(options, { petname: String, roleAssignment: db.roleAssignmentPattern, forSharing: Boolean,
+    unauthenticated: Match.Optional(Object) });
   if (options.petname.length > 256) throw new Meteor.Error(400, "Petname is too long.");
   const result = await SandstormPermissions.createNewApiToken(db, { accountId: handle.accountId },
       handle.grainId, options.petname, options.roleAssignment,
-      { webkey: { forSharing: options.forSharing, expiresIfUnusedDuration: 5 * 60 * 1000 } });
+      { webkey: { forSharing: options.forSharing, expiresIfUnusedDuration: 5 * 60 * 1000 } }, options.unauthenticated);
   return { ...result, host: db.makeApiHost(result.token) };
 }
 
