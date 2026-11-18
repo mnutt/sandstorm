@@ -205,11 +205,26 @@ charge; it does not stop the grain.
 
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
-and a one-shot `getGrainTitle` reply. Sharing requests show a main-shell link;
+and a one-shot `getGrainTitle` reply. Sharing requests use a main-shell dialog handoff;
 `renderTemplate` uses an isolated shell-origin display (below). Powerbox requests
 use the main-shell chooser handoff.
 This is not full postMessage API parity,
 an incognito/sharing-link flow, or live-session restoration across reconnects.
+
+The grain toolbar's **Share** and **Who has access** buttons open a dedicated
+Meteor window. App `startSharing` and `showConnectionGraph` messages instead
+show a prompt requiring a user click. The handoff checks exact origin, popup
+window, and nonce; session IDs and share metadata travel only in messages.
+Meteor validates the same-account Rust lease and grain permissions, opens its
+ordinary grain view, and shows the existing dialog. Share path/fragment hints
+are bounded and validated. Existing Meteor methods retain all sharing mutation
+authority; no sharing tokens are returned to Rust or to the app.
+
+One sharing window is allowed per Rust grain frame. Closing the frame or losing
+the connection closes that window. Meteor rechecks the lease every five seconds
+and closes on expiry, revocation, or account change. An unopened handoff expires
+after a minute. The window runs its own ordinary Meteor grain UI session; it is
+not a new sharing implementation or support for anonymous links in the Rust shell.
 
 Validation includes capability release, close/reopen, late creation cancellation,
 source-login revocation, logout with an active iframe, lease renewal/expiry,

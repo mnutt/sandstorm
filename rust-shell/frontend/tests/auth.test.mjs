@@ -90,6 +90,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
     bridgeServer.listen(bridgeSocket); await once(bridgeServer, 'listening'); await chmod(bridgeSocket, 0o600);
     main = httpsServer(proxy.tls, async (req, res) => {
       try {
+        if (req.url === '/rust-shell-sharing') {
+          res.setHeader('Content-Type', 'text/html');
+          res.end(`<p>Sharing test window</p><script>
+            addEventListener('message', event => {
+              if (event.source !== opener || event.origin !== '${proxy.origin}' || event.data.type !== 'rust-sharing-request') return;
+              window.request = event.data;
+              opener.postMessage({type:'rust-sharing-result', nonce:request.nonce, opened:true}, '${proxy.origin}');
+            });
+            opener.postMessage({type:'rust-sharing-ready'}, '${proxy.origin}');
+          </script>`);
+          return;
+        }
         if (req.url === '/rust-shell-powerbox') {
           res.setHeader('Content-Type', 'text/html');
           res.end(`<button id="choose">Choose test capability</button><script>
@@ -271,6 +283,39 @@ test('authenticated notifications: handoff, shared writes, account switching and
       JSON.parse(sessionStorage.getItem('rustOfferTemplate:' + new URL(reply.uri).hash.slice(1)))), davrosReplies);
     assert.equal(new Set(records.map(record => record.token)).size, 1);
     assert.equal(new Set(records.map(record => record.host)).size, 1);
+
+    // App requests only prompt; a user click opens the trusted sharing window.
+    await app.evaluate(() => parent.postMessage({startSharing:{pathname:'/folder',hash:'#document'}}, '*'));
+    await page.getByText('Open sharing in Sandstorm.', {exact:true}).waitFor();
+    const sharingOpened = page.waitForEvent('popup');
+    await page.getByRole('button', {name:'Open sharing window',exact:true}).click();
+    const sharingPopup = await sharingOpened;
+    await sharingPopup.waitForURL(mainOrigin + '/rust-shell-sharing');
+    await sharingPopup.waitForLoadState();
+    await expect.poll(() => sharingPopup.evaluate(() => window.request?.mode)).toBe('share');
+    const sharingRequest = await sharingPopup.evaluate(() => window.request);
+    assert.deepEqual(sharingRequest.shareData, {pathname:'/folder',hash:'#document'});
+    assert.equal(sharingPopup.url(), mainOrigin + '/rust-shell-sharing');
+    assert.equal(new URL(sharingPopup.url()).search + new URL(sharingPopup.url()).hash, '');
+    assert.equal(typeof sharingRequest.sessionId, 'string');
+    assert.ok(sharingRequest.sessionId);
+    await page.getByText('Sharing is open in Sandstorm.', {exact:true}).waitFor();
+    await sharingPopup.evaluate(origin => opener.postMessage({type:'rust-sharing-result',nonce:'forged',error:'Forged sharing error'}, origin), proxy.origin);
+    await page.evaluate(origin => dispatchEvent(new MessageEvent('message', {origin,source:window,
+      data:{type:'rust-sharing-result',nonce:'forged',error:'Forged sharing error'}})), mainOrigin);
+    assert.equal(await page.getByText('Forged sharing error').count(), 0);
+    await page.getByRole('button', {name:'Close sharing window',exact:true}).click();
+    await expect.poll(() => sharingPopup.isClosed()).toBe(true);
+    await app.evaluate(() => parent.postMessage({startSharing:{pathname:'/%2e%2e/escape'}}, '*'));
+    assert.equal(await page.getByRole('button', {name:'Open sharing window',exact:true}).count(), 0);
+    const accessOpened = page.waitForEvent('popup');
+    await page.getByRole('button', {name:'Who has access',exact:true}).click();
+    const accessPopup = await accessOpened;
+    await accessPopup.waitForURL(mainOrigin + '/rust-shell-sharing');
+    await accessPopup.waitForLoadState();
+    await expect.poll(() => accessPopup.evaluate(() => window.request?.mode)).toBe('access');
+    await accessPopup.close();
+    await expect(page.getByRole('button', {name:'Close sharing window',exact:true})).toHaveCount(0);
 
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
     await page.getByRole('button', { name: 'Choose in Sandstorm' }).waitFor();

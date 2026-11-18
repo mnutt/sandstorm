@@ -87,9 +87,62 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
       window.rustPowerboxTestPopup.close();
       removeEventListener('message', window.rustPowerboxTestListener);
     });
+  browser.executeAsync(async function (done) {
+    const sessionId = new URL(document.getElementById('rust-session-test').src).searchParams.get('sessionid');
+    const invalid = [['not-a-session','share',{}], [sessionId,'unknown',{}],
+      [sessionId,'share',{pathname:'/%2e%2e/escape'}], [sessionId,'share',{hash:42}]];
+    const rejected = await Promise.all(invalid.map(async args => {
+      try { await Meteor.callAsync('rustShellSharingContext', ...args); return false; }
+      catch { return true; }
+    }));
+    done(rejected.every(Boolean));
+  }, [], result => browser.assert.equal(result.value, true, 'invalid sharing contexts and paths are rejected'));
+  // Reuse the real sharing dialog, including app-supplied deep-link metadata.
+  browser.execute(function () {
+    const sessionId = new URL(document.getElementById('rust-session-test').src).searchParams.get('sessionid');
+    window.rustSharingTestListener = event => {
+      const popup = window.rustSharingTestPopup;
+      if (!popup || event.source !== popup || event.origin !== location.origin) return;
+      if (event.data.type === 'rust-sharing-ready') popup.postMessage({type:'rust-sharing-request',
+        nonce:'share-test',sessionId,mode:'share',shareData:{pathname:'/folder',hash:'#document'}}, location.origin);
+      if (event.data.type === 'rust-sharing-result') window.rustSharingTestResult = event.data;
+    };
+    addEventListener('message', window.rustSharingTestListener);
+    window.rustSharingTestPopup = window.open('/apps', '_blank');
+  }).windowHandles(windows => browser.switchWindow(windows.value[1]))
+    .waitForElementPresent('.main-content', utils.medium_wait)
+    .execute(function () {
+      Meteor.settings.public.rustShellOrigin = location.origin;
+      Router.go('/rust-shell-sharing');
+    })
+    .waitForElementVisible('#shareable-link-tab-header', utils.medium_wait)
+    .click('#shareable-link-tab-header')
+    .waitForElementVisible('.new-share-token', utils.medium_wait)
+    .submitForm('.new-share-token')
+    .waitForElementVisible('.topbar-popup.share .copy-me', utils.medium_wait)
+    .assert.textContains('.topbar-popup.share .copy-me', '/folder#document')
+    .click('button.who-has-access')
+    .waitForElementVisible('.topbar-popup.who-has-access', utils.medium_wait)
+    .windowHandles(windows => browser.switchWindow(windows.value[0]))
+    .execute(function () {
+      const result = window.rustSharingTestResult;
+      removeEventListener('message', window.rustSharingTestListener);
+      return result;
+    }, [], result => {
+      browser.assert.equal(result.value.opened, true, 'sharing handoff opened the canonical dialog');
+      browser.assert.equal(Object.keys(result.value).sort().join(','), 'nonce,opened,type', 'no sharing token is returned to the opener');
+    });
   operation(browser, 'template');
   operation(browser, 'keep');
   operation(browser, 'close');
+  browser.executeAsync(function (done) {
+    const deadline = Date.now() + 10000;
+    const timer = setInterval(() => {
+      if (window.rustSharingTestPopup.closed || Date.now() > deadline) {
+        clearInterval(timer); done(window.rustSharingTestPopup.closed);
+      }
+    }, 50);
+  }, [], result => browser.assert.equal(result.value, true, 'sharing window closes when the Rust lease ends'));
   operation(browser, 'shared', true);
   browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
   operation(browser, 'revoke');

@@ -39,6 +39,7 @@ import { GrainView } from "/imports/client/grain/grainview";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbox-client";
+import { installRustSharing } from "/imports/client/rust-shell-sharing";
 
 import "/imports/client/grain/styles/grain-ui.scss";
 
@@ -78,6 +79,16 @@ const showConnectionGraph = function () {
     },
   });
 };
+
+installRustSharing((grain, mode, shareData) => {
+  globalTopbar.closePopup();
+  if (mode === "share") {
+    grain.setShareData(shareData);
+    globalTopbar.openPopup("share", true);
+  } else {
+    showConnectionGraph();
+  }
+});
 
 const mapGrainStateToTemplateData = function (grainState) {
   // TODO(now): Change error() to return a bare message code, and make sure to handle all codes.
