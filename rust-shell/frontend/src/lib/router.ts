@@ -1,4 +1,4 @@
-export type Route = { page: 'notifications' | 'grains' | 'missing' } | { page: 'grain'; grainId: string; path: string };
+export type Route = { page: 'notifications' | 'grains' | 'apps' | 'missing' } | { page: 'grain'; grainId: string; path: string };
 export function appPath(value: string): string | null {
   if (!value || value.length > 2048 || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) return null;
   const url = new URL(value, 'https://app.invalid');
@@ -7,6 +7,7 @@ export function appPath(value: string): string | null {
 export function readRoute(url = new URL(location.href)): Route {
   if (url.pathname === '/' || url.pathname === '/notifications') return { page: 'notifications' };
   if (url.pathname === '/grains') return { page: 'grains' };
+  if (url.pathname === '/apps') return { page: 'apps' };
   const match = url.pathname.match(/^\/grain\/([^/]+)(\/.*)?$/);
   if (match) {
     let id;

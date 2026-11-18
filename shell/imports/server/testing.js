@@ -1393,6 +1393,40 @@ if(isTesting) {
       }
     },
 
+    async testRustCreateGrain(grainId) {
+      check(grainId, String);
+      const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!source || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const action = await globalDb.collections.userActions.findOneAsync({ userId: this.userId, packageId: source.packageId });
+      if (!action) throw new Error("Test app action not installed");
+      const foreignId = "rust-foreign-action-" + Random.id();
+      let token;
+      try {
+        await globalDb.collections.userActions.insertAsync({ ...action, _id: foreignId, userId: "unrelated-account" });
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
+        ({ token } = await rustShellBridge.handle("exchange", { code, state }));
+        const call = (name, input = {}) => rustShellBridge.handle(name, { token, ...input });
+        const list = await call("listApps");
+        if (!list.actions.some(row => row.key === action._id) || list.actions.some(row => row.key === foreignId)) {
+          throw new Error("Installed actions leaked or omitted account data");
+        }
+        let denied = false;
+        try { await call("createGrain", { actionId: foreignId, title: "Must not create" }); }
+        catch (error) { denied = error.error === 404; }
+        if (!denied) throw new Error("Foreign app action was accepted");
+        const result = await call("createGrain", { actionId: action._id, title: "Created through Rust API" });
+        const grain = await globalDb.collections.grains.findOneAsync(result.grainId);
+        if (!grain || grain.userId !== this.userId || grain.packageId !== action.packageId || grain.title !== "Created through Rust API") {
+          throw new Error("Created grain metadata differs from requested account/action");
+        }
+        return result.grainId;
+      } finally {
+        if (token) await rustShellBridge.handle("logout", { token });
+        await globalDb.collections.userActions.removeAsync(foreignId);
+      }
+    },
+
     async testRustGrainSession(operation, grainId) {
       check(operation, String);
       check(grainId, String);

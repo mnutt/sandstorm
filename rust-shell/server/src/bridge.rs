@@ -5,6 +5,19 @@ use std::{path::PathBuf, time::Duration};
 
 pub type Error = (StatusCode, String);
 
+#[derive(Deserialize)]
+pub struct AppAction {
+    pub key: String,
+    pub title: String,
+    #[serde(rename = "appTitle")]
+    pub app_title: String,
+}
+#[derive(Deserialize)]
+pub struct AppList {
+    pub actions: Vec<AppAction>,
+    pub limited: bool,
+}
+
 #[derive(Clone)]
 pub struct Bridge(reqwest::Client);
 

@@ -175,6 +175,31 @@ those when opening the link. No privileged backend capabilities cross the API.
 Mongo observation covers title, usage, trash, ownership, suspension, and token
 changes. Account switching, disconnect, and logout clear both projections.
 
+### Installed apps and grain creation
+
+The **Apps** page lists up to 100 installed account-owned actions. It refreshes
+on entry/reconnect or **Refresh apps**, rather than maintaining another live
+projection. Choose an action and title to create and open a grain here. Package
+installation and development-only app actions remain in the main shell.
+
+The browser supplies only an action ID and title. Meteor resolves the command
+and package from that account's installed action, then uses the same
+`createGrainForUser` implementation as the legacy `newGrain` method. Signup/demo,
+quota, and package checks retain their existing owner. The Rust bridge rechecks
+the linked login and request connection immediately before inserting the grain.
+It admits one in-flight creation per account and eight across the bridge.
+
+Creation is never automatically retried. A lost response may mean the grain was
+created; the UI disables another submission and asks the user to check their
+grains. Navigation or disconnect does not delete a grain that already committed.
+This is not durable idempotency or recovery of a creation result across restart.
+
+The browser suite covers creation, route restoration, and a failed response
+without replay. Bridge tests cover admission, cancellation and logout before
+commit. The packaged test checks account-scoped actions and opens a real grain
+created through the production adapter. Run it against the fast bundle with
+`make -C rust-shell test-package`; it starts an isolated test server.
+
 ### Embedded grain UI sessions
 
 **Open here** opens one grain per browser connection, using the signed-in account's
@@ -240,7 +265,7 @@ The user also confirmed the Powerbox handoff and Davros API templates on yertle.
 
 ### URL navigation
 
-The shell has `/notifications`, `/grains`, and `/grain/<id>/<app-path>` routes.
+The shell has `/notifications`, `/grains`, `/apps`, and `/grain/<id>/<app-path>` routes.
 Sidebar navigation and opening/closing grains participate in browser history;
 Back/Forward closes the prior UI lease before opening the destination. Valid
 app `setPath` messages replace the current route, including query and fragment,

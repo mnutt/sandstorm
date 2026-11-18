@@ -5,6 +5,7 @@ import { WebSocketTransport } from './transport';
 
 export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string; senderName: string }
 export interface Grain { key: string; title: string; href: string; owned: boolean; lastUsed: string; appTitle: string }
+export interface AppAction { key: string; title: string; appTitle: string }
 export interface ActiveGrain { path: string; grainId: string; origin: string; url: string; title: string; mainHref: string }
 export interface ShellState {
   activeGrain: ActiveGrain | null;
@@ -150,6 +151,31 @@ export class ShellService {
       try { await session.close().promise(); }
       finally { session.client.close(); }
     }
+  }
+
+  async listApps() {
+    const generation = this.generation;
+    if (!this.shell || this.state.status !== 'ready') throw new Error('Connect to Sandstorm first.');
+    const result = await this.shell.listApps().promise();
+    if (generation !== this.generation) throw new Error('Connection changed.');
+    const actions: AppAction[] = [];
+    for (const action of result.actions) actions.push({key: action.key, title: action.title, appTitle: action.appTitle});
+    return {actions, limited: result.limited};
+  }
+
+  async createGrain(actionId: string, title: string) {
+    const generation = this.generation;
+    if (!this.shell || this.state.status !== 'ready') throw new Error('Connect to Sandstorm first.');
+    // One attempt, with an explicit unknown-outcome error on disconnect/timeout.
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        this.shell.createGrain(params => { params.actionId = actionId; params.title = title; }).promise(),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Creation timed out.')), 10000); }),
+      ]);
+      if (generation !== this.generation) throw new Error('Connection changed.');
+      return result.grainId;
+    } finally { clearTimeout(timeout); }
   }
 
   async renderTemplate(input: unknown) {

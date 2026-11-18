@@ -229,3 +229,50 @@ test('persisted-session admission remains bounded across concurrent exchanges', 
   assert.equal(results.find(result => result.status === 'rejected').reason.status, 503);
   assert.equal(await store.count(), 1024);
 });
+
+test('grain creation is account-scoped, bounded and revalidates before committing', async () => {
+  let release, entered, commits = 0;
+  const bridge = createRustShellBridge({
+    authorize: async id => ({name:id, expires:Date.now()+1000000}),
+    listApps: async id => ({actions:[{key:id+'-action'}],limited:false}),
+    createGrain: async (id, action, title, beforeCreate) => {
+      assert.equal(action, id+'-action');
+      assert.equal(title, 'New grain');
+      await new Promise(resolve => { release = resolve; entered?.(); });
+      await beforeCreate();
+      ++commits;
+      return 'created-grain';
+    },
+  });
+  const signIn = async id => {
+    const state = 'a'.repeat(64);
+    const code = await bridge.issue(id, 'hash', state);
+    return (await bridge.handle('exchange',{state,code})).token;
+  };
+  const token = await signIn('alice');
+  const bob = await signIn('bob');
+  assert.equal((await bridge.handle('listApps',{token,accountId:'bob'})).actions[0].key,'alice-action');
+  assert.equal((await bridge.handle('listApps',{token:bob})).actions[0].key,'bob-action');
+  const input = {token,actionId:'alice-action',title:' New grain '};
+  await assert.rejects(bridge.handle('createGrain',{...input,title:' '}),{status:400});
+  const ready = new Promise(resolve => { entered = resolve; });
+  const abort = new AbortController();
+  const pending = bridge.handle('createGrain',input,abort.signal);
+  const rejected = assert.rejects(pending,{status:409});
+  await ready;
+  await assert.rejects(bridge.handle('createGrain',input),{status:409});
+  abort.abort(); release(); await rejected;
+  assert.equal(commits,0);
+  const ready2 = new Promise(resolve => { entered = resolve; });
+  const revoked = bridge.handle('createGrain',input);
+  const revocation = assert.rejects(revoked,{status:401});
+  await ready2;
+  await bridge.handle('logout',{token}); release(); await revocation;
+  assert.equal(commits,0);
+  const fresh = await signIn('alice');
+  const ready3 = new Promise(resolve => { entered = resolve; });
+  const success = bridge.handle('createGrain',{...input,token:fresh});
+  await ready3; release();
+  assert.equal((await success).grainId,'created-grain');
+  assert.equal(commits,1);
+});

@@ -9,8 +9,9 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, grains = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, listApps, createGrain, grains = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
+  const creating = new Set();
   const grants = new Map();
   const sessions = sessionStore;
   // One authoritative bridge process admits exchanges serially, including DB
@@ -85,6 +86,31 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       // Cleanup remains possible after expiration; scope ownership is still checked.
       if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
+      if (action === "listApps") {
+        if (!listApps) throw Object.assign(new Error("Apps unavailable."), { status: 503 });
+        const result = await listApps(record.accountId);
+        await session(input.token);
+        return result;
+      }
+      if (action === "createGrain") {
+        if (!createGrain || typeof input.actionId !== "string" || !input.actionId || input.actionId.length > 128 ||
+            typeof input.title !== "string" || !input.title.trim() || input.title.length > 160) {
+          throw Object.assign(new Error("Invalid grain creation request."), { status: 400 });
+        }
+        if (creating.has(record.accountId) || creating.size >= 8) {
+          throw Object.assign(new Error("A grain creation is already in progress. Check your grains before trying again."), { status: 409 });
+        }
+        creating.add(record.accountId);
+        try {
+          const beforeCreate = async () => {
+            await session(input.token);
+            if (signal.aborted) throw Object.assign(new Error("Creation request disconnected."), { status: 409 });
+          };
+          const grainId = await createGrain(record.accountId, input.actionId, input.title.trim(), beforeCreate);
+          await session(input.token);
+          return { grainId };
+        } finally { creating.delete(record.accountId); }
+      }
       if (action === "openGrain") return leases.open(input.token, record.accountId, input, signal);
       if (action === "renderTemplate") return leases.template(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
@@ -164,7 +190,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|listApps|createGrain)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

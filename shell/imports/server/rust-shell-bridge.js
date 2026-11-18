@@ -7,6 +7,7 @@ import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { grainMenu } from "/imports/server/rust-shell-grains";
+import { rustAppActions, createRustGrain } from "/imports/server/rust-shell-apps";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
@@ -31,6 +32,8 @@ export async function authorizeRustShellAccount(accountId, loginHash) {
 }
 
 export const rustShellBridge = createRustShellBridge({
+  listApps: rustAppActions,
+  createGrain: createRustGrain,
   sessionStore: rustShellSessionStore,
   grains: {
     async open(accountId, grainId) {

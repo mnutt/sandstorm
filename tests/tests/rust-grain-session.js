@@ -159,5 +159,14 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
   operation(browser, 'close');
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
+  browser.frame(null).executeAsync(function (done) {
+    Meteor.call('testRustCreateGrain', location.pathname.split('/')[2], (error, grainId) => {
+      if (!error) Router.go('/grain/' + grainId);
+      done({error:error?.message,grainId});
+    });
+  }, [], result => {
+    browser.assert.equal(result.value.error, null, 'installed app creation respects ownership and persists the grain');
+    browser.assert.ok(result.value.grainId, 'created grain ID returned');
+  }).grainFrame().waitForElementPresent('#do-test-system-api', utils.medium_wait);
   browser.end();
 };

@@ -26,6 +26,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let leaseClockOffset = 0;
   let renewals = 0;
   let templates = 0;
+  let creations = 0;
+  let failCreation = false;
   let holdOpen = false;
   let releaseOpen;
   const users = { alice: { name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
@@ -43,10 +45,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const sessionStore = memorySessionStore();
   const bridgeOptions = {
     sessionStore,
+    listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app'}],limited:false}),
+    createGrain: async (id, action, title, beforeCreate) => {
+      assert.equal(action,id+'-action');
+      assert.equal(title,'Created in Rust');
+      await beforeCreate(); ++creations;
+      if (failCreation) throw new Error('Simulated lost creation result');
+      return id+'-created';
+    },
     now: () => Date.now() + leaseClockOffset,
     grains: {
       open: async (id, grainId) => {
-        if (![`${id}-grain`, `${id}-hidden`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
+        if (![`${id}-grain`, `${id}-hidden`, `${id}-created`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
         const handle = ++serial; liveGrains.add(handle);
         return { handle, view: { grainId, title: grainId.endsWith('-hidden') ? 'Hidden grain' : '', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
@@ -153,6 +163,28 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
+    await page.getByRole('button', {name:'Apps',exact:true}).click();
+    await page.getByLabel('Installed app action').waitFor();
+    assert.equal(new URL(page.url()).pathname,'/apps');
+    await page.reload();
+    await page.getByLabel('Installed app action').selectOption('alice-action');
+    await page.getByLabel('Grain title').fill('Created in Rust');
+    await page.getByRole('button', {name:'Create grain',exact:true}).click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/grain/alice-created');
+    await page.getByRole('button', {name:'Close grain',exact:true}).waitFor();
+    assert.equal(creations,1);
+    await page.getByRole('button', {name:'Close grain',exact:true}).click();
+    failCreation = true;
+    await page.getByRole('button', {name:'Apps',exact:true}).click();
+    await page.getByLabel('Installed app action').selectOption('alice-action');
+    await page.getByLabel('Grain title').fill('Created in Rust');
+    await page.getByRole('button', {name:'Create grain',exact:true}).click();
+    await page.getByText('The request was not retried. Check your grains before creating another.').waitFor();
+    await expect(page.getByRole('button', {name:'Create grain',exact:true})).toBeDisabled();
+    assert.equal(creations,2);
+    await page.getByRole('button', {name:'Check grains',exact:true}).click();
+    assert.equal(creations,2);
+    failCreation = false;
     await page.getByRole('button', { name: 'Grains', exact: true }).click();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
     await page.reload();

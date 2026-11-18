@@ -1,6 +1,7 @@
 <script lang="ts">
   import { initialRoute, readRoute, grainRoute, routeKey, rememberRoute } from './lib/router';
   import GrainFrame from './GrainFrame.svelte';
+  import Apps from './Apps.svelte';
   import { onMount } from 'svelte';
   import { ShellService, type ShellState } from './lib/shell';
 
@@ -8,7 +9,7 @@
   const notifications = new ShellService((next) => { model = next; });
   let route = $state(initialRoute());
   let attempt = $state('');
-  const view = $derived(route.page === 'notifications' ? 'notifications' : 'grains');
+  const view = $derived(route.page === 'grain' ? 'grains' : route.page);
   let navigation = Promise.resolve();
   let navigationId = 0;
   let changingRoute = $state(false);
@@ -61,6 +62,7 @@
     <nav aria-label="Shell pages">
       <button class="secondary" aria-current={view === 'notifications' ? 'page' : undefined} onclick={() => navigate('/notifications')}>Notifications</button>
       <button class="secondary" aria-current={view === 'grains' ? 'page' : undefined} onclick={() => navigate('/grains')}>Grains</button>
+      <button class="secondary" aria-current={view === 'apps' ? 'page' : undefined} onclick={() => navigate('/apps')}>Apps</button>
     </nav>
     <hr />
     {#if model.fixture}
@@ -75,7 +77,7 @@
       <h2>Your Sandstorm account</h2>
       <p>Sign in through the main shell to see your real notifications.</p>
     {/if}
-    <p>Grains can open here. App management and sharing remain in the main shell.</p>
+    <p>Create and open grains here. Installation and sharing management use the main shell.</p>
   </aside>
   {#if model.activeGrain}
     {#key model.activeGrain.url}
@@ -95,6 +97,9 @@
       {#if model.error}<p role="alert">{model.error}</p>{/if}
       <button class="secondary" onclick={() => navigate('/grains')}>Back to grains</button>
     </section>
+  {:else if view === 'apps'}
+    <Apps service={notifications} status={model.status} fixture={model.fixture}
+      created={id => navigate(grainRoute(id))} checkGrains={() => navigate('/grains')} />
   {:else if view === 'grains'}
   <section aria-labelledby="grains-title">
     <div class="heading"><h2 id="grains-title">Grains</h2><span class="status" role="status">{model.status}</span></div>

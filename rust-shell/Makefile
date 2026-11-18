@@ -1,4 +1,4 @@
-.PHONY: build check test run cpp-fixture
+.PHONY: build check test test-package run cpp-fixture
 
 cpp-fixture: target/cpp-fixture
 
@@ -20,6 +20,11 @@ check:
 test: build check cpp-fixture
 	cargo test --locked
 	cd frontend && npm test
+
+# Tests the fast bundle in an isolated server, not the user's running install.
+# Build the bundle with `make fast` at the repository root first.
+test-package:
+	cd .. && TESTCASE=tests/rust-grain-session.js tests/run-local.sh build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk
 
 run:
 	cargo run --locked

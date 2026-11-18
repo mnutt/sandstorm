@@ -59,6 +59,11 @@ interface GrainSession {
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.
 }
+struct AppAction {
+  key @0 :Text;
+  title @1 :Text;
+  appTitle @2 :Text;
+}
 interface Shell {
   watch @0 (observer :Observer) -> (subscription :Subscription);
   dismiss @1 (id :UInt32) -> ();
@@ -70,4 +75,7 @@ interface Shell {
   dismissReal @4 (key :Text) -> ();
   markRead @5 () -> ();
   openGrain @6 (grainId :Text) -> (view :GrainView, session :GrainSession);
+  listApps @7 () -> (actions :List(AppAction), limited :Bool);
+  createGrain @8 (actionId :Text, title :Text) -> (grainId :Text);
+  # Never replay creation after a transport failure. The outcome may be unknown.
 }

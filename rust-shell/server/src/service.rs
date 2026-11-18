@@ -194,6 +194,64 @@ impl subscription::Server for Subscription {
 }
 
 impl shell::Server for Shell {
+    async fn list_apps(
+        self: Rc<Self>,
+        _: shell::ListAppsParams,
+        mut results: shell::ListAppsResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| capnp::Error::failed("Apps require a signed-in account".into()))?;
+        let value = session
+            .call("listApps", serde_json::json!({}))
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        let list: crate::bridge::AppList = serde_json::from_value(value)
+            .map_err(|_| capnp::Error::failed("Invalid app list".into()))?;
+        let mut out = results.get();
+        out.set_limited(list.limited || list.actions.len() > 100);
+        let mut actions = out.init_actions(list.actions.len().min(100) as u32);
+        for (i, action) in list.actions.iter().take(100).enumerate() {
+            let mut out = actions.reborrow().get(i as u32);
+            out.set_key(&action.key);
+            out.set_title(&action.title);
+            out.set_app_title(&action.app_title);
+        }
+        Ok(())
+    }
+
+    async fn create_grain(
+        self: Rc<Self>,
+        params: shell::CreateGrainParams,
+        mut results: shell::CreateGrainResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| capnp::Error::failed("Creation requires a signed-in account".into()))?;
+        let input = params.get()?;
+        let action = input.get_action_id()?.to_str()?;
+        let title = input.get_title()?.to_str()?;
+        if action.len() > 128 || title.len() > 640 {
+            return Err(capnp::Error::failed(
+                "Invalid grain creation request".into(),
+            ));
+        }
+        let value = session
+            .call(
+                "createGrain",
+                serde_json::json!({ "actionId": action, "title": title }),
+            )
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        let grain_id = value["grainId"]
+            .as_str()
+            .ok_or_else(|| capnp::Error::failed("Missing created grain ID".into()))?;
+        results.get().set_grain_id(grain_id);
+        Ok(())
+    }
+
     async fn open_grain(
         self: Rc<Self>,
         params: shell::OpenGrainParams,

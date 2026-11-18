@@ -348,62 +348,67 @@ SandstormDb.periodicCleanup(86400000, () => {
       });
 });
 
+export async function createGrainForUser(userId, packageId, command, title, beforeCreate = async () => {}) {
+  // Create and start a new grain.
+
+  check(packageId, String);
+  check(command, Object);  // Manifest.Command from package.capnp.
+  check(title, String);
+
+  if (!userId) {
+    throw new Meteor.Error(403, "Unauthorized", "Must be logged in to create grains.");
+  }
+
+  const account = await Meteor.users.findOneAsync({ _id: userId });
+  if (!await globalDb.isAccountSignedUpOrDemoAsync(account)) {
+    throw new Meteor.Error(403, "Unauthorized",
+                           "Only invited users or demo users can create grains.");
+  }
+
+  if (await globalDb.isUserOverQuotaAsync(account)) {
+    throw new Meteor.Error(402,
+        "You are out of storage space. Please delete some things and try again.");
+  }
+
+  let pkg = await globalDb.collections.packages.findOneAsync(packageId);
+  let isDev = false;
+  let mountProc = false;
+  if (!pkg) {
+    // Maybe they wanted a dev package.  Check there too.
+    pkg = await globalDb.collections.devPackages.findOneAsync(packageId);
+    isDev = true;
+    mountProc = pkg && pkg.mountProc;
+  }
+
+  if (!pkg) {
+    throw new Meteor.Error(404, "Not Found", "No such package is installed.");
+  }
+
+  const appId = pkg.appId;
+  const manifest = pkg.manifest;
+  const grainId = Random.id(22);  // 128 bits of entropy
+  await beforeCreate();
+  await globalDb.collections.grains.insertAsync({
+    _id: grainId,
+    packageId: packageId,
+    appId: appId,
+    appVersion: manifest.appVersion,
+    userId: userId,
+    identityId: SandstormDb.generateIdentityId(),
+    title: title,
+    private: true,
+    size: 0,
+  });
+
+  globalThis.globalBackend.startGrainInternal(packageId, grainId, userId, command, true,
+                                   isDev, mountProc);
+
+  return grainId;
+}
+
 Meteor.methods({
   async newGrain(packageId, command, title) {
-    // Create and start a new grain.
-
-    check(packageId, String);
-    check(command, Object);  // Manifest.Command from package.capnp.
-    check(title, String);
-
-    if (!this.userId) {
-      throw new Meteor.Error(403, "Unauthorized", "Must be logged in to create grains.");
-    }
-
-    const account = await Meteor.users.findOneAsync({ _id: this.userId });
-    if (!await globalDb.isAccountSignedUpOrDemoAsync(account)) {
-      throw new Meteor.Error(403, "Unauthorized",
-                             "Only invited users or demo users can create grains.");
-    }
-
-    if (await globalDb.isUserOverQuotaAsync(account)) {
-      throw new Meteor.Error(402,
-          "You are out of storage space. Please delete some things and try again.");
-    }
-
-    let pkg = await globalDb.collections.packages.findOneAsync(packageId);
-    let isDev = false;
-    let mountProc = false;
-    if (!pkg) {
-      // Maybe they wanted a dev package.  Check there too.
-      pkg = await globalDb.collections.devPackages.findOneAsync(packageId);
-      isDev = true;
-      mountProc = pkg && pkg.mountProc;
-    }
-
-    if (!pkg) {
-      throw new Meteor.Error(404, "Not Found", "No such package is installed.");
-    }
-
-    const appId = pkg.appId;
-    const manifest = pkg.manifest;
-    const grainId = Random.id(22);  // 128 bits of entropy
-    await globalDb.collections.grains.insertAsync({
-      _id: grainId,
-      packageId: packageId,
-      appId: appId,
-      appVersion: manifest.appVersion,
-      userId: this.userId,
-      identityId: SandstormDb.generateIdentityId(),
-      title: title,
-      private: true,
-      size: 0,
-    });
-
-    globalThis.globalBackend.startGrainInternal(packageId, grainId, this.userId, command, true,
-                                     isDev, mountProc);
-
-    return grainId;
+    return createGrainForUser(this.userId, packageId, command, title);
   },
 
   async shutdownGrain(grainId) {
