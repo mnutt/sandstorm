@@ -205,8 +205,8 @@ charge; it does not stop the grain.
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
 and a one-shot `getGrainTitle` reply. Sharing requests show a main-shell link;
-`renderTemplate` requests receive an explicit unsupported error and
-a link to continue in the main shell. Powerbox requests use the handoff below.
+`renderTemplate` uses an isolated shell-origin display (below). Powerbox requests
+use the main-shell chooser handoff.
 This is not full postMessage API parity,
 an incognito/sharing-link flow, or session restoration across shell reconnects.
 
@@ -240,11 +240,41 @@ expire after five minutes. Canceling, closing either view, changing accounts, or
 losing the grain session ends the handoff and disposes provider UI sessions.
 
 This is a migration bridge, not a native Svelte Powerbox chooser. A user click is
-required to open the chooser window. `renderTemplate`, sharing controls, and
-incognito flows still need the main shell. Browser tests cover a successful reply,
+required to open the chooser window. Sharing controls and incognito flows still
+need the main shell. Browser tests cover a successful reply,
 duplicate requests, forged replies, explicit cancellation, and window closure.
 The real-grain integration test checks account/expiry/revocation scoping and drives
 the Meteor chooser through an embedded provider to return a capability to an app.
+
+### API instruction templates
+
+`renderTemplate` supports text containing `$API_TOKEN`, `$API_HOST`, and
+`$GRAIN_TITLE_SLUG`, with `petname`, `roleAssignment`, `forSharing`, color, and
+left/right copy buttons. `clientapp` and `unauthenticated` options explicitly
+require the main shell for now. HTML is displayed as text.
+
+The scoped `GrainSession` capability asks Meteor to create a token using the
+existing `createNewApiToken` permission path. The bridge checks linked-login
+and grain access, permits one issuance at a time and eight per grain lease, and
+revokes a late-created token if the lease closes or authorization ends. Tokens
+retain the existing five-minute unused expiry. Issued API access is separate
+from UI-session lifetime: an API token already copied and used remains subject
+to the existing permission and revocation rules.
+
+The trusted frontend stores the result in tab-local sessionStorage and gives the
+app only a random fragment URL to `/offer-template.html`. That document renders
+plain text on the Rust shell origin; the app cannot read its DOM or token. Only
+this static renderer allows HTTPS framing; the shell itself retains
+`frame-ancestors 'none'`. The renderer performs the existing token keepalive,
+expires unavailable/revoked offers, and never posts token contents to its parent.
+Closing the grain or losing the connection removes its stored offers. Reload
+clears leftovers. Direct top-level display is disabled. Clipboard permissions
+may require selecting/copying text manually in an embedded app.
+
+Browser tests check placeholder substitution, text-only rendering, origin
+isolation, reply contents, and storage cleanup. Lease tests cover issuance limits
+and cancellation during creation; the real-grain test checks canonical token
+ownership, expiry, gateway keepalive, and rejection after sharing revocation.
 
 ### Packaging audit policy
 

@@ -50,6 +50,8 @@ struct GrainView {
 }
 interface GrainSession {
   close @0 () -> ();
+  renderTemplate @1 (options :Text) -> (token :Text, host :Text);
+  # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.
 }
 interface Shell {

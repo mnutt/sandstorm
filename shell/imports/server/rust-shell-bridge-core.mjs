@@ -86,6 +86,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
       if (action === "openGrain") return leases.open(input.token, record.accountId, input, signal);
+      if (action === "renderTemplate") return leases.template(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
       if (action === "session") return { account: { name: account.name }, expires: record.expires };
       if (action === "snapshot") {
@@ -163,7 +164,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

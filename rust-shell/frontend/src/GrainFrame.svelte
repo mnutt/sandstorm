@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { PowerboxChooser } from './lib/powerbox';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, close }: { grain: ActiveGrain; close: () => void } = $props();
+  let { grain, close, renderTemplate }: { grain: ActiveGrain; close: () => void; renderTemplate: (input: unknown) => Promise<string> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   let path = $state('/');
@@ -29,10 +29,11 @@
       frame.contentWindow?.postMessage({ rpcId: data.rpcId, grainTitle: grain.title }, grain.origin);
     }
     if (data.powerboxRequest) chooser?.request(data.powerboxRequest);
-    const unsupported = data.renderTemplate;
-    if (unsupported && (typeof unsupported.rpcId === 'string' || typeof unsupported.rpcId === 'number')) {
-      frame.contentWindow?.postMessage({ rpcId: unsupported.rpcId, error: 'This operation is available in the main Sandstorm shell.' }, grain.origin);
-      notice = 'This app requested a feature that is available in the main shell.';
+    if (data.renderTemplate && typeof data.renderTemplate.rpcId === 'string') {
+      const source = event.source as Window;
+      const rpcId = data.renderTemplate.rpcId;
+      renderTemplate(data.renderTemplate).then(uri => source.postMessage({ rpcId, uri }, grain.origin),
+        error => source.postMessage({ rpcId, error: String(error) }, grain.origin));
     }
     if (data.startSharing || data.showConnectionGraph) notice = 'Use the main shell to manage sharing.';
   }

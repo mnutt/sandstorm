@@ -4,7 +4,7 @@ const valid = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(valu
 const failure = (status, message) => Object.assign(new Error(message), { status });
 
 // UI-session lifetime only. Closing a lease never shuts down the grain.
-export function createGrainLeases({ open, keep, close, validate, now = Date.now }) {
+export function createGrainLeases({ open, keep, close, template, revokeTemplate, validate, now = Date.now }) {
   const leases = new Map();
   const dispose = async (record) => {
     record.closed = true;
@@ -32,7 +32,7 @@ export function createGrainLeases({ open, keep, close, validate, now = Date.now 
         throw failure(503, "Too many open grain sessions.");
       }
       const record = { token, scope: input.scope, lease: randomBytes(32).toString("hex"),
-        expires: now() + 45000, handle: null, closed: false };
+        expires: now() + 45000, handle: null, closed: false, templates: 0, rendering: false };
       leases.set(input.scope, record);
       try {
         const result = await open(accountId, input.grainId);
@@ -55,6 +55,27 @@ export function createGrainLeases({ open, keep, close, validate, now = Date.now 
         record.expires = now() + 45000;
         return {};
       } catch (error) { await dispose(record); throw error; }
+    },
+    async template(token, input, signal) {
+      const record = get(token, input.scope, input.lease);
+      if (!template || !record?.handle || record.closed || signal.aborted || record.expires <= now()) throw failure(410, "Grain session expired.");
+      if (record.rendering || record.templates >= 8) throw failure(429, "Too many template requests. Reopen the grain to request more.");
+      record.rendering = true;
+      ++record.templates;
+      let result;
+      try {
+        await validate(token);
+        await keep(record.handle);
+        result = await template(record.handle, input.options);
+        if (record.closed || signal.aborted) throw failure(410, "Grain session closed.");
+        await keep(record.handle);
+        await validate(token);
+        if (record.closed || signal.aborted || record.expires <= now()) throw failure(410, "Grain session closed.");
+        return { token: result.token, host: result.host };
+      } catch (error) {
+        if (result) await revokeTemplate(result);
+        throw error;
+      } finally { record.rendering = false; }
     },
     async close(token, input) {
       const record = get(token, input.scope, input.lease);

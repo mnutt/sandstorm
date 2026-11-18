@@ -1,3 +1,4 @@
+import { TemplateOffers } from './template';
 import { Conn } from 'capnp-es';
 import { Observer, Shell, type Shell$Client, type Subscription$Client, type GrainSession$Client } from '../generated/shell';
 import { WebSocketTransport } from './transport';
@@ -25,6 +26,7 @@ class MainShellUnavailable extends Error {}
 // Owns all live capabilities. Svelte receives only decoded values.
 export class ShellService {
   private state: ShellState = { status: 'connecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 };
+  private offers = new TemplateOffers();
   private grainSession?: GrainSession$Client;
   private grainGeneration = 0;
   private conn?: Conn;
@@ -48,6 +50,7 @@ export class ShellService {
   start() { if (this.stopped) { this.stopped = false; this.connect(); } }
 
   private clearConnection() {
+    this.offers.clear();
     ++this.grainGeneration;
     // Release may try to send on an already broken transport. Teardown must
     // still clear the iframe; the server scope/lease owns remote cleanup.
@@ -132,6 +135,7 @@ export class ShellService {
   }
 
   async closeGrain() {
+    this.offers.clear();
     ++this.grainGeneration;
     const session = this.grainSession;
     this.grainSession = undefined;
@@ -140,6 +144,16 @@ export class ShellService {
       try { await session.close().promise(); }
       finally { session.client.close(); }
     }
+  }
+
+  async renderTemplate(input: unknown) {
+    const session = this.grainSession;
+    const grain = this.state.activeGrain;
+    if (!session || !grain) throw new Error('No active grain.');
+    return this.offers.render(input, grain.title, async options => {
+      const result = await session.renderTemplate(params => { params.options = options; }).promise();
+      return { token: result.token, host: result.host };
+    });
   }
 
   async openGrain(grain: Grain) {

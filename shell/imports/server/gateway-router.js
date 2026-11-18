@@ -957,6 +957,16 @@ export async function rustGrainPowerboxContext(db, accountId, sessionId) {
   return { grainId: row.grainId };
 }
 
+export async function createRustTemplateToken(db, handle, options) {
+  await rustGrainPowerboxContext(db, handle.accountId, handle.sessionId);
+  check(options, { petname: String, roleAssignment: db.roleAssignmentPattern, forSharing: Boolean });
+  if (options.petname.length > 256) throw new Meteor.Error(400, "Petname is too long.");
+  const result = await SandstormPermissions.createNewApiToken(db, { accountId: handle.accountId },
+      handle.grainId, options.petname, options.roleAssignment,
+      { webkey: { forSharing: options.forSharing, expiresIfUnusedDuration: 5 * 60 * 1000 } });
+  return { ...result, host: db.makeApiHost(result.token) };
+}
+
 export async function keepRustGrainSession(db, handle) {
   const row = await db.collections.sessions.findOneAsync({ _id: handle.sessionId, userId: handle.accountId });
   const grain = await db.collections.grains.findOneAsync({ _id: handle.grainId });

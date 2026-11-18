@@ -79,6 +79,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
       window.rustPowerboxTestPopup.close();
       removeEventListener('message', window.rustPowerboxTestListener);
     });
+  operation(browser, 'template');
   operation(browser, 'keep');
   operation(browser, 'close');
   operation(browser, 'shared', true);

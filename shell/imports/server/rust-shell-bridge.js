@@ -5,7 +5,7 @@ import { check } from "meteor/check";
 import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
-import { rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { grainMenu } from "/imports/server/rust-shell-grains";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
@@ -43,6 +43,8 @@ export const rustShellBridge = createRustShellBridge({
     },
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
+    template: (handle, options) => createRustTemplateToken(globalDb, handle, options),
+    revokeTemplate: result => globalDb.removeApiTokens({ _id: result.id }),
   },
   authorize: authorizeRustShellAccount,
   async snapshot(accountId) {

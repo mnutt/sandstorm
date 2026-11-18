@@ -47,7 +47,7 @@ import {
   waitForMigrationDocument,
   waitForReplicaMigrations,
 } from "/imports/server/migration-coordination";
-import { rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { rustShellBridge, rustShellSessionStore, authorizeRustShellAccount } from "/imports/server/rust-shell-bridge";
 import { runDueJobs } from "/imports/server/scheduled-job";
@@ -1441,6 +1441,23 @@ if(isTesting) {
         return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
       }
       if (!record) throw new Meteor.Error(404, "No test session");
+      if (operation === "template") {
+        const result = await createRustTemplateToken(globalDb, record,
+            { petname: "Rust template test", roleAssignment: { allAccess: null }, forSharing: false });
+        try {
+          const row = await globalDb.collections.apiTokens.findOneAsync(result.id);
+          if (!result.token || !result.host || row.grainId !== grainId ||
+              row.accountId !== record.accountId || !row.expiresIfUnused ||
+              row.expiresIfUnused <= new Date() || row.expiresIfUnused > new Date(Date.now() + 300000)) {
+            throw new Error("Invalid template token authority or expiry");
+          }
+          const response = await fetch(new URL(process.env.ROOT_URL).protocol + "//" + result.host,
+              { method: "POST", headers: { Authorization: "Bearer " + result.token,
+                "X-Sandstorm-Token-Keepalive": "300000" } });
+          if (response.status !== 200) throw new Error("Template token keepalive failed: " + response.status);
+          return true;
+        } finally { await globalDb.removeApiTokens({ _id: result.id }); }
+      }
       if (operation === "enablePowerbox") {
         record.previousRustOrigin = Meteor.settings.public.rustShellOrigin;
         record.powerboxTest = true;
@@ -1458,6 +1475,10 @@ if(isTesting) {
         try { await rustGrainPowerboxContext(globalDb, record.accountId, record.sessionId); }
         catch (error) { denied = error.error === 403; }
         if (!denied) throw new Error("Revoked Powerbox context was accepted");
+        denied = false;
+        try { await createRustTemplateToken(globalDb, record, { petname: "revoked", roleAssignment: { allAccess: null }, forSharing: false }); }
+        catch (error) { denied = error.error === 403; }
+        if (!denied) throw new Error("Revoked template request was accepted");
         await closeRustGrainSession(globalDb, record);
         return true;
       }

@@ -46,7 +46,7 @@
   </aside>
   {#if model.activeGrain}
     {#key model.activeGrain.url}
-      <GrainFrame grain={model.activeGrain} close={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); }} />
+      <GrainFrame renderTemplate={(input) => notifications.renderTemplate(input)} grain={model.activeGrain} close={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); }} />
     {/key}
   {:else if view === 'grains'}
   <section aria-labelledby="grains-title">

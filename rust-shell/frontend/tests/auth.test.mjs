@@ -25,6 +25,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let serial = 0;
   let leaseClockOffset = 0;
   let renewals = 0;
+  let templates = 0;
   const users = { alice: { name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
     bob: { name: 'Bob', hash: 'bob-login', expires: Date.now() + 3600000 } };
   const rows = new Map();
@@ -49,6 +50,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
+      template: async () => ({ id: ++templates, token: 'sensitive-template-token', host: new URL(grainOrigin).host }),
+      revokeTemplate: async () => { --templates; },
     },
     authorize: async (id, hash) => {
       if (bridgeOffline) throw Object.assign(new Error('Main shell starting'), { status: 503 });
@@ -176,6 +179,30 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('heading', { name: 'App page title' }).waitFor();
     await app.evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'title' }, '*'));
     await expect.poll(() => app.evaluate(() => window.reply?.grainTitle)).toBe('Alice grain');
+    await app.evaluate(() => parent.postMessage({ renderTemplate: { rpcId: 'template',
+      template: '<script>window.injected=true</script> $API_TOKEN $API_HOST $GRAIN_TITLE_SLUG',
+      clipboardButton: 'right', style: { color: '#123456' } } }, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.uri)).toContain('/offer-template.html#');
+    const offered = await app.evaluate(() => {
+      const reply = window.reply;
+      const iframe = document.createElement('iframe'); iframe.id = 'offer'; iframe.src = reply.uri;
+      document.body.appendChild(iframe);
+      return reply;
+    });
+    assert.deepEqual(Object.keys(offered).sort(), ['rpcId', 'uri']);
+    assert.equal(offered.uri.includes('sensitive'), false);
+    const offer = app.frameLocator('#offer');
+    await expect(offer.locator('#text')).toContainText('sensitive-template-token');
+    await expect(offer.locator('#text')).toContainText('alice-grain');
+    await expect(offer.getByRole('button', { name: 'Copy API instructions' })).toBeVisible();
+    assert.equal(await app.evaluate(() => {
+      try { return !!document.getElementById('offer').contentWindow.document.body; } catch { return false; }
+    }), false, 'app must not read shell-origin token text');
+    assert.equal(await page.evaluate(() => window.injected), undefined);
+    await app.evaluate(() => parent.postMessage({renderTemplate:{rpcId:'unsupported',template:'$API_TOKEN',unauthenticated:{}}}, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('unsupported');
+    assert.match(await app.evaluate(() => window.reply.error), /requires the main shell/);
+    assert.equal(templates, 1);
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
     await page.getByRole('button', { name: 'Choose in Sandstorm' }).waitFor();
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'duplicate' } }, '*'));
@@ -220,6 +247,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const grainClosePopup = await grainClosePopupPromise;
     await page.getByRole('button', { name: 'Close grain', exact: true }).click();
     await expect.poll(() => grainClosePopup.isClosed()).toBe(true);
+    assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('rustOfferTemplate:')).length), 0);
     await expect.poll(() => liveGrains.size).toBe(0);
     await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();

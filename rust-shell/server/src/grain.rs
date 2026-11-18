@@ -111,6 +111,42 @@ struct Lease {
     closed: Cell<bool>,
 }
 impl grain_session::Server for Lease {
+    async fn render_template(
+        self: Rc<Self>,
+        params: grain_session::RenderTemplateParams,
+        mut results: grain_session::RenderTemplateResults,
+    ) -> capnp::Result<()> {
+        if self.closed.get() {
+            return Err(capnp::Error::failed("Grain session closed".into()));
+        }
+        let options = params.get()?.get_options()?.to_str()?;
+        if options.len() > 2048 {
+            return Err(capnp::Error::failed("Template options too large".into()));
+        }
+        let options: serde_json::Value = serde_json::from_str(options)
+            .map_err(|_| capnp::Error::failed("Invalid template options".into()))?;
+        let value = self
+            .scope
+            .session
+            .call(
+                "renderTemplate",
+                json!({
+                    "scope": self.scope.key, "lease": self.lease, "options": options
+                }),
+            )
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        let token = value["token"]
+            .as_str()
+            .ok_or_else(|| capnp::Error::failed("Invalid template token".into()))?;
+        let host = value["host"]
+            .as_str()
+            .ok_or_else(|| capnp::Error::failed("Invalid template host".into()))?;
+        results.get().set_token(token);
+        results.get().set_host(host);
+        Ok(())
+    }
+
     async fn close(
         self: Rc<Self>,
         _: grain_session::CloseParams,

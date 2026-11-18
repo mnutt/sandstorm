@@ -165,10 +165,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(DefaultBodyLimit::max(4096))
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
         .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static("default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'"),
-        ))
+        .layer(axum::middleware::from_fn(|request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
+            let policy = if request.uri().path() == "/offer-template.html" {
+                "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src https:; frame-ancestors https:"
+            } else {
+                "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'"
+            };
+            let mut response = next.run(request).await;
+            response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(policy));
+            response
+        }))
         .layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"),
         ));
