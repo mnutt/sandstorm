@@ -20,11 +20,12 @@ export class TemplateOffers {
   async render(input: unknown, title: string, issue: (options: string) => Promise<{ token: string; host: string }>) {
     if (!input || typeof input !== 'object') throw new Error('Invalid template request.');
     const call = input as Record<string, any>;
-    const allowed = ['rpcId', 'template', 'petname', 'roleAssignment', 'forSharing', 'clipboardButton', 'style', 'unauthenticated'];
+    const allowed = ['rpcId', 'template', 'petname', 'roleAssignment', 'forSharing', 'clipboardButton', 'style', 'unauthenticated', 'clientapp'];
     const unsupported = Object.keys(call).filter(key => !allowed.includes(key));
     if (unsupported.length) throw new Error(`Template option ${unsupported.join(', ')} requires the main shell.`);
     if (typeof call.rpcId !== 'string' || call.rpcId.length > 256 || typeof call.template !== 'string' || call.template.length > 32768 ||
         (call.petname !== undefined && (typeof call.petname !== 'string' || call.petname.length > 256)) ||
+        (call.clientapp !== undefined && (typeof call.clientapp !== 'string' || !/^[a-zA-Z0-9+.-]{0,128}$/.test(call.clientapp))) ||
         (call.unauthenticated !== undefined && (!call.unauthenticated || typeof call.unauthenticated !== 'object' || Array.isArray(call.unauthenticated))) ||
         (call.forSharing !== undefined && typeof call.forSharing !== 'boolean') ||
         ![undefined, null, 'left', 'right'].includes(call.clipboardButton) ||
@@ -64,7 +65,7 @@ export class TemplateOffers {
       const id = crypto.randomUUID();
       const key = prefix + id;
       sessionStorage.setItem(key, JSON.stringify({ ...result, renderedTemplate, clipboardButton: call.clipboardButton,
-        color: call.style?.color, expires: Date.now() + 300000 }));
+        clientapp: call.clientapp?.toLowerCase(), color: call.style?.color, expires: Date.now() + 300000 }));
       this.keys.add(key);
       return location.origin + '/offer-template.html#' + id;
     } finally { if (generation === this.generation) --this.reserved; }

@@ -7,6 +7,20 @@ let record;
 try { record = JSON.parse(sessionStorage.getItem(key)); } catch {}
 if (window.top !== window && record && record.expires > Date.now()) {
   text.textContent = record.renderedTemplate;
+  let link;
+  if (typeof record.clientapp === 'string' && /^[a-z0-9+.-]{1,128}$/.test(record.clientapp)) {
+    link = document.createElement('a');
+    link.id = 'link';
+    link.href = `clientapp-${record.clientapp}:${location.protocol}//${record.host}#${record.token}`;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    // Only a user click launches the client. Never retain a usable stale link.
+    link.onclick = event => {
+      if (!record || record.expires <= Date.now() || !sessionStorage.getItem(key)) event.preventDefault();
+    };
+    text.replaceWith(link);
+    link.appendChild(text);
+  }
   if (/^#[0-9a-fA-F]{6}$/.test(record.color)) document.body.style.color = record.color;
   if (['left', 'right'].includes(record.clipboardButton)) {
     document.body.className = record.clipboardButton;
@@ -22,6 +36,7 @@ if (window.top !== window && record && record.expires > Date.now()) {
     if (!sessionStorage.getItem(key) || record.expires <= Date.now()) {
       clearInterval(timer); sessionStorage.removeItem(key);
       record = null; copy.hidden = true; copy.onclick = null;
+      if (link) { link.replaceWith(text); link.removeAttribute('href'); link.onclick = null; link = null; }
       text.textContent = 'These instructions expired. Reopen them from the app.';
       return;
     }

@@ -278,7 +278,11 @@ the Meteor chooser through an embedded provider to return a capability to an app
 `$GRAIN_TITLE_SLUG`, with `petname`, `roleAssignment`, `forSharing`, color, and
 left/right copy buttons. `unauthenticated` discovery metadata uses Meteor’s
 existing validation and API-host resources (including Davros status and DAV
-options). `clientapp` links still explicitly require the main shell. HTML is displayed as text.
+options). `clientapp` renders a user-clicked desktop connection link using the
+main shell's `clientapp-<name>:<protocol>//<host>#<token>` format. Names are
+validated and normalized to lowercase; the credential-bearing link remains
+inside the trusted display frame and is removed when the offer expires or is
+cleared. Display options reuse the same token. HTML is displayed as text.
 
 The scoped `GrainSession` capability asks Meteor to create a token using the
 existing `createNewApiToken` permission path. The bridge checks linked-login

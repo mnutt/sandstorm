@@ -225,10 +225,34 @@ test('authenticated notifications: handoff, shared writes, account switching and
       try { return !!document.getElementById('offer').contentWindow.document.body; } catch { return false; }
     }), false, 'app must not read shell-origin token text');
     assert.equal(await page.evaluate(() => window.injected), undefined);
-    await app.evaluate(() => parent.postMessage({renderTemplate:{rpcId:'unsupported',template:'$API_TOKEN',clientapp:'davros'}}, '*'));
-    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('unsupported');
-    assert.match(await app.evaluate(() => window.reply.error), /requires the main shell/);
+    await app.evaluate(() => parent.postMessage({renderTemplate:{rpcId:'client',template:'Connect desktop client',clientapp:'DaVrOs'}}, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('client');
+    const clientOffer = await app.evaluate(() => {
+      const iframe = document.createElement('iframe'); iframe.id = 'client-offer'; iframe.src = window.reply.uri;
+      document.body.appendChild(iframe);
+      return window.reply;
+    });
+    assert.deepEqual(Object.keys(clientOffer).sort(), ['rpcId', 'uri']);
+    assert.equal(clientOffer.uri.includes('sensitive'), false);
+    const clientFrame = app.frameLocator('#client-offer');
+    await expect(clientFrame.getByRole('link', {name:'Connect desktop client'})).toHaveAttribute('href',
+      `clientapp-davros:https://${new URL(grainOrigin).host}#sensitive-template-token`);
+    await expect(clientFrame.locator('#link')).toHaveAttribute('rel', 'noopener noreferrer');
+    assert.equal(await app.evaluate(() => {
+      try { return !!document.getElementById('client-offer').contentWindow.document.body; } catch { return false; }
+    }), false, 'app must not read the desktop client credential');
+    // Display options share the same canonical token; invalid schemes issue nothing.
     assert.equal(templates, 1);
+    for (const clientapp of ['javascript:alert(1)', 'foo/bar', 'foo\\bar', 'foo\nbar', 'x'.repeat(129), 42, {}]) {
+      await app.evaluate(clientapp => parent.postMessage({renderTemplate:{rpcId:'invalid-client',template:'Connect',clientapp}}, '*'), clientapp);
+      await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('invalid-client');
+      assert.match(await app.evaluate(() => window.reply.error), /Invalid template request/);
+      await app.evaluate(() => { window.reply = null; });
+    }
+    assert.equal(templates, 1);
+    await page.evaluate(uri => sessionStorage.removeItem('rustOfferTemplate:' + new URL(uri).hash.slice(1)), clientOffer.uri);
+    await expect(clientFrame.locator('#link')).toHaveCount(0);
+    await expect(clientFrame.locator('#text')).toContainText('expired');
     // Davros renders these simultaneously; token-specific host and password must match.
     await app.evaluate(() => {
       window.templateReplies = {};
