@@ -1,6 +1,7 @@
 @use "mixins/buttons" as buttons;
 
-.topbar-popup.request>.frame-container>.frame {
+.topbar-popup.request>.frame-container>.frame,
+.rust-shell-powerbox .chooser {
   >.selected-card {
     div.choose-buttons {
       text-align: right;

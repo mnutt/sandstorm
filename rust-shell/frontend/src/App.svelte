@@ -54,7 +54,7 @@
     {#if model.status === 'signed-out'}
       <p><a href="/auth/start">Sign in with Sandstorm</a> to see your grains.</p>
     {:else if model.status !== 'ready'}
-      <p class="empty">{model.status === 'reconnecting' ? 'Connection lost. Reconnecting…' : 'Loading your grains…'}</p>
+      <p class="empty">{model.status === 'waiting' ? 'Waiting for the main shell… Your login will be checked when it returns.' : model.status === 'reconnecting' ? 'Connection lost. Reconnecting…' : 'Loading your grains…'}</p>
       <button class="secondary" onclick={() => notifications.reconnect()}>Reconnect</button>
     {:else if model.fixture}
       <p class="empty">Connect to an installed Sandstorm server to see real grains.</p>
@@ -102,7 +102,7 @@
     {#if model.status === 'signed-out'}
       <p class="empty">Connect your account to load notifications.</p>
     {:else if model.status !== 'ready'}
-      <p class="empty">Connecting to the Rust shell…</p>
+      <p class="empty">{model.status === 'waiting' ? 'Waiting for the main shell… Your login will be checked when it returns.' : 'Connecting to the Rust shell…'}</p>
     {:else if model.entries.length === 0}
       <p class="empty">You have no notifications.</p>
     {:else}

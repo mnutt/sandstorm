@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import { chromium, expect } from '@playwright/test';
 import { start, stop, serveProbe } from './harness.mjs';
 import { httpsProxy } from './https-harness.mjs';
+import { memorySessionStore } from '../../../shell/imports/server/rust-shell-session-store.mjs';
 import { createRustShellBridge, bridgeHandler } from '../../../shell/imports/server/rust-shell-bridge-core.mjs';
 
 // Uses the production bridge authority/HTTP implementation with an in-memory DB
@@ -35,7 +36,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
   add('alice-real-id', 'alice', 'Alice notification');
   add('bob-real-id', 'bob', 'Bob notification');
   let activeMainAccount = 'alice';
-  const bridge = createRustShellBridge({
+  let bridgeOffline = false;
+  const sessionStore = memorySessionStore();
+  const bridgeOptions = {
+    sessionStore,
     now: () => Date.now() + leaseClockOffset,
     grains: {
       open: async (id, grainId) => {
@@ -46,7 +50,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
     },
-    authorize: async (id, hash) => users[id]?.hash === hash ? users[id] : null,
+    authorize: async (id, hash) => {
+      if (bridgeOffline) throw Object.assign(new Error('Main shell starting'), { status: 503 });
+      return users[id]?.hash === hash ? users[id] : null;
+    },
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
@@ -60,7 +67,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
       rows.delete(key); changed();
     },
     markRead: async (id) => { for (const row of rows.values()) if (row.user === id) row.unread = false; changed(); },
-  });
+  };
+  let bridge = createRustShellBridge(bridgeOptions);
   try {
     proxy = await httpsProxy(directory, socket);
     grainServer = httpsServer(proxy.tls, (_req, res) => {
@@ -69,7 +77,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     });
     grainServer.listen(0, '127.0.0.1'); await once(grainServer, 'listening');
     grainOrigin = `https://localhost:${grainServer.address().port}`;
-    bridgeServer = httpServer(bridgeHandler(bridge));
+    bridgeServer = httpServer((req, res) => {
+      if (bridgeOffline) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end('{"error":"Main shell starting"}'); return; }
+      return bridgeHandler(bridge)(req, res);
+    });
     bridgeServer.listen(bridgeSocket); await once(bridgeServer, 'listening'); await chmod(bridgeSocket, 0o600);
     main = httpsServer(proxy.tls, async (req, res) => {
       try {
@@ -230,6 +241,25 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', { name: 'Grains', exact: true }).click();
     await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
+    // Recreate Meteor's bridge over the same durable store while an app and
+    // chooser are active. Startup discards UI sessions, never the linked login.
+    const loginBeforeRestart = (await context.cookies()).find(c => c.name === '__Host-sandstorm-rust-session').value;
+    const restartApp = page.frames().find(frame => frame.url().startsWith(grainOrigin));
+    await restartApp.evaluate(() => parent.postMessage({powerboxRequest:{rpcId:'restart'}}, '*'));
+    const restartPopupPromise = context.waitForEvent('page');
+    await page.getByRole('button', {name:'Choose in Sandstorm'}).click();
+    const restartPopup = await restartPopupPromise;
+    bridgeOffline = true;
+    changed();
+    await page.getByText('Waiting for the main shell… Your login will be checked when it returns.').waitFor();
+    assert.equal(await page.locator('iframe').count(), 0);
+    await expect.poll(() => restartPopup.isClosed()).toBe(true);
+    bridge = createRustShellBridge(bridgeOptions);
+    liveGrains.clear(); // Production removes marked Mongo UI sessions at startup.
+    bridgeOffline = false;
+    await page.getByRole('button', {name:'Open Alice grain here', exact:true}).waitFor();
+    assert.equal(await page.locator('iframe').count(), 0, 'restart must not replay grain opening');
+    assert.equal((await context.cookies()).find(c => c.name === '__Host-sandstorm-rust-session').value, loginBeforeRestart);
     await page.reload();
     await expect.poll(() => liveGrains.size).toBe(0);
     await page.getByRole('button', { name: 'Notifications', exact: true }).click();

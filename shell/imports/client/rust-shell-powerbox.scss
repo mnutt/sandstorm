@@ -1,0 +1,13 @@
+@use "mixins/buttons" as buttons;
+
+.rust-shell-powerbox > .chooser-content {
+  box-sizing: border-box;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+  h1 { font-size: 24px; margin: 0 0 20px; }
+  .chooser { max-height: none; min-width: 0; }
+  .chooser > .selected-card > .powerbox-iframe-mount { height: min(500px, 60vh); }
+  .cancel-rust-powerbox { @include buttons.button-base(); @include buttons.button-secondary(); margin-top: 20px; }
+  @media (max-width: 480px) { padding: 12px; }
+}

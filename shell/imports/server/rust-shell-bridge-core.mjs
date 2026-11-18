@@ -1,3 +1,4 @@
+import { memorySessionStore } from "./rust-shell-session-store.mjs";
 import { createGrainLeases } from "./rust-shell-grain-leases.mjs";
 import { createHash, randomBytes } from "node:crypto";
 
@@ -6,16 +7,17 @@ const secret = () => randomBytes(32).toString("hex");
 const validSecret = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const unauthorized = () => Object.assign(new Error("Sign in again through the main shell."), { status: 401 });
 
-// A deliberately narrow, ephemeral adapter. No browser account IDs, Mongo query
+// A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, grains = {}, now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, grains = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
   const grants = new Map();
-  const sessions = new Map();
+  const sessions = sessionStore;
+  // One authoritative bridge process admits exchanges serially, including DB
+  // writes, so async persistence cannot race the linked-session bound.
+  let exchanging = Promise.resolve();
   const prune = () => {
-    for (const map of [grants, sessions]) {
-      for (const [key, value] of map) if (value.expires <= now()) map.delete(key);
-    }
+    for (const [key, value] of grants) if (value.expires <= now()) grants.delete(key);
   };
   const validate = async (record) => {
     if (!record || record.expires <= now()) throw unauthorized();
@@ -26,13 +28,18 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
   const session = async (token) => {
     if (!validSecret(token)) throw unauthorized();
     const key = hash(token);
-    const record = sessions.get(key);
+    const record = await sessions.get(key);
     try { return { record, account: await validate(record) }; }
-    catch (error) { sessions.delete(key); await leases.revoke(token); throw error; }
+    catch (error) {
+      // A database outage is not revocation. Keep the durable link for recovery.
+      if (error.status === 401) { await sessions.remove(key); await leases.revoke(token); }
+      throw error;
+    }
   };
   const leases = createGrainLeases({ ...grains, validate: session, now });
   return {
     sweepGrains: () => leases.sweep(),
+    pruneSessions: () => sessions.prune(now()),
     async issue(accountId, loginHash, state) {
       prune();
       if (!validSecret(state) || !accountId || !loginHash) throw unauthorized();
@@ -51,20 +58,26 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
         const record = grants.get(key);
         grants.delete(key); // Consume before any await: concurrent exchanges cannot both win.
         if (!record || record.state !== input.state) throw unauthorized();
-        const account = await validate(record);
-        if (sessions.size >= 1024) throw Object.assign(new Error("Too many linked sessions."), { status: 503 });
-        if (validSecret(input.previous)) {
-          sessions.delete(hash(input.previous));
-          await leases.revoke(input.previous);
-        }
-        const token = secret();
-        record.expires = Math.min(account.expires, now() + 12 * 60 * 60 * 1000);
-        sessions.set(hash(token), record);
-        return { token, account: { name: account.name }, expires: record.expires };
+        const exchange = exchanging.then(async () => {
+          const account = await validate(record);
+          await sessions.prune(now());
+          if (validSecret(input.previous)) {
+            await sessions.remove(hash(input.previous));
+            await leases.revoke(input.previous);
+          }
+          if (await sessions.count() >= 1024) throw Object.assign(new Error("Too many linked sessions."), { status: 503 });
+          const token = secret();
+          const linked = { accountId: record.accountId, loginHash: record.loginHash,
+            expires: Math.min(account.expires, now() + 12 * 60 * 60 * 1000) };
+          await sessions.put(hash(token), linked);
+          return { token, account: { name: account.name }, expires: linked.expires };
+        });
+        exchanging = exchange.catch(() => {});
+        return exchange;
       }
       if (action === "logout") {
         if (validSecret(input.token)) {
-          sessions.delete(hash(input.token));
+          await sessions.remove(hash(input.token));
           await leases.revoke(input.token);
         }
         return {};

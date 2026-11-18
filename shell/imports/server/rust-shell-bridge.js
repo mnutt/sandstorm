@@ -1,4 +1,5 @@
 import { Meteor } from "meteor/meteor";
+import { Mongo } from "meteor/mongo";
 import { Accounts } from "meteor/accounts-base";
 import { check } from "meteor/check";
 import Http from "node:http";
@@ -10,9 +11,27 @@ import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
 
+import { mongoSessionStore } from "./rust-shell-session-store.mjs";
+
+// Server-only collection: no publication and no client write methods.
+const linkedSessions = new Mongo.Collection("rustShellLinkedSessions");
+export const rustShellSessionStore = mongoSessionStore(linkedSessions);
 const text = (value, bytes) => Buffer.from(String(value || "")).subarray(0, bytes).toString();
 
+export async function authorizeRustShellAccount(accountId, loginHash) {
+  const user = await Meteor.users.findOneAsync({
+    _id: accountId, suspended: { $exists: false },
+    "services.resume.loginTokens.hashedToken": loginHash,
+  });
+  if (!user || !user.loginCredentials) return null;
+  const token = user.services.resume.loginTokens.find((item) => item.hashedToken === loginHash);
+  if (!token?.when) return null;
+  const expires = Math.min(+Accounts._tokenExpiration(token.when), user.expires ? +user.expires : Infinity);
+  return { name: text(user.profile?.name || "Sandstorm account", 160), expires };
+}
+
 export const rustShellBridge = createRustShellBridge({
+  sessionStore: rustShellSessionStore,
   grains: {
     async open(accountId, grainId) {
       const parentOrigin = Meteor.settings.public.rustShellOrigin;
@@ -25,17 +44,7 @@ export const rustShellBridge = createRustShellBridge({
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
   },
-  async authorize(accountId, loginHash) {
-    const user = await Meteor.users.findOneAsync({
-      _id: accountId, suspended: { $exists: false },
-      "services.resume.loginTokens.hashedToken": loginHash,
-    });
-    if (!user || !user.loginCredentials) return null;
-    const token = user.services.resume.loginTokens.find((item) => item.hashedToken === loginHash);
-    if (!token?.when) return null;
-    const expires = Math.min(+Accounts._tokenExpiration(token.when), user.expires ? +user.expires : Infinity);
-    return { name: text(user.profile?.name || "Sandstorm account", 160), expires };
-  },
+  authorize: authorizeRustShellAccount,
   async snapshot(accountId) {
     const query = { userId: accountId };
     const rows = await globalDb.collections.notifications.find(query,
@@ -164,10 +173,13 @@ Meteor.methods({
 Meteor.startup(async () => {
   const socket = process.env.RUST_SHELL_BRIDGE_SOCKET;
   if (!socket) return;
-  // Linked login grants are ephemeral across Meteor restart, so their UI
-  // sessions must also be revoked, without stopping the underlying grains.
+  // Linked logins survive; process-owned UI leases do not. Reconnect never
+  // silently reopens a grain or replays a Powerbox operation.
+  await linkedSessions.rawCollection().createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  await rustShellBridge.pruneSessions();
   await globalDb.collections.sessions.removeAsync({ rustShellSession: true });
   Meteor.setInterval(() => (async () => {
+    await rustShellBridge.pruneSessions();
     await rustShellBridge.sweepGrains();
     await globalDb.collections.sessions.removeAsync({ rustShellSession: true,
       rustShellLeaseExpires: { $lt: Date.now() } });

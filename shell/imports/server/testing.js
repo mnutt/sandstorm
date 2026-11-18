@@ -1,3 +1,4 @@
+import { createRustShellBridge } from "./rust-shell-bridge-core.mjs";
 // Sandstorm - Personal Cloud Sandbox
 // Copyright (c) 2014 Sandstorm Development Group, Inc. and contributors
 // All rights reserved.
@@ -48,7 +49,7 @@ import {
 } from "/imports/server/migration-coordination";
 import { rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
-import { rustShellBridge } from "/imports/server/rust-shell-bridge";
+import { rustShellBridge, rustShellSessionStore, authorizeRustShellAccount } from "/imports/server/rust-shell-bridge";
 import { runDueJobs } from "/imports/server/scheduled-job";
 import {
   Downloader,
@@ -1470,6 +1471,43 @@ if(isTesting) {
         return true;
       }
       throw new Meteor.Error(400, "Unknown test operation");
+    },
+
+    testRegressionRustShellPersistence: async function () {
+      const userId = "test-rust-persistence-" + Random.id();
+      const loginHash = "test-hash-" + Random.id();
+      const state = "a".repeat(64);
+      const tokens = [];
+      const restarted = () => createRustShellBridge({ sessionStore: rustShellSessionStore,
+        authorize: authorizeRustShellAccount });
+      try {
+        await Meteor.users.insertAsync({ _id: userId, loginCredentials: [], profile: { name: "Restart test" },
+          services: { resume: { loginTokens: [{ hashedToken: loginHash, when: new Date() }] } } });
+        const link = async () => {
+          const code = await rustShellBridge.issue(userId, loginHash, state);
+          const value = await rustShellBridge.handle("exchange", { code, state });
+          tokens.push(value.token);
+          return value;
+        };
+        const linked = await link();
+        const recovered = await restarted().handle("session", { token: linked.token });
+        if (recovered.account.name !== "Restart test" || recovered.expires !== linked.expires) throw new Error("Login did not survive bridge recreation");
+        await restarted().handle("logout", { token: linked.token });
+        let denied = false;
+        try { await restarted().handle("session", { token: linked.token }); }
+        catch (error) { denied = error.status === 401; }
+        if (!denied) throw new Error("Logout was not durable");
+        const revoked = await link();
+        await Meteor.users.updateAsync(userId, { $set: { "services.resume.loginTokens": [] } });
+        denied = false;
+        try { await restarted().handle("session", { token: revoked.token }); }
+        catch (error) { denied = error.status === 401; }
+        if (!denied) throw new Error("Source logout did not revoke persisted login");
+        return true;
+      } finally {
+        for (const token of tokens) await rustShellBridge.handle("logout", { token });
+        await Meteor.users.removeAsync(userId);
+      }
     },
 
     testRegressionRustShellObservation: async function () {

@@ -6,6 +6,7 @@ import { globalDb } from "/imports/db-deprecated";
 import { GrainView } from "/imports/client/grain/grainview";
 import { SandstormPowerboxRequest } from "/imports/sandstorm-ui-powerbox/powerbox-client";
 import "./rust-shell-powerbox.html";
+import "./rust-shell-powerbox.scss";
 
 Router.route("/rust-shell-powerbox", function () { this.render("rustShellPowerbox"); }, { name: "rustShellPowerbox" });
 Template.rustShellPowerbox.onCreated(function () {

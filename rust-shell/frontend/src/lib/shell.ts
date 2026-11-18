@@ -10,7 +10,7 @@ export interface ShellState {
   openingGrain: boolean;
   grains: Grain[];
   grainsLimited: boolean;
-  status: 'connecting' | 'ready' | 'reconnecting' | 'stopped' | 'signed-out';
+  status: 'waiting' | 'connecting' | 'ready' | 'reconnecting' | 'stopped' | 'signed-out';
   entries: Notification[];
   revision: number;
   error: string;
@@ -19,6 +19,8 @@ export interface ShellState {
   account: string | null;
   total: number;
 }
+
+class MainShellUnavailable extends Error {}
 
 // Owns all live capabilities. Svelte receives only decoded values.
 export class ShellService {
@@ -73,7 +75,7 @@ export class ShellService {
       if (generation !== this.generation || this.stopped) return;
       ++this.generation;
       this.clearConnection();
-      this.update({ status: 'reconnecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, pending: false, error: error.message });
+      this.update({ status: error instanceof MainShellUnavailable ? 'waiting' : 'reconnecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, pending: false, error: error instanceof MainShellUnavailable ? '' : error.message });
       this.timer = setTimeout(() => this.connect(), this.retry);
       this.retry = Math.min(this.retry * 2, 5000);
     };
@@ -88,6 +90,7 @@ export class ShellService {
         this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, account: null, fixture: false, error: '', pending: false, total: 0 });
         return;
       }
+      if (response.status === 502 || response.status === 503) throw new MainShellUnavailable();
       const session = await response.json();
       if (generation !== this.generation || this.stopped) return;
       if (!response.ok) throw new Error(session.error || 'Unable to check your session');
@@ -100,7 +103,7 @@ export class ShellService {
     const socket = this.socket = new WebSocket(url);
     socket.onerror = () => fail(new Error('Unable to connect to the Rust shell'));
     socket.onclose = () => fail(new Error('Connection closed'));
-    this.deadline = setTimeout(() => fail(new Error('Subscription timed out')), 10000);
+    this.deadline = setTimeout(() => fail(new Error('Live updates did not start. Retrying…')), 10000);
     socket.onopen = async () => {
       if (generation !== this.generation) return;
       try {

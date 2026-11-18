@@ -25,6 +25,7 @@ module.exports["Test Rust shell Mongo observation"] = function (browser) {
     .timeouts("script", medium_wait);
 
   utils.callMeteorTestMethod(browser, "testRegressionRustShellObservation");
+  utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
 
   browser.end();
 };

@@ -167,3 +167,65 @@ test('an idle watch returns its unchanged snapshot at the heartbeat deadline', {
   assert.equal(f.reads, 2);
   assert.equal(f.active, 0);
 });
+
+test('durable linked sessions survive restart without persisting grants or raw tokens', async () => {
+  const { memorySessionStore } = await import('../../../shell/imports/server/rust-shell-session-store.mjs');
+  const store = memorySessionStore();
+  let time = 1000;
+  let authorized = true;
+  let unavailable = false;
+  const options = { sessionStore: store, now: () => time,
+    authorize: async () => {
+      if (unavailable) throw Object.assign(new Error('Database unavailable'), { status: 503 });
+      return authorized ? { name: 'Alice', expires: 999999999 } : null;
+    }, snapshot: async () => ({ entries: [], total: 0 }) };
+  let bridge = createRustShellBridge(options);
+  const state = 'e'.repeat(64);
+  const signIn = async previous => bridge.handle('exchange', {
+    code: await bridge.issue('alice', 'source-login-hash', state), state, previous,
+  });
+  const linked = await signIn();
+  const grant = await bridge.issue('alice', 'source-login-hash', state);
+  const { createHash } = await import('node:crypto');
+  const key = createHash('sha256').update(linked.token).digest('hex');
+  assert.equal(await store.get(linked.token), undefined);
+  assert.deepEqual(await store.get(key), { accountId: 'alice', loginHash: 'source-login-hash', expires: linked.expires });
+  bridge = createRustShellBridge(options);
+  await assert.rejects(bridge.handle('exchange', { code: grant, state }), { status: 401 });
+  assert.equal((await bridge.handle('session', { token: linked.token })).expires, linked.expires);
+  unavailable = true;
+  await assert.rejects(bridge.handle('session', { token: linked.token }), { status: 503 });
+  assert.ok(await store.get(key), 'outage must not erase the link');
+  unavailable = false;
+  const replacement = await signIn(linked.token);
+  bridge = createRustShellBridge(options);
+  await assert.rejects(bridge.handle('session', { token: linked.token }), { status: 401 });
+  await bridge.handle('logout', { token: replacement.token });
+  bridge = createRustShellBridge(options);
+  await assert.rejects(bridge.handle('session', { token: replacement.token }), { status: 401 });
+  const revoked = await signIn();
+  authorized = false;
+  bridge = createRustShellBridge(options);
+  await assert.rejects(bridge.handle('session', { token: revoked.token }), { status: 401 });
+  authorized = true;
+  const expired = await signIn();
+  time = expired.expires;
+  bridge = createRustShellBridge(options);
+  await assert.rejects(bridge.handle('session', { token: expired.token }), { status: 401 });
+  await bridge.pruneSessions();
+  assert.equal(await store.count(), 0);
+});
+
+test('persisted-session admission remains bounded across concurrent exchanges', async () => {
+  const { memorySessionStore } = await import('../../../shell/imports/server/rust-shell-session-store.mjs');
+  const store = memorySessionStore();
+  for (let i = 0; i < 1023; ++i) await store.put(String(i), { expires: Date.now() + 60000 });
+  const bridge = createRustShellBridge({ sessionStore: store,
+    authorize: async () => ({ name: 'Alice', expires: Date.now() + 60000 }) });
+  const state = 'd'.repeat(64);
+  const codes = await Promise.all([bridge.issue('alice', 'hash', state), bridge.issue('alice', 'hash', state)]);
+  const results = await Promise.allSettled(codes.map(code => bridge.handle('exchange', { code, state })));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.status, 503);
+  assert.equal(await store.count(), 1024);
+});

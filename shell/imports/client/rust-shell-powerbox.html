@@ -1,12 +1,14 @@
 <template name="rustShellPowerbox">
-  <main class="main-content">
+  <main class="main-content rust-shell-powerbox">
+    <section class="chooser-content">
     <h1>Choose for your Rust-shell grain</h1>
     {{#if error}}<p role="alert">{{error}}</p>{{/if}}
     {{#if ready}}
-      {{> powerboxRequest request}}
+      <div class="chooser">{{> powerboxRequest request}}</div>
     {{else}}
       <p>Waiting for the Rust shell. Use the same signed-in account in both shells.</p>
     {{/if}}
     <button class="cancel-rust-powerbox">Cancel request</button>
+    </section>
   </main>
 </template>

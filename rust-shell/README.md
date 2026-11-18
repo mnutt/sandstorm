@@ -93,9 +93,28 @@ Logging out that source session or suspending the account revokes access.
 **Switch account** repeats the handoff and revokes the previous linked session.
 Changing accounts elsewhere without revoking that login does not implicitly
 change the Rust shell's selected account. **Disconnect** revokes the Rust session.
-Meteor restarts (including `sandstorm update`) discard linked sessions and require
-a fresh handoff. Ordinary browser reloads retain the session; the HTTPS browser
-regression verifies that the cookie and account survive reload.
+Linked sessions survive Meteor restarts and `sandstorm update`. A server-only,
+unpublished `rustShellLinkedSessions` Mongo collection stores the SHA-256 hash of
+the random bearer token, the account ID, the original Meteor login-token hash,
+and a fixed expiry. It never stores the raw bearer or Meteor resume token. The
+session-store interface is independent of Mongo so storage can migrate later;
+Meteor remains the authentication authority. Expiry is enforced on reads, with
+periodic pruning and a TTL index for cleanup. Restart does not extend the 12-hour
+limit. Disconnect and account switching remove the persisted link; source logout
+and suspension invalidate it on the next authorization check. Database outages
+fail requests without deleting otherwise valid links.
+
+Upgrading from an older memory-only bridge requires one final handoff; existing
+in-memory links cannot be recovered after that old process exits. Rolling back
+to a memory-only bridge also requires a fresh handoff. Ordinary reloads retain
+the cookie. The HTTPS regression recreates the bridge over a shared store while
+a grain and chooser are open, verifies waiting/recovery with the same cookie,
+and verifies that neither UI operation is replayed. The real Mongo regression
+checks bridge recreation, durable disconnect, and source-token revocation.
+
+During a bridge outage the frontend displays **Waiting for the main shell…**
+and retries. A live-update initialization timeout has its own message; a timeout
+alone does not establish whether Meteor was still starting.
 
 Installed mode reads up to 100 of the account's newest real notifications, with a
 total count. Mongo observers wake a pending Rust request when notifications,
@@ -177,7 +196,7 @@ a replacement session. Closing removes the UI session record, never the grain.
 
 A Rust crash clears the old iframe; reconnect does not replay the open operation.
 The user can explicitly reopen with the same linked Meteor login. Meteor restart
-invalidates linked logins and removes marked experimental UI sessions. Their
+preserves valid linked logins and removes marked experimental UI sessions. Their
 expiry is also recorded in Mongo. If Mongo is unavailable during cleanup, the
 existing idle-session cleanup remains the fallback. Rolling back to a bundle
 without this bridge leaves its existing three-minute idle-session cleanup in
@@ -409,8 +428,8 @@ output. Recheck upstream fixes before expanding this spike's use.
 Next useful slices:
 
 1. Finish notification presentation parity: avatars, app icons, and localized copy.
-2. Validate control-server restart recovery and main-shell visual/behavioral parity
-   before migrating production UI.
+2. Validate full installed-server update recovery and main-shell visual/behavioral
+   parity before migrating production UI.
 3. Extend embedded-app compatibility (Powerbox and other postMessage APIs), with
    existing services retaining authority and lifecycle ownership.
 
