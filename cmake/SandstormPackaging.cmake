@@ -200,6 +200,12 @@ function(sandstorm_add_packaging_targets)
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
       "${PROJECT_SOURCE_DIR}/find-meteor-dev-bundle.sh"
       "${PROJECT_SOURCE_DIR}/recover-sandcats.sh"
+      "${PROJECT_SOURCE_DIR}/sandcats-setup.sh"
+      "${PROJECT_SOURCE_DIR}/shell/imports/server/sandcats-v2/setup.js"
+      "${PROJECT_SOURCE_DIR}/shell/imports/server/sandcats-v2/index.js"
+      "${PROJECT_SOURCE_DIR}/shell/imports/server/sandcats-v2/config.js"
+      "${PROJECT_SOURCE_DIR}/shell/imports/server/sandcats-v2/transport.js"
+      "${PROJECT_SOURCE_DIR}/shell/imports/server/sandcats-v2/validation.js"
       "${PROJECT_SOURCE_DIR}/localedata-C"
       "${PROJECT_SOURCE_DIR}/meteor-bundle-main.js"
       ${_bundle_capnp_schemas}

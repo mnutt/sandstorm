@@ -99,11 +99,11 @@ after(async () => {
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function bash(script, env = {}) {
-  return run("bash", ["-c", 'set -euo pipefail; source ./sandcats-v2.sh; ' + script], {
-    cwd: path.resolve(__dirname, ".."),
-    env: { ...process.env, SANDHOST_DIR: dir, CURL_CA_BUNDLE: path.join(dir, "tls.crt"),
-      DESIRED_SANDCATS_NAME: "alice", SANDCATS_REGISTRATION_EMAIL: "a+b &ü@example.com", ...env },
+function setup(command, env = {}, args = []) {
+  return run(process.execPath, [path.resolve(__dirname, "../shell/imports/server/sandcats-v2/setup.js"), command, ...args], {
+    env: { ...process.env, SANDHOST_DIR: dir, NODE_EXTRA_CA_CERTS: path.join(dir, "tls.crt"),
+      SANDCATS_BASE_DOMAIN: "sandhost.org", DESIRED_SANDCATS_NAME: "alice",
+      SANDCATS_REGISTRATION_EMAIL: "a+b &ü@example.com", ...env },
   });
 }
 
@@ -122,17 +122,17 @@ test("webkey separates origin/token and rejects unsafe URLs without exposing inp
   assert.equal(config.localAddress("192.168.1.5"), "192.168.1.5");
 });
 
-test("Bash signs actual HTTPS registration; form encoding, explicit mode, auth failures and privacy", async () => {
-  const result = await bash("sandhost_register", { SANDCATS_ADDRESS_MODE: "explicit", SANDCATS_IP_ADDRESS: "100.64.1.2" });
+test("setup helper signs HTTPS registration and validates addresses and API errors", async () => {
+  const result = await setup("register", { SANDCATS_ADDRESS_MODE: "explicit", SANDCATS_IP_ADDRESS: "100.64.1.2" });
   assert.equal(state.addressMode, "explicit");
   assert.equal(state.ipAddress, "100.64.1.2");
   assert.equal(result.stdout + result.stderr, "");
-  await assert.rejects(bash("sandhost_register", { DESIRED_SANDCATS_NAME: "taken" }), /HTTP 409/);
-  await assert.rejects(bash("sandhost_register", { SANDCATS_ADDRESS_MODE: "explicit", SANDCATS_IP_ADDRESS: "8.8.8.8" }), /Invalid Sandcats address/);
-  await assert.rejects(bash("sandhost_request /status missing-key rawHostname alice"));
+  await assert.rejects(setup("register", { DESIRED_SANDCATS_NAME: "taken" }), /HTTP 409/);
+  await assert.rejects(setup("register", { SANDCATS_ADDRESS_MODE: "explicit", SANDCATS_IP_ADDRESS: "8.8.8.8" }), /Explicit Sandcats address/);
+  await assert.rejects(setup("register", { SANDHOST_DIR: path.join(dir, "missing") }));
   const webkeyPath = path.join(dir, "api-webkey");
   fs.writeFileSync(webkeyPath, origin + "/#invalid-secret");
-  await assert.rejects(bash('sandhost_request /status "$SANDHOST_DIR/id_rsa" rawHostname alice'),
+  await assert.rejects(setup("register"),
     error => error.stderr.includes("HTTP 403") && !error.stderr.includes("invalid-secret"));
   fs.writeFileSync(webkeyPath, origin + "/#test-webkey");
   assert.ok(!fs.readdirSync(dir).some(name => name.startsWith("request.")));
@@ -157,20 +157,23 @@ test("JavaScript signatures verify; wrong origin, replay and bearer fail; redire
     error => !error.message.includes("invalid-secret"));
 });
 
-test("Bash recovery preserves active key on rejection, commits on success and invalidates old key", async () => {
+test("setup recovery preserves active key on rejection, commits on success and invalidates old key", async () => {
   fs.writeFileSync(path.join(dir, "token"), "recovery-secret", { mode: 0o600 });
+  await setup("request-recovery");
+  assert.equal(requests.at(-1).url, "/recover");
   rejectRecovery = true;
-  await assert.rejects(bash('if ! sandhost_confirm_recovery "$SANDHOST_DIR/token"; then exit 7; fi'));
+  await assert.rejects(setup("confirm-recovery", {}, [path.join(dir, "token")]));
   assert.equal(fs.readFileSync(path.join(dir, "id_rsa"), "utf8"), privateKey);
   assert.ok(fs.existsSync(path.join(dir, "id_rsa.recovery")));
   rejectRecovery = false;
-  await bash('sandhost_confirm_recovery "$SANDHOST_DIR/token"');
+  await setup("confirm-recovery", {}, [path.join(dir, "token")]);
   assert.notEqual(fs.readFileSync(path.join(dir, "id_rsa"), "utf8"), privateKey);
   assert.equal(fs.statSync(path.join(dir, "id_rsa")).mode & 0o777, 0o600);
   assert.equal(fs.readFileSync(path.join(dir, "id_rsa.before-recovery"), "utf8"), privateKey);
   await assert.rejects(client.call(plainOrigin, "/status", { rawHostname: "alice" }, privateKey,
     { allowLocalHttp: true, apiToken: "test-webkey" }), /HTTP 403/);
-  await bash('sandhost_request /status "$SANDHOST_DIR/id_rsa" rawHostname alice');
+  await client.call(plainOrigin, "/status", { rawHostname: "alice" }, fs.readFileSync(path.join(dir, "id_rsa")),
+    { allowLocalHttp: true, apiToken: "test-webkey" });
 });
 
 function mockUpdater(addressMode, ipAddress, remote, observed = "8.8.8.8") {
@@ -258,25 +261,36 @@ test("ACME preserves concurrent TXT values, restricts hostname, waits for public
   assert.equal(polls, 2);
 });
 
-test("installer configures new backend in Bash, persists only public settings, and rejects bad unattended input", async () => {
+test("installer uses extracted helper before saving configuration and rejects bad unattended input", async () => {
   const root = path.resolve(__dirname, "..");
   const installer = fs.readFileSync(path.join(root, "install.sh"), "utf8");
   const configure = installer.slice(installer.indexOf("\nsandhost_configure() {"),
-    installer.indexOf("\n# BEGIN EMBEDDED SANDHOST CLIENT"));
+    installer.indexOf("\nsandcats_configure() {"));
   const save = installer.slice(installer.indexOf("\nsave_config() {"),
     installer.indexOf("\ndownload_latest_bundle_and_extract_if_needed() {"));
   const installation = path.join(dir, "installation");
   fs.mkdirSync(path.join(installation, "var/sandcats"), { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(installation, "var/sandcats/id_rsa"), privateKey, { mode: 0o600 });
+  const extract = installer.slice(installer.indexOf("\nextract_bundle_if_provided() {"),
+    installer.indexOf("\nmake_runtime_directories() {"));
+  const helperBundle = path.join(dir, "test-bundle");
+  fs.mkdirSync(helperBundle);
+  // The installer invokes the bundle entry point; exercise the actual JS client with test Node.
+  fs.writeFileSync(path.join(helperBundle, "sandcats-setup.sh"),
+    `exec '${process.execPath}' '${root}/shell/imports/server/sandcats-v2/setup.js' "$@"\n`);
+  const archive = path.join(dir, "test-bundle.tar.xz");
+  execFileSync("tar", ["cJf", archive, "-C", dir, "test-bundle"]);
   const harness = path.join(dir, "installer-harness.sh");
   fs.writeFileSync(harness, `set -euo pipefail
-source "$TEST_ROOT/sandcats-v2.sh"
+BUILD=123
 prompt() { printf '%s' "$2"; }
 fail() { echo "$1" >&2; exit 1; }
 sandcats_generate_keys() { :; }
 writeConfig() { for name in "$@"; do printf '%s=%s\\n' "$name" "${"${!name}"}"; done; }
 ${configure}
 ${save}
+${extract}
+extract_bundle_if_provided
 SANDCATS_BACKEND=sandhost
 USE_DEFAULTS=yes
 CURRENTLY_UID_ZERO=no
@@ -288,9 +302,10 @@ BASE_URL="https://$SS_HOSTNAME" WILDCARD_HOST="*.$SS_HOSTNAME"
 UPDATE_CHANNEL=none ALLOW_DEV_ACCOUNTS=false SMTP_LISTEN_PORT=30025 HTTPS_PORT=443
 save_config
 `);
-  const env = { ...process.env, TEST_ROOT: root, CURL_CA_BUNDLE: path.join(dir, "tls.crt"),
+  const env = { ...process.env, BUNDLE_FILE: archive, NODE_EXTRA_CA_CERTS: path.join(dir, "tls.crt"),
     SANDCATS_API_WEBKEY: origin + "/#test-webkey", DESIRED_SANDCATS_NAME: "alice",
     SANDCATS_BASE_DOMAIN: "sandhost.org", SANDCATS_REGISTRATION_EMAIL: "a+b &ü@example.com" };
+  assert.ok(!fs.existsSync(path.join(installation, "sandstorm.conf")));
   const result = await run("bash", [harness], { cwd: installation, env });
   assert.ok(!result.stdout.includes("test-webkey"));
   const conf = fs.readFileSync(path.join(installation, "sandstorm.conf"), "utf8");
@@ -308,7 +323,15 @@ save_config
   }
   await assert.rejects(run("bash", [harness], { cwd: installation, env: { ...env, SANDCATS_BASE_DOMAIN: "sandcats.org" } }),
     /different hostname/);
-  execFileSync("python3", ["tests/sync-sandcats-installer.py", "--check"], { cwd: root });
+  // An old bundle must produce an actionable error before registration or config writes.
+  fs.unlinkSync(path.join(helperBundle, "sandcats-setup.sh"));
+  execFileSync("tar", ["cJf", archive, "-C", dir, "test-bundle"]);
+  const before = fs.readFileSync(path.join(installation, "sandstorm.conf"), "utf8");
+  await assert.rejects(run("bash", [harness], { cwd: installation, env }), /E_SANDCATS_HELPER/);
+  assert.equal(fs.readFileSync(path.join(installation, "sandstorm.conf"), "utf8"), before);
+  const flow = installer.slice(installer.indexOf('\nhandle_args "$@"', installer.indexOf("# Now that the steps exist")));
+  assert.ok(flow.indexOf("extract_bundle_if_provided") < flow.indexOf("configure_hostnames"));
+  assert.ok(flow.indexOf("configure_hostnames") < flow.indexOf("save_config"));
 });
 
 test("installer sudo handoff preserves the API webkey", async () => {

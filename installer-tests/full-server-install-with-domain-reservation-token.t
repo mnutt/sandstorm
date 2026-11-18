@@ -14,14 +14,14 @@ $[slow]ok
 $[run]cat /tmp/json| sed -r 's/.*.token.:.([a-zA-Z0-9]*).*/\1/' > /tmp/domain-reservation-token ; echo ok
 $[slow]ok
 $[run]sudo ADMIN_TOKEN=$(</tmp/admin-token) CHOSEN_INSTALL_MODE=1 SANDCATS_DOMAIN_RESERVATION_TOKEN=$(</tmp/domain-reservation-token) DESIRED_SANDCATS_NAME=$(</tmp/sandcats-domain-name) CURL_USER_AGENT=testing REPORT=no OVERRIDE_SANDCATS_BASE_DOMAIN=sandcats-dev.sandstorm.io OVERRIDE_SANDCATS_API_BASE=https://sandcats-dev-machine.sandstorm.io OVERRIDE_SANDCATS_CURL_PARAMS=-k bash /vagrant/install.sh -d -p 80
+$[veryslow]Downloading: https://dl.sandstorm.io
+$[veryslow]GPG signature is valid.
 $[slow]As a Sandstorm user, you are invited to use a free Internet hostname as a subdomain of sandcats.io
 $[veryslow]Registering your pre-reserved domain
 $[slow]Congratulations! We have registered your
 Your credentials to use it are in /opt/sandstorm/var/sandcats; consider making a backup.
 $[slow]Now we're going to auto-configure HTTPS for your server.
 $[veryslow]Requesting certificate
-$[veryslow]Downloading: https://dl.sandstorm.io
-$[veryslow]GPG signature is valid.
 $[veryslow]Sandstorm started. PID =
 $[veryslow]Visit this link to start using it:
   http://

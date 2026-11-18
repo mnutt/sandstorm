@@ -28,6 +28,8 @@ We're going to:
 To set up Sandstorm, we will need to use sudo.
 OK to continue? [yes] $[type]
 $[slow]Re-running script as root...
+$[veryslow]Downloading: https://dl.sandstorm.io
+$[veryslow]GPG signature is valid.
 $[slow]As a Sandstorm user, you are invited to use a free Internet hostname as a subdomain of sandcats.io
 $[slow]Choose your desired Sandcats subdomain (alphanumeric, max 20 characters).
 Type the word none to skip this step, or help for help.
@@ -37,8 +39,6 @@ Enter your email address: [] $[type]install-script@asheesh.org
 Registering your domain.
 $[slow]Congratulations! We have registered your
 Your credentials to use it are in /opt/sandstorm/var/sandcats; consider making a backup.
-$[veryslow]Downloading: https://dl.sandstorm.io
-$[veryslow]GPG signature is valid.
 $[veryslow]Your server is coming online. Waiting up to 90 seconds...
 $[veryslow]Visit this link to start using it:
   http://

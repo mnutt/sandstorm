@@ -14,7 +14,10 @@ as admin and other sample users to a Sandstorm server. We recommend
 it for app development, and absolutely do not recommend it for
 a server on the public Internet.
 Enable dev accounts? [yes] $[type]
-Server main HTTP port: [6080] $[type]
+$[slow]Finding latest build for dev channel...
+$[veryslow]Downloading: https://dl.sandstorm.io/sandstorm-
+$[veryslow]GPG signature is valid.
+$[slow]Server main HTTP port: [6080] $[type]
 Database port (choose any unused port): [6081]$[type]
 Note: local.sandstorm.io maps to 127.0.0.1, i.e. your local machine.
 For reasons that will become clear in the next step, you should use this
@@ -34,9 +37,6 @@ port, you must include it here as well.
 Wildcard host: [*.local.sandstorm.io:6080]$[type]
 
 Config written to
-Finding latest build for dev channel...
-$[veryslow]Downloading: https://dl.sandstorm.io/sandstorm-
-$[veryslow]GPG signature is valid.
 $[slow]Installation complete. To start your server now, run:
 sandstorm start
 Once that's done, visit this link to start using it:

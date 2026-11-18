@@ -7,10 +7,10 @@ $[run]sudo cat /proc/sys/kernel/unprivileged_userns_clone
 $[slow]0
 $[run]sudo CURL_USER_AGENT=testing REPORT=no bash /vagrant/install.sh -d
 $[slow]Sandstorm requires sysctl kernel.unprivileged_userns_clone to be enabled.
-$[slow]Config written to /opt/sandstorm/sandstorm.conf.
 $[slow]Finding latest build for dev channel...
 $[veryslow]Downloading: https://dl.sandstorm.io/
 $[veryslow]GPG signature is valid.
+$[slow]Config written to /opt/sandstorm/sandstorm.conf.
 $[veryslow]Sandstorm started.
 $[veryslow]Your server is coming online. Waiting up to 90 seconds...
 $[veryslow]Visit this link to start using it:

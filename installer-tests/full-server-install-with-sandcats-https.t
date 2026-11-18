@@ -22,6 +22,8 @@ We're going to:
 * Configure your system to enable unprivileged user namespaces, via sysctl.
 
 OK to continue? [yes] $[type]
+$[veryslow]Downloading: https://dl.sandstorm.io
+$[veryslow]GPG signature is valid.
 $[slow]As a Sandstorm user, you are invited to use a free Internet hostname as a subdomain of sandcats.io
 $[slow]Choose your desired Sandcats subdomain (alphanumeric, max 20 characters).
 Type the word none to skip this step, or help for help.
@@ -33,8 +35,6 @@ $[slow]Congratulations! We have registered your
 Your credentials to use it are in /opt/sandstorm/var/sandcats; consider making a backup.
 $[slow]Now we're going to auto-configure HTTPS for your server.
 $[veryslow]Requesting certificate
-$[veryslow]Downloading: https://dl.sandstorm.io
-$[veryslow]GPG signature is valid.
 $[veryslow]Sandstorm started. PID =
 $[veryslow]Visit this link to start using it:
   http://

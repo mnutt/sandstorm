@@ -115,6 +115,11 @@ cp -r "$SHELL_BUILD_DIR/bundle" "$BUNDLE_DIR"
 rm -f "$BUNDLE_DIR/README"
 cp "$SOURCE_ROOT/meteor-bundle-main.js" "$BUNDLE_DIR/sandstorm-main.js"
 cp "$SOURCE_ROOT/recover-sandcats.sh" "$BUNDLE_DIR/recover-sandcats.sh"
+cp "$SOURCE_ROOT/sandcats-setup.sh" "$BUNDLE_DIR/sandcats-setup.sh"
+mkdir -p "$BUNDLE_DIR/sandcats-client"
+for module in setup index config transport validation; do
+  cp "$SOURCE_ROOT/shell/imports/server/sandcats-v2/$module.js" "$BUNDLE_DIR/sandcats-client/"
+done
 
 # Meteor wants us to do `npm install` in the bundle to prepare it. Its generated server manifest
 # pins build helpers that have since received security fixes, so update those pins before install.

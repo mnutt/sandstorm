@@ -26,14 +26,14 @@ We're going to:
 To set up Sandstorm, we will need to use sudo.
 OK to continue? [yes] $[type]
 $[slow]Re-running script as root...
+$[veryslow]Downloading: https://dl.sandstorm.io
+$[veryslow]GPG signature is valid.
 $[slow]As a Sandstorm user, you are invited to use a free Internet hostname as a subdomain of sandcats.io
 $[slow]Choose your desired Sandcats subdomain (alphanumeric, max 20 characters).
 Type the word none to skip this step, or help for help.
 What *.sandcats-dev.sandstorm.io subdomain would you like? []$[type]none
 URL users will enter in browser: [http://nonexistentbroken:6080]$[type]
 Wildcard host: [*.nonexistentbroken:6080]$[type]
-$[veryslow]Downloading: https://dl.sandstorm.io
-$[veryslow]GPG signature is valid.
 $[veryslow]Sandstorm started. PID =
 $[veryslow]Your server is coming online. Waiting up to 90 seconds...
 $[veryslow]Visit this link to start using it:

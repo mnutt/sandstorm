@@ -1,5 +1,5 @@
 // Sandhost v1 protocol client, adapted from sandhost/client for CommonJS.
-// Used by the Meteor server; keep wire compatibility with the Bash installer and Sandhost.
+// Shared by the Meteor server and bundled setup helper; keep wire compatibility with Sandhost.
 "use strict";
 
 const https = require('node:https');

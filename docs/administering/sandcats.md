@@ -43,7 +43,9 @@ DNS-01 certificate validation does not require public inbound HTTP connectivity.
 For unattended installs, provide `DESIRED_SANDCATS_NAME`, `SANDCATS_REGISTRATION_EMAIL`,
 `SANDCATS_ADDRESS_MODE` and, for explicit mode, `SANDCATS_IP_ADDRESS`, in addition to
 the usual unattended installer settings. Legacy reservation tokens are not used by
-this backend. Registration and recovery use Bash, OpenSSL and curl before bundle extraction.
+this backend. The installer extracts the bundle before registration, then uses its Node runtime and
+shared Sandhost client before writing configuration and starting Sandstorm.
+Sandhost recovery likewise requires the helper from an installed bundle.
 
 ## Existing installations and API updates
 
