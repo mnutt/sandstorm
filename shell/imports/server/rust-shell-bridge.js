@@ -6,8 +6,9 @@ import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
-import { grainMenu } from "/imports/server/rust-shell-grains";
+import { grainMenu, rustGrainTitle } from "/imports/server/rust-shell-grains";
 import { rustAppActions, createRustGrain } from "/imports/server/rust-shell-apps";
+import { renameGrainForUser } from "/imports/server/grain-server";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
@@ -39,7 +40,7 @@ export const rustShellBridge = createRustShellBridge({
     async open(accountId, grainId) {
       const parentOrigin = Meteor.settings.public.rustShellOrigin;
       if (!parentOrigin) throw new Meteor.Error(503, "Rust grain sessions are not enabled.");
-      const title = text(await globalDb.userGrainTitle(grainId, accountId), 256);
+      const title = text(await rustGrainTitle(globalDb, accountId, grainId), 256);
       const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
       const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return { handle: { sessionId: session._id, accountId, grainId },
@@ -48,6 +49,10 @@ export const rustShellBridge = createRustShellBridge({
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
     template: (handle, options) => createRustTemplateToken(globalDb, handle, options),
+    async rename(handle, title, beforeWrite) {
+      await renameGrainForUser(handle.accountId, handle.grainId, title, beforeWrite);
+      return text(await rustGrainTitle(globalDb, handle.accountId, handle.grainId), 256);
+    },
     revokeTemplate: result => globalDb.removeApiTokens({ _id: result.id }),
   },
   authorize: authorizeRustShellAccount,

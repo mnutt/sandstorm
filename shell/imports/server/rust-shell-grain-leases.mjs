@@ -4,7 +4,7 @@ const valid = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(valu
 const failure = (status, message) => Object.assign(new Error(message), { status });
 
 // UI-session lifetime only. Closing a lease never shuts down the grain.
-export function createGrainLeases({ open, keep, close, template, revokeTemplate, validate, now = Date.now }) {
+export function createGrainLeases({ open, keep, close, template, rename, revokeTemplate, validate, now = Date.now }) {
   const leases = new Map();
   const dispose = async (record) => {
     record.closed = true;
@@ -55,6 +55,25 @@ export function createGrainLeases({ open, keep, close, template, revokeTemplate,
         record.expires = now() + 45000;
         return {};
       } catch (error) { await dispose(record); throw error; }
+    },
+    async rename(token, input, signal) {
+      const record = get(token, input.scope, input.lease);
+      if (!rename || !record?.handle || record.closed || record.expires <= now()) throw failure(410, "Grain session expired.");
+      if (typeof input.title !== "string" || !input.title.trim() || input.title.length > 160) throw failure(400, "Invalid grain title.");
+      if (record.renaming) throw failure(409, "A rename is already in progress.");
+      record.renaming = true;
+      const handle = record.handle;
+      const beforeWrite = async () => {
+        await validate(token);
+        await keep(handle);
+        if (record.closed || signal.aborted || record.expires <= now()) throw failure(410, "Grain session closed.");
+      };
+      try {
+        await beforeWrite();
+        const title = await rename(handle, input.title.trim(), beforeWrite);
+        await beforeWrite();
+        return { title };
+      } finally { record.renaming = false; }
     },
     async template(token, input, signal) {
       const record = get(token, input.scope, input.lease);

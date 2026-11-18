@@ -81,7 +81,7 @@
   </aside>
   {#if model.activeGrain}
     {#key model.activeGrain.url}
-      <GrainFrame pathChanged={updatePath} renderTemplate={(input) => notifications.renderTemplate(input)} grain={model.activeGrain} close={() => navigate('/grains')} />
+      <GrainFrame pathChanged={updatePath} rename={title => notifications.renameGrain(title)} renderTemplate={(input) => notifications.renderTemplate(input)} grain={model.activeGrain} close={() => navigate('/grains')} />
     {/key}
   {:else if route.page === 'missing'}
     <section><h2>Page not found</h2><button onclick={() => navigate('/grains')}>Go to grains</button></section>

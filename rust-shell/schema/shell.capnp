@@ -56,6 +56,8 @@ struct GrainView {
 interface GrainSession {
   close @0 () -> ();
   renderTemplate @1 (options :Text) -> (token :Text, host :Text);
+  rename @2 (title :Text) -> (title :Text);
+  # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.
 }

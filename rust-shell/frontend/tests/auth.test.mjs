@@ -26,6 +26,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let leaseClockOffset = 0;
   let renewals = 0;
   let templates = 0;
+  const grainTitles = {};
   let creations = 0;
   let failCreation = false;
   let holdOpen = false;
@@ -63,6 +64,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
+      rename: async (_handle, title, beforeWrite) => { await beforeWrite(); grainTitles.alice = title; changed(); return title; },
       template: async () => ({ id: ++templates, token: 'sensitive-template-token', host: new URL(grainOrigin).host }),
       revokeTemplate: async () => { --templates; },
     },
@@ -73,7 +75,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: `${users[id].name} grain`,
+      return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`,
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
@@ -231,6 +233,21 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.goForward();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     const app = page.frames().find((frame) => frame.url().startsWith(grainOrigin));
+    await app.evaluate(() => { window.renameFrameMarker = 'still here'; });
+    await page.getByRole('button', {name:'Rename grain',exact:true}).click();
+    await page.getByLabel('Grain title', {exact:true}).fill('Renamed in Rust');
+    await page.getByRole('button', {name:'Save title',exact:true}).click();
+    await page.getByRole('heading', {name:'Renamed in Rust',exact:true}).waitFor();
+    assert.equal(grainTitles.alice,'Renamed in Rust');
+    assert.equal(await app.evaluate(() => window.renameFrameMarker),'still here');
+    grainTitles.alice = 'Legacy rename'; changed();
+    await page.getByRole('heading', {name:'Legacy rename',exact:true}).waitFor();
+    assert.equal(await app.evaluate(() => window.renameFrameMarker),'still here');
+    await page.getByRole('button', {name:'Rename grain',exact:true}).click();
+    await page.getByLabel('Grain title', {exact:true}).fill('Alice grain');
+    await page.getByRole('button', {name:'Save title',exact:true}).click();
+    await page.getByRole('heading', {name:'Alice grain',exact:true}).waitFor();
+
     const pathBeforeForged = page.url();
     await app.evaluate(() => parent.postMessage({setPath:'//untrusted.test/'}, '*'));
     await page.evaluate(() => new Promise(requestAnimationFrame));

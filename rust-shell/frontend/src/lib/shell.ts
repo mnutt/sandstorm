@@ -126,7 +126,10 @@ export class ShellService {
             const grains: Grain[] = [];
             for (const grain of snapshot.grains) grains.push({ key: grain.key, title: grain.title,
               href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle });
-            this.update({ status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited, revision: snapshot.revision, total: snapshot.total, error: '' });
+            const active = this.state.activeGrain;
+            const title = active && grains.find(grain => grain.key === active.grainId)?.title;
+            const activeGrain = active && title && title !== active.title ? { ...active, title } : active;
+            this.update({ status: 'ready', entries, grains, activeGrain, grainsLimited: snapshot.grainsLimited, revision: snapshot.revision, total: snapshot.total, error: '' });
           },
         }).client();
         const result = await shell.watch((params) => { params.observer = observer; }).promise();
@@ -186,6 +189,15 @@ export class ShellService {
       const result = await session.renderTemplate(params => { params.options = options; }).promise();
       return { token: result.token, host: result.host };
     });
+  }
+
+  async renameGrain(title: string) {
+    const session = this.grainSession;
+    const generation = this.grainGeneration;
+    if (!session || !this.state.activeGrain) throw new Error('No active grain.');
+    const result = await session.rename(params => { params.title = title; }).promise();
+    if (generation !== this.grainGeneration || !this.state.activeGrain) throw new Error('Grain session changed.');
+    this.update({ activeGrain: { ...this.state.activeGrain, title: result.title } });
   }
 
   async openGrain(requested: Grain | string, path = '/') {

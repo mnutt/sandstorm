@@ -50,6 +50,7 @@ import {
 import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { rustShellBridge, rustShellSessionStore, authorizeRustShellAccount } from "/imports/server/rust-shell-bridge";
+import { renameGrainForUser } from "/imports/server/grain-server";
 import { runDueJobs } from "/imports/server/scheduled-job";
 import {
   Downloader,
@@ -1390,6 +1391,60 @@ if(isTesting) {
         await globalDb.collections.scheduledJobs.removeAsync({ _id: { $in: [ownerJobId, otherJobId] } });
         await globalDb.collections.grains.removeAsync({ _id: { $in: [ownerGrainId, otherGrainId] } });
         await Meteor.users.removeAsync({ _id: { $in: [ownerId, otherId, adminId] } });
+      }
+    },
+
+    async testRustRenameGrain(grainId) {
+      check(grainId, String);
+      const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!source || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const recipient = "rust-rename-" + Random.id();
+      const hash = Crypto.randomBytes(32).toString("hex");
+      const previousOrigin = Meteor.settings.public.rustShellOrigin;
+      const tokens = [];
+      let share;
+      const require = (condition, message) => { if (!condition) throw new Error(message); };
+      const link = async (accountId, loginHash) => {
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(accountId, loginHash, state);
+        const { token } = await rustShellBridge.handle("exchange", { code, state });
+        tokens.push(token);
+        const scope = Crypto.randomBytes(32).toString("hex");
+        const view = await rustShellBridge.handle("openGrain", { token, scope, grainId });
+        return title => rustShellBridge.handle("renameGrain", { token, scope, lease: view.lease, title });
+      };
+      try {
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        await Meteor.users.insertAsync({ _id: recipient, type: "account", loginCredentials: [], nonloginCredentials: [],
+          profile: { name: "Rename recipient", handle: "recipient", pronoun: "neutral" },
+          services: { resume: { loginTokens: [{ hashedToken: hash, when: new Date() }] } } });
+        share = await SandstormPermissions.createNewApiToken(globalDb, { accountId: this.userId }, grainId,
+          "Rename test", { allAccess: null }, { user: { accountId: recipient, title: source.title } });
+        const ownerRename = await link(this.userId, Accounts._getLoginToken(this.connection.id));
+        const recipientRename = await link(recipient, hash);
+        await ownerRename("Owner rename");
+        require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "Owner rename", "Recipient did not follow owner rename");
+        require((await recipientRename("My private name")).title === "My private name", "Rename response used the wrong title");
+        require((await globalDb.collections.grains.findOneAsync(grainId)).title === "Owner rename", "Recipient changed owner's title");
+        require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "My private name", "Recipient rename was not saved");
+        await ownerRename("Later owner rename");
+        require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "My private name", "Owner overwrote recipient's personal title");
+        await recipientRename("Later owner rename");
+        const row = await globalDb.collections.apiTokens.findOneAsync(share.id);
+        require(!row.owner.user.renamed, "Matching upstream title did not reset personal rename");
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { revoked: true } });
+        let denied = false;
+        try { await recipientRename("Must not change"); }
+        catch (error) { denied = error.error === 403 || error.status === 410; }
+        require(denied, "Revoked recipient renamed a grain");
+        require((await globalDb.collections.grains.findOneAsync(grainId)).title === "Later owner rename", "Revoked rename altered owner title");
+        return true;
+      } finally {
+        for (const token of tokens) await rustShellBridge.handle("logout", { token });
+        if (share) await globalDb.removeApiTokens({ _id: share.id });
+        await renameGrainForUser(this.userId, grainId, source.title);
+        await Meteor.users.removeAsync(recipient);
+        Meteor.settings.public.rustShellOrigin = previousOrigin;
       }
     },
 

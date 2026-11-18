@@ -125,3 +125,38 @@ test('disconnected template requests revoke late tokens', async () => {
   assert.equal(revoked, true);
   await f.call('closeGrain', { lease: view.lease });
 });
+
+test('renames use the live lease, reject overlapping calls and cancel before writes', async () => {
+  let writes = 0;
+  const f = await fixture({ rename: async (_handle, title, beforeWrite) => { await beforeWrite(); ++writes; return title; } });
+  const view = await f.call('openGrain',{grainId:'allowed'});
+  const input = {lease:view.lease,title:' New title '};
+  assert.equal((await f.call('renameGrain',input)).title,'New title');
+  assert.equal(writes,1);
+  const other = await f.signIn();
+  await assert.rejects(f.call('renameGrain',{...input,token:other}),{status:403});
+  await assert.rejects(f.call('renameGrain',{...input,title:' '}),{status:400});
+  await f.call('closeGrain',{lease:view.lease});
+  await assert.rejects(f.call('renameGrain',input),{status:410});
+  for (const mode of ['close','logout','abort','share']) {
+    let release, entered;
+    const ready = new Promise(resolve => { entered = resolve; });
+    const g = await fixture({ rename: async (_handle,title,beforeWrite) => {
+      entered(); await new Promise(resolve => { release = resolve; });
+      await beforeWrite(); ++writes; return title;
+    } });
+    const opened = await g.call('openGrain',{grainId:'allowed'});
+    const controller = new AbortController();
+    const request = {lease:opened.lease,title:'Must not write'};
+    const pending = g.call('renameGrain',request,controller.signal);
+    const denied = assert.rejects(pending);
+    await ready;
+    await assert.rejects(g.call('renameGrain',request),{status:409});
+    if (mode === 'close') await g.call('closeGrain',{lease:opened.lease});
+    if (mode === 'logout') await g.call('logout');
+    if (mode === 'abort') controller.abort();
+    if (mode === 'share') g.revokeShare();
+    release(); await denied;
+    assert.equal(writes,1,mode);
+  }
+});

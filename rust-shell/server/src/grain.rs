@@ -115,6 +115,37 @@ struct Lease {
     closed: Cell<bool>,
 }
 impl grain_session::Server for Lease {
+    async fn rename(
+        self: Rc<Self>,
+        params: grain_session::RenameParams,
+        mut results: grain_session::RenameResults,
+    ) -> capnp::Result<()> {
+        if self.closed.get() {
+            return Err(capnp::Error::failed("Grain session closed".into()));
+        }
+        let title = params.get()?.get_title()?.to_str()?;
+        if title.len() > 640 {
+            return Err(capnp::Error::failed("Grain title too long".into()));
+        }
+        let value = self
+            .scope
+            .session
+            .call(
+                "renameGrain",
+                json!({
+                    "scope": self.scope.key, "lease": self.lease, "title": title
+                }),
+            )
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        results.get().set_title(
+            value["title"]
+                .as_str()
+                .ok_or_else(|| capnp::Error::failed("Invalid grain title response".into()))?,
+        );
+        Ok(())
+    }
+
     async fn render_template(
         self: Rc<Self>,
         params: grain_session::RenderTemplateParams,

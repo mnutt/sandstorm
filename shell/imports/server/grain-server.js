@@ -406,6 +406,66 @@ export async function createGrainForUser(userId, packageId, command, title, befo
   return grainId;
 }
 
+export async function renameGrainForUser(userId, grainId, newTitle, beforeWrite = async () => {}) {
+  check(grainId, String);
+  check(newTitle, String);
+  if (userId) {
+    const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { oldUsers: 0 } });
+    if (grain) {
+      if (grain.userId === userId) {
+        await beforeWrite();
+        await globalDb.collections.grains.updateAsync(
+            { _id: grainId, userId: userId }, { $set: { title: newTitle } });
+
+        // Denormalize new title out to all sharing tokens.
+        await globalDb.collections.apiTokens.updateAsync(
+            { grainId: grainId, "owner.user": { $exists: true } },
+            { $set: { "owner.user.upstreamTitle": newTitle } },
+            { multi: true });
+      } else {
+        const token = await globalDb.collections.apiTokens.findOneAsync({
+          grainId: grainId,
+          objectId: { $exists: false },
+          "owner.user.accountId": userId,
+        }, {
+          sort: { created: 1 }, // The oldest token is our source of truth for the name.
+        });
+        if (token && token.owner.user.title !== newTitle) {
+          await beforeWrite();
+          if (token.owner.user.upstreamTitle === newTitle) {
+            // User renamed grain to match upstream title. Act like they never renamed it at
+            // all.
+            await globalDb.collections.apiTokens.updateAsync({
+              grainId: grainId,
+              "owner.user.accountId": userId,
+            }, {
+              $set: { "owner.user.title": newTitle },
+              $unset: { "owner.user.upstreamTitle": 1, "owner.user.renamed": 1 },
+            }, {
+              multi: true,
+            });
+          } else {
+            const modification = {
+              "owner.user.title": newTitle,
+              "owner.user.renamed": true,
+            };
+
+            if (!token.owner.user.upstreamTitle) {
+              // If `upstreamTitle` isn't present then it is equal to the old title.
+              modification["owner.user.upstreamTitle"] = token.owner.user.title;
+            }
+
+            await globalDb.collections.apiTokens.updateAsync(
+                { grainId: grainId, "owner.user.accountId": userId },
+                { $set: modification },
+                { multi: true });
+          }
+        }
+      }
+    }
+  }
+}
+
 Meteor.methods({
   async newGrain(packageId, command, title) {
     return createGrainForUser(this.userId, packageId, command, title);
@@ -422,61 +482,7 @@ Meteor.methods({
   },
 
   updateGrainTitle: async function (grainId, newTitle, obsolete) {
-    check(grainId, String);
-    check(newTitle, String);
-    if (this.userId) {
-      const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { oldUsers: 0 } });
-      if (grain) {
-        if (grain.userId === this.userId) {
-          await globalDb.collections.grains.updateAsync(
-              { _id: grainId, userId: this.userId }, { $set: { title: newTitle } });
-
-          // Denormalize new title out to all sharing tokens.
-          await globalDb.collections.apiTokens.updateAsync(
-              { grainId: grainId, "owner.user": { $exists: true } },
-              { $set: { "owner.user.upstreamTitle": newTitle } },
-              { multi: true });
-        } else {
-          const token = await globalDb.collections.apiTokens.findOneAsync({
-            grainId: grainId,
-            objectId: { $exists: false },
-            "owner.user.accountId": this.userId,
-          }, {
-            sort: { created: 1 }, // The oldest token is our source of truth for the name.
-          });
-          if (token && token.owner.user.title !== newTitle) {
-            if (token.owner.user.upstreamTitle === newTitle) {
-              // User renamed grain to match upstream title. Act like they never renamed it at
-              // all.
-              await globalDb.collections.apiTokens.updateAsync({
-                grainId: grainId,
-                "owner.user.accountId": this.userId,
-              }, {
-                $set: { "owner.user.title": newTitle },
-                $unset: { "owner.user.upstreamTitle": 1, "owner.user.renamed": 1 },
-              }, {
-                multi: true,
-              });
-            } else {
-              const modification = {
-                "owner.user.title": newTitle,
-                "owner.user.renamed": true,
-              };
-
-              if (!token.owner.user.upstreamTitle) {
-                // If `upstreamTitle` isn't present then it is equal to the old title.
-                modification["owner.user.upstreamTitle"] = token.owner.user.title;
-              }
-
-              await globalDb.collections.apiTokens.updateAsync(
-                  { grainId: grainId, "owner.user.accountId": this.userId },
-                  { $set: modification },
-                  { multi: true });
-            }
-          }
-        }
-      }
-    }
+    return renameGrainForUser(this.userId, grainId, newTitle);
   },
 
   privatizeGrain: async function (grainId) {

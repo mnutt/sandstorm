@@ -228,6 +228,21 @@ existing idle-session cleanup remains the fallback. Rolling back to a bundle
 without this bridge leaves its existing three-minute idle-session cleanup in
 charge; it does not stop the grain.
 
+**Rename grain** uses the active `GrainSession` capability. Meteor keeps the same
+owner/recipient naming rules as `updateGrainTitle`: owners change the grain and
+upstream share titles; recipients change only their own share names. Renaming a
+share to match the upstream title restores its default naming behavior. The
+bridge bounds title length and permits one rename at a time per lease, checking
+login, grain access, and lease lifetime again immediately before the write.
+Failed requests are not automatically replayed or rolled back over later writes.
+
+The response updates the active title, including for grains outside the menu
+preview. For grains in the loaded menu, observed renames from the main shell or
+other tabs update the open grain title too. These updates preserve the iframe
+element and session. App-provided page titles remain separate from grain names.
+Tests cover owner/shared naming, revocation, cancellation before writing, and
+frame continuity across both Rust and legacy title changes.
+
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
 and a one-shot `getGrainTitle` reply. Sharing requests use a main-shell dialog handoff;

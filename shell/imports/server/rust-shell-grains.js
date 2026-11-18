@@ -1,6 +1,16 @@
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 
+// Match the account's displayed title, including owner renames and personal overrides.
+export async function rustGrainTitle(db, accountId, grainId) {
+  const grain = await db.collections.grains.findOneAsync({ _id: grainId, userId: accountId }, { fields: { title: 1 } });
+  if (grain) return grain.title;
+  const token = await db.collections.apiTokens.findOneAsync({ grainId,
+    objectId: { $exists: false }, "owner.user.accountId": accountId },
+    { sort: { created: 1, _id: 1 }, fields: { "owner.user": 1 } });
+  return token ? computeTitleFromTokenOwnerUser(token.owner.user).title : "shared grain";
+}
+
 const LIMIT = 50;
 const text = (value) => Buffer.from(String(value || "Untitled grain")).subarray(0, 160).toString();
 const date = (value) => value instanceof Date && Number.isFinite(+value) ? value.toISOString() : "";

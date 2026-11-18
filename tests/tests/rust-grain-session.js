@@ -160,6 +160,12 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   operation(browser, 'close');
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
   browser.frame(null).executeAsync(function (done) {
+    Meteor.call('testRustRenameGrain', location.pathname.split('/')[2], (error, ok) => done({error:error?.message,ok}));
+  }, [], result => {
+    browser.assert.equal(result.value.error, null, 'owner and recipient renames preserve canonical title semantics');
+    browser.assert.equal(result.value.ok, true, 'revoked recipients cannot rename');
+  });
+  browser.frame(null).executeAsync(function (done) {
     Meteor.call('testRustCreateGrain', location.pathname.split('/')[2], (error, grainId) => {
       if (!error) Router.go('/grain/' + grainId);
       done({error:error?.message,grainId});
