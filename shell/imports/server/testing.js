@@ -1398,6 +1398,7 @@ if(isTesting) {
       const duplicateTokenId = "test-rust-duplicate-" + Random.id();
       const selfTokenId = "test-rust-self-" + Random.id();
       const extraGrainIds = Array.from({ length: 50 }, () => "test-rust-limit-" + Random.id());
+      const packageId = "test-rust-package-" + Random.id();
       const loginHash = Crypto.randomBytes(32).toString("hex");
       const state = Crypto.randomBytes(32).toString("hex");
       const controller = new AbortController();
@@ -1410,13 +1411,16 @@ if(isTesting) {
       try {
         await Meteor.users.insertAsync({ _id: userId, loginCredentials: [], profile: { name: "Observer test" },
           services: { resume: { loginTokens: [{ hashedToken: loginHash, when: new Date() }] } } });
-        await globalDb.collections.grains.insertAsync({ _id: grainId, userId, title: "Before rename" });
+        await globalDb.collections.packages.insertAsync({ _id: packageId,
+          manifest: { appTitle: { defaultText: "Test editor" }, actions: [] } });
+        await globalDb.collections.grains.insertAsync({ _id: grainId, userId, packageId, title: "Before rename" });
         const code = await rustShellBridge.issue(userId, loginHash, state);
         ({ token } = await rustShellBridge.handle("exchange", { code, state }));
         let view = await call("snapshot");
         require(view.total === 0, "New account must have an empty projection");
         require(view.grains.length === 1 && view.grains[0].key === grainId && view.grains[0].owned,
             "Grain menu must show the owned grain");
+        require(view.grains[0].appTitle === "Test editor", "Owned app name must come from the package");
         const observeWrite = async (write) => {
           const pending = call("watch", { after: view.version });
           // Attach a rejection handler immediately, including if the DB write fails.
@@ -1442,6 +1446,9 @@ if(isTesting) {
         require(view.grains.length === 50 && view.grainsLimited, "Large accounts must have a bounded preview");
         await observeWrite(() => globalDb.collections.grains.removeAsync({ _id: { $in: extraGrainIds } }));
         require(view.grains.length === 1 && !view.grainsLimited, "Removing excess grains must clear the limit indicator");
+        await observeWrite(() => globalDb.collections.packages.updateAsync(packageId,
+            { $set: { "manifest.appTitle.defaultText": "Renamed editor" } }));
+        require(view.grains[0].appTitle === "Renamed editor", "Package changes must wake the menu projection");
         await observeWrite(() => call("read"));
         require(!view.entries[0].unread, "Mark-read must update the observed record");
         await observeWrite(() => call("dismiss", { id: notificationId }));
@@ -1459,10 +1466,12 @@ if(isTesting) {
         require(!view.grains.some((grain) => grain.key === sharedGrainId), "Another recipient's grain must not appear");
         require(view.entries[0].senderName === "Sender name", "Referenced sender name must be projected");
         await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
-            { $set: { "owner.user.accountId": userId, "owner.user.title": "Saved title", "owner.user.upstreamTitle": "Shared title" } }));
+            { $set: { "owner.user.accountId": userId, "owner.user.title": "Saved title", "owner.user.upstreamTitle": "Shared title", "owner.user.denormalizedGrainMetadata.appTitle": { defaultText: "Shared spreadsheet" } } }));
         require(view.entries[0].title === "Shared title", "Shared grain must use the recipient's upstream title");
         require(view.grains.some((grain) => grain.key === sharedGrainId && !grain.owned && grain.title === "Shared title"),
             "Shared grain must use recipient metadata");
+        require(view.grains.find((grain) => grain.key === sharedGrainId).appTitle === "Shared spreadsheet",
+            "Shared app name must come from recipient metadata");
         await globalDb.collections.apiTokens.insertAsync({ _id: duplicateTokenId, grainId: sharedGrainId,
           created: new Date(Date.now() + 1000), owner: { user: { accountId: userId, title: "Later token title", denormalizedGrainMetadata: {} } } });
         await globalDb.collections.apiTokens.insertAsync({ _id: selfTokenId, grainId,
@@ -1501,6 +1510,7 @@ if(isTesting) {
         await globalDb.collections.notifications.removeAsync({ userId });
         await globalDb.collections.apiTokens.removeAsync({ _id: { $in: [tokenId, duplicateTokenId, selfTokenId] } });
         await globalDb.collections.grains.removeAsync({ _id: { $in: [grainId, sharedGrainId, ...extraGrainIds] } });
+        await globalDb.collections.packages.removeAsync({ _id: packageId });
         await Meteor.users.removeAsync({ _id: senderId });
         await Meteor.users.removeAsync({ _id: userId });
       }

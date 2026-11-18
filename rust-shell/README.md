@@ -93,7 +93,9 @@ Logging out that source session or suspending the account revokes access.
 **Switch account** repeats the handoff and revokes the previous linked session.
 Changing accounts elsewhere without revoking that login does not implicitly
 change the Rust shell's selected account. **Disconnect** revokes the Rust session.
-Meteor restarts discard linked sessions and require a fresh handoff.
+Meteor restarts (including `sandstorm update`) discard linked sessions and require
+a fresh handoff. Ordinary browser reloads retain the session; the HTTPS browser
+regression verifies that the cookie and account survive reload.
 
 Installed mode reads up to 100 of the account's newest real notifications, with a
 total count. Mongo observers wake a pending Rust request when notifications,
@@ -131,8 +133,13 @@ separately controls delivery of those snapshots.
 ### Read-only grain menu
 
 The **Grains** page shares the authenticated connection and revisioned account
-snapshot with notifications. It shows titles, owned/shared labels, last-used times,
-and links into the main shell. The title filter searches only the loaded preview.
+snapshot with notifications. It shows grain and app titles, owned/shared labels, last-used times,
+and links into the main shell. Search matches title or app within the loaded
+preview; ownership filtering and sorting by title or recent use also stay local.
+App names come from referenced packages for owned grains and recipient metadata
+for shares. Package-name changes wake observation. Missing metadata displays an
+unknown-app label. Refresh/reconnect clears old data and obtains a new authorized
+snapshot; the initial session check has a timeout and is canceled on reconnect.
 There are no grain lifecycle mutations or new UI sessions in Rust.
 
 The projection includes at most 50 owned grains and 50 shared candidates. Mongo
@@ -297,8 +304,8 @@ isolated server, including legacy inserts, owned/shared grain renames, sender re
 recipient isolation, token revocation, and source-login revocation. Browser tests
 also check that sender names render as text rather than HTML. Grain-menu checks
 cover recipient isolation, shared/owned deduplication, trash/restore, limits, and
-revocation; browser checks cover filtering, links, account switching, and clearing
-the list on logout.
+revocation; browser checks cover title/app filtering, ownership filtering, sorting, links,
+reload persistence, account switching, and clearing the list on logout.
 
 The C++ suite additionally checks pipelining across both connections, an observer
 that calls back into C++ while C++ awaits its response, explicit counter release,

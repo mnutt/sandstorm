@@ -89,11 +89,20 @@ export const rustShellBridge = createRustShellBridge({
       const callbacks = { added: changed, changed, removed: changed };
       handles.push(await globalDb.collections.notifications.find({ userId: accountId })
           .observeChangesAsync(callbacks));
-      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1, lastUsed: 1, created: 1, trashed: 1, suspended: 1 } })
+      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1, packageId: 1, lastUsed: 1, created: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
       handles.push(await globalDb.collections.apiTokens.find({ "owner.user.accountId": accountId },
           { fields: { grainId: 1, "owner.user": 1, created: 1, lastUsed: 1, revoked: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
+      const owned = await globalDb.collections.grains.find({ userId: accountId,
+        trashed: { $exists: false }, suspended: { $exists: false } }, {
+        sort: { lastUsed: -1, _id: 1 }, limit: 50, fields: { packageId: 1 },
+      }).fetchAsync();
+      const packageIds = [...new Set(owned.map((grain) => grain.packageId).filter(Boolean))];
+      if (packageIds.length) {
+        handles.push(await globalDb.collections.packages.find({ _id: { $in: packageIds } },
+            { fields: { "manifest.appTitle": 1, "manifest.actions": 1 } }).observeChangesAsync(callbacks));
+      }
       // Notification observation is already active. A new referenced sender
       // changes the snapshot, causing the next watch to attach its profile observer.
       const notifications = await globalDb.collections.notifications.find({ userId: accountId },

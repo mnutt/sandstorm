@@ -3,7 +3,7 @@ import { Observer, Shell, type Shell$Client, type Subscription$Client } from '..
 import { WebSocketTransport } from './transport';
 
 export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string; senderName: string }
-export interface Grain { key: string; title: string; href: string; owned: boolean; lastUsed: string }
+export interface Grain { key: string; title: string; href: string; owned: boolean; lastUsed: string; appTitle: string }
 export interface ShellState {
   grains: Grain[];
   grainsLimited: boolean;
@@ -26,6 +26,7 @@ export class ShellService {
   private subscription?: Subscription$Client;
   private timer?: ReturnType<typeof setTimeout>;
   private deadline?: ReturnType<typeof setTimeout>;
+  private authRequest?: AbortController;
   private generation = 0;
   private stopped = true;
   private retry = 500;
@@ -41,6 +42,8 @@ export class ShellService {
 
   private clearConnection() {
     clearTimeout(this.deadline);
+    this.authRequest?.abort();
+    this.authRequest = undefined;
     this.subscription = undefined;
     this.shell = undefined;
     this.conn?.shutdown();
@@ -65,15 +68,21 @@ export class ShellService {
       this.retry = Math.min(this.retry * 2, 5000);
     };
     try {
-      const response = await fetch('/auth/session', { cache: 'no-store' });
+      const controller = this.authRequest = new AbortController();
+      this.deadline = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch('/auth/session', { cache: 'no-store', signal: controller.signal });
       if (generation !== this.generation || this.stopped) return;
       if (response.status === 401) {
+        clearTimeout(this.deadline);
+        this.authRequest = undefined;
         this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, account: null, fixture: false, error: '', pending: false, total: 0 });
         return;
       }
       const session = await response.json();
       if (generation !== this.generation || this.stopped) return;
       if (!response.ok) throw new Error(session.error || 'Unable to check your session');
+      clearTimeout(this.deadline);
+      this.authRequest = undefined;
       this.update({ fixture: session.fixture, account: session.account?.name || null });
     } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); return; }
     const url = new URL('/rpc', location.href);
@@ -99,7 +108,7 @@ export class ShellService {
             this.retry = 500;
             const grains: Grain[] = [];
             for (const grain of snapshot.grains) grains.push({ key: grain.key, title: grain.title,
-              href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed });
+              href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle });
             this.update({ status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited, revision: snapshot.revision, total: snapshot.total, error: '' });
           },
         }).client();

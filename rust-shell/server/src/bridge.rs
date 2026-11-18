@@ -105,6 +105,8 @@ pub struct Grain {
     pub owned: bool,
     #[serde(rename = "lastUsed")]
     pub last_used: String,
+    #[serde(default, rename = "appTitle")]
+    pub app_title: String,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]

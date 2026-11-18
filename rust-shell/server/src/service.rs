@@ -221,6 +221,7 @@ impl shell::Server for Shell {
                             out.set_href(&grain.href);
                             out.set_owned(grain.owned);
                             out.set_last_used(&grain.last_used);
+                            out.set_app_title(&grain.app_title);
                         }
                     }
                     let mut entries = out.init_entries(snapshot.entries.len() as u32);

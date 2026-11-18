@@ -21,6 +21,7 @@ struct Grain {
   href @2 :Text;
   owned @3 :Bool;
   lastUsed @4 :Text;
+  appTitle @5 :Text;
 }
 
 struct Snapshot {

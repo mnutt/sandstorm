@@ -1,3 +1,4 @@
+import { SandstormDb } from "/imports/sandstorm-db/db";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 
 const LIMIT = 50;
@@ -10,7 +11,7 @@ export async function grainMenu(db, accountId, mainUrl) {
   const owned = await db.collections.grains.find({ userId: accountId,
     trashed: { $exists: false }, suspended: { $exists: false } }, {
     sort: { lastUsed: -1, _id: 1 }, limit: LIMIT + 1,
-    fields: { title: 1, lastUsed: 1, created: 1 },
+    fields: { title: 1, packageId: 1, lastUsed: 1, created: 1 },
   }).fetchAsync();
   const shared = await db.collections.apiTokens.rawCollection().aggregate([
     { $match: { "owner.user.accountId": accountId, grainId: { $type: "string" },
@@ -25,8 +26,20 @@ export async function grainMenu(db, accountId, mainUrl) {
   // Suppress duplicate/self-shared entries, including owned grains in the trash.
   const selfOwned = new Set((await db.collections.grains.find({ userId: accountId,
     _id: { $in: shared.map((row) => row._id) } }, { fields: { _id: 1 } }).fetchAsync()).map((row) => row._id));
+  const packageIds = [...new Set(owned.slice(0, LIMIT).map((grain) => grain.packageId).filter(Boolean))];
+  const packages = new Map((await db.collections.packages.find({ _id: { $in: packageIds } },
+      { fields: { appId: 1, "manifest.appTitle": 1, "manifest.actions": 1 } }).fetchAsync())
+      .map((pkg) => [pkg._id, pkg]));
+  const appName = (row, isOwned) => {
+    if (!isOwned) return row.owner.denormalizedGrainMetadata?.appTitle?.defaultText || "";
+    const pkg = packages.get(row.packageId);
+    if (!pkg) return "";
+    if (pkg.manifest?.appTitle?.defaultText) return pkg.manifest.appTitle.defaultText;
+    return pkg.manifest?.actions?.[0]?.title ? SandstormDb.appNameFromPackage(pkg) : "";
+  };
   const entry = (row, isOwned) => ({ key: row._id,
     title: text(isOwned ? row.title : computeTitleFromTokenOwnerUser(row.owner).title),
+    appTitle: Buffer.from(String(appName(row, isOwned))).subarray(0, 160).toString(),
     owned: isOwned, lastUsed: date(row.lastUsed || row.created),
     href: new URL("/grain/" + encodeURIComponent(row._id), mainUrl).href,
   });

@@ -35,7 +35,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
       return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: `${users[id].name} grain`,
-        href: `/grain/${id}-grain`, owned: id === 'alice', lastUsed: new Date(0).toISOString() }], grainsLimited: false };
+        href: `/grain/${id}-grain`, appTitle: 'Text Editor', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
+        ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: '/grain/alice-extra',
+          owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
     },
     dismiss: async (id, key) => {
       if (rows.get(key)?.user !== id) throw Object.assign(new Error('Not your notification'), { status: 403 });
@@ -89,7 +91,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), '/grain/alice-grain');
     assert.equal(await page.getByRole('link', { name: 'Bob grain', exact: true }).count(), 0);
-    await page.getByText('Owned by you', { exact: true }).waitFor();
+    await page.locator('.grain-item').getByText('Owned by you', { exact: true }).waitFor();
+    assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Zebra shared');
+    await page.getByLabel('Sort by').selectOption('title');
+    assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Alice grain');
+    await page.getByLabel('Filter shown grains').fill('editor');
+    assert.equal(await page.locator('.grain-item').count(), 1);
+    await page.getByLabel('Filter shown grains').fill('');
+    await page.getByLabel('Show', { exact: true }).selectOption('shared');
+    assert.equal(await page.locator('.grain-item h3').innerText(), 'Zebra shared');
+    await page.getByLabel('Show', { exact: true }).selectOption('all');
     await page.getByLabel('Filter shown grains').fill('nothing matches');
     await page.getByText('No matching grains.', { exact: true }).waitFor();
     await page.getByLabel('Filter shown grains').fill('');
@@ -97,6 +108,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);
+    await page.reload();
+    await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
+    assert.equal((await context.cookies()).find((entry) => entry.name === cookie.name).value, cookie.value,
+      'ordinary reload must preserve the linked session');
     await expect.poll(() => observers.size).toBe(1);
     const starts = observationStarts;
     await new Promise((resolve) => setTimeout(resolve, 6000));
@@ -120,7 +135,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await other.getByRole('heading', { name: /Alice notification/ }).count(), 0);
     await other.getByRole('button', { name: 'Grains', exact: true }).click();
     await other.getByRole('link', { name: 'Bob grain', exact: true }).waitFor();
-    await other.getByText('Shared with you', { exact: true }).waitFor();
+    await other.locator('.grain-item').getByText('Shared with you', { exact: true }).waitFor();
     assert.equal(await other.getByRole('link', { name: 'Alice grain', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await other.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
