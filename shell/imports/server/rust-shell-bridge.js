@@ -3,6 +3,7 @@ import { Accounts } from "meteor/accounts-base";
 import { check } from "meteor/check";
 import Http from "node:http";
 import Fs from "node:fs/promises";
+import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
@@ -29,12 +30,32 @@ export const rustShellBridge = createRustShellBridge({
       let title = "Notification";
       let body = row.text?.defaultText || "";
       let path = "/";
+      let senderName = "";
+      // Match notificationGrains: only a sender referenced by this account's
+      // own notification may contribute profile information.
+      if (row.initiatingAccount) {
+        const sender = await Meteor.users.findOneAsync({ _id: row.initiatingAccount },
+            { fields: { "profile.name": 1 } });
+        senderName = sender?.profile?.name || "";
+      } else if (row.initiatorAnonymous) {
+        senderName = "Anonymous user";
+      }
       if (row.grainId) {
         const grain = await globalDb.collections.grains.findOneAsync({ _id: row.grainId, userId: accountId });
-        title = grain?.title || "Grain activity";
+        let sharedTitle;
+        if (!grain) {
+          const token = await globalDb.collections.apiTokens.findOneAsync({
+            grainId: row.grainId,
+            "owner.user.accountId": accountId,
+            "owner.user.denormalizedGrainMetadata": { $exists: true },
+            revoked: { $ne: true },
+          }, { sort: { created: 1, _id: 1 }, fields: { "owner.user": 1 } });
+          if (token) sharedTitle = computeTitleFromTokenOwnerUser(token.owner.user).title;
+        }
+        title = grain?.title || sharedTitle || "Grain activity";
         path = "/grain/" + encodeURIComponent(row.grainId);
         if (row.path) path += "/" + row.path.replace(/^\/+/, "");
-        if (row.ongoing) body = "This grain has an ongoing activity. Cancelling stops it.";
+        if (row.ongoing && !body) body = "This grain has an ongoing activity.";
         if (row.count > 1) body += " (" + row.count + " events)";
       } else if (row.appUpdates) {
         title = "App updates available";
@@ -54,7 +75,7 @@ export const rustShellBridge = createRustShellBridge({
       const main = new URL(process.env.ROOT_URL);
       const target = new URL(path, main);
       const href = target.origin === main.origin && Buffer.byteLength(target.href) <= 1024 ? target.href : main.origin;
-      return { key: row._id, title: text(title, 160), body: text(body, 512), href,
+      return { key: row._id, senderName: text(senderName, 160), title: text(title, 160), body: text(body, 512), href,
         unread: !!row.isUnread, ongoing: !!row.ongoing, timestamp: row.timestamp?.toISOString() || "" };
     }));
     return { entries, total: await globalDb.collections.notifications.find(query).countAsync() };
@@ -68,6 +89,18 @@ export const rustShellBridge = createRustShellBridge({
           .observeChangesAsync(callbacks));
       handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1 } })
           .observeChangesAsync(callbacks));
+      handles.push(await globalDb.collections.apiTokens.find({ "owner.user.accountId": accountId },
+          { fields: { grainId: 1, "owner.user": 1, created: 1, revoked: 1 } })
+          .observeChangesAsync(callbacks));
+      // Notification observation is already active. A new referenced sender
+      // changes the snapshot, causing the next watch to attach its profile observer.
+      const notifications = await globalDb.collections.notifications.find({ userId: accountId },
+          { sort: { timestamp: -1, _id: 1 }, limit: 100, fields: { initiatingAccount: 1 } }).fetchAsync();
+      const senders = [...new Set(notifications.map((row) => row.initiatingAccount).filter(Boolean))];
+      if (senders.length) {
+        handles.push(await Meteor.users.find({ _id: { $in: senders } }, { fields: { "profile.name": 1 } })
+            .observeChangesAsync(callbacks));
+      }
       // Invalidate promptly on source-login revocation, suspension, or account deletion.
       handles.push(await Meteor.users.find({ _id: accountId },
           { fields: { "services.resume.loginTokens": 1, suspended: 1, expires: 1 } })

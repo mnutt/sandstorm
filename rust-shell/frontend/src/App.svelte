@@ -56,7 +56,10 @@
         {#each state.entries as entry (entry.id)}
           <li class="notification-item">
             <div>
-              <h3 class="notification-title">{entry.title} {#if entry.unread}<small>Unread</small>{/if}</h3><p>{entry.body}</p>
+              <h3 class="notification-title">{entry.title} {#if entry.unread}<small>Unread</small>{/if}</h3>
+              {#if entry.senderName}<p class="sender">From {entry.senderName}</p>{/if}
+              <p>{entry.body}</p>
+              {#if entry.ongoing}<p>Cancelling stops this ongoing activity.</p>{/if}
               {#if entry.timestamp}<time datetime={entry.timestamp}>{new Date(entry.timestamp).toLocaleString()}</time>{/if}
               {#if entry.href}<p><a href={entry.href}>Open in main shell ↗</a></p>{/if}
             </div>

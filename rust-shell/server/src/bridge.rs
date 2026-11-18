@@ -93,6 +93,8 @@ pub struct Entry {
     pub unread: bool,
     pub ongoing: bool,
     pub timestamp: String,
+    #[serde(default, rename = "senderName")]
+    pub sender_name: String,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]

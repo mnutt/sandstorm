@@ -2,7 +2,7 @@
 
 using Fixture = import "fixture.capnp".Fixture;
 
-# Experimental, fixture-only API. No account or Backend authority is exported.
+# Experimental account-scoped projection API. Backend authority is never exported.
 struct Notification {
   id @0 :UInt32;
   title @1 :Text;
@@ -12,6 +12,7 @@ struct Notification {
   ongoing @5 :Bool;
   href @6 :Text;
   timestamp @7 :Text;
+  senderName @8 :Text;
 }
 
 struct Snapshot {
@@ -19,7 +20,7 @@ struct Snapshot {
   entries @1 :List(Notification);
   total @2 :UInt32;
   # Each callback replaces the entire projection. First callback means ready.
-  # Reconnecting creates a new fixture and starts a new revision sequence.
+  # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }
 
 interface Observer {

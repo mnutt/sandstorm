@@ -2,7 +2,7 @@ import { Conn } from 'capnp-es';
 import { Observer, Shell, type Shell$Client, type Subscription$Client } from '../generated/shell';
 import { WebSocketTransport } from './transport';
 
-export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string }
+export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string; senderName: string }
 export interface NotificationState {
   status: 'connecting' | 'ready' | 'reconnecting' | 'stopped' | 'signed-out';
   entries: Notification[];
@@ -91,7 +91,7 @@ export class NotificationsService {
             const snapshot = params.snapshot;
             const entries: Notification[] = [];
             for (const entry of snapshot.entries) entries.push({ id: entry.key || String(entry.id), title: entry.title, body: entry.body,
-              href: entry.href, unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp });
+              href: entry.href, unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp, senderName: entry.senderName });
             clearTimeout(this.deadline);
             this.retry = 500;
             this.update({ status: 'ready', entries, revision: snapshot.revision, total: snapshot.total, error: '' });

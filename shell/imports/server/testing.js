@@ -1392,6 +1392,9 @@ if(isTesting) {
       const userId = "test-rust-watch-" + Random.id();
       const grainId = "test-rust-grain-" + Random.id();
       const notificationId = "test-rust-notification-" + Random.id();
+      const senderId = "test-rust-sender-" + Random.id();
+      const sharedGrainId = "test-rust-shared-" + Random.id();
+      const tokenId = "test-rust-token-" + Random.id();
       const loginHash = Crypto.randomBytes(32).toString("hex");
       const state = Crypto.randomBytes(32).toString("hex");
       const controller = new AbortController();
@@ -1427,6 +1430,30 @@ if(isTesting) {
         require(!view.entries[0].unread, "Mark-read must update the observed record");
         await observeWrite(() => call("dismiss", { id: notificationId }));
         require(view.total === 0, "Dismiss must remove the shared record");
+        await Meteor.users.insertAsync({ _id: senderId, profile: { name: "Sender name" } });
+        await globalDb.collections.grains.insertAsync({ _id: sharedGrainId, userId: senderId, title: "Private owner title" });
+        // Another recipient's token must not reveal its title to this account.
+        await globalDb.collections.apiTokens.insertAsync({ _id: tokenId, grainId: sharedGrainId, created: new Date(),
+          owner: { user: { accountId: senderId, title: "Other recipient title", denormalizedGrainMetadata: {} } } });
+        await observeWrite(() => globalDb.collections.notifications.insertAsync({
+          _id: notificationId, userId, grainId: sharedGrainId, initiatingAccount: senderId,
+          text: { defaultText: "edited a page" }, timestamp: new Date(), isUnread: true,
+        }));
+        require(view.entries[0].title === "Grain activity", "Must not expose another owner's grain or token title");
+        require(view.entries[0].senderName === "Sender name", "Referenced sender name must be projected");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
+            { $set: { "owner.user.accountId": userId, "owner.user.title": "Saved title", "owner.user.upstreamTitle": "Shared title" } }));
+        require(view.entries[0].title === "Shared title", "Shared grain must use the recipient's upstream title");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
+            { $set: { "owner.user.renamed": true, "owner.user.title": "My title" } }));
+        require(view.entries[0].title === "My title", "Recipient rename must take precedence");
+        await observeWrite(() => Meteor.users.updateAsync(senderId, { $set: { "profile.name": "Renamed sender" } }));
+        require(view.entries[0].senderName === "Renamed sender", "Sender rename must wake observation");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $set: { revoked: true } }));
+        require(view.entries[0].title === "Grain activity", "Revoked recipient metadata must disappear");
+        await observeWrite(() => globalDb.collections.notifications.updateAsync(notificationId,
+            { $unset: { initiatingAccount: 1 }, $set: { initiatorAnonymous: true } }));
+        require(view.entries[0].senderName === "Anonymous user", "Anonymous activity must have a clear sender label");
         const pending = call("watch", { after: view.version }).then(
             () => { throw new Meteor.Error("rust-observation-regression", "Revoked watch returned data"); },
             (error) => { require(error.status === 401, "Revoked watch must be unauthorized"); });
@@ -1439,7 +1466,9 @@ if(isTesting) {
         controller.abort();
         if (token) await call("logout");
         await globalDb.collections.notifications.removeAsync({ userId });
-        await globalDb.collections.grains.removeAsync({ _id: grainId });
+        await globalDb.collections.apiTokens.removeAsync({ _id: tokenId });
+        await globalDb.collections.grains.removeAsync({ _id: { $in: [grainId, sharedGrainId] } });
+        await Meteor.users.removeAsync({ _id: senderId });
         await Meteor.users.removeAsync({ _id: userId });
       }
     },

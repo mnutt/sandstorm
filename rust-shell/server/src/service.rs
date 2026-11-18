@@ -208,6 +208,7 @@ impl shell::Server for Shell {
                             out.set_ongoing(real.ongoing);
                             out.set_href(&real.href);
                             out.set_timestamp(&real.timestamp);
+                            out.set_sender_name(&real.sender_name);
                         }
                     }
                 }

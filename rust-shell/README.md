@@ -96,10 +96,16 @@ Meteor restarts discard linked sessions and require a fresh handoff.
 
 Installed mode reads up to 100 of the account's newest real notifications, with a
 total count. Mongo observers wake a pending Rust request when notifications,
-owned grain titles, or account authority change. Rust pushes changed snapshots
+owned/shared grain titles, referenced sender names, or account authority change. Rust pushes changed snapshots
 over Cap'n Proto. Dismiss, cancel ongoing activity, and mark-all-read delegate to the
 same Meteor functions used by the main UI, including ownership and cleanup checks.
-Links open the main shell; formatting is deliberately simpler than its full UI.
+Links open the main shell. Shared-grain titles use the recipient's token metadata
+and the same upstream-title/personal-rename helper as the main UI; revoked tokens
+are excluded. Sender names are fetched only for accounts referenced by the
+recipient's own notifications. Title changes, token changes, and referenced sender
+renames wake the projection. Anonymous activity has an explicit label. Ongoing
+notifications preserve the app-provided message and explain cancellation separately.
+Avatars, app icons, and localized notification copy remain to be ported.
 There is no test-notification button in this mode. Standalone runs without
 `RUST_SHELL_BRIDGE_SOCKET` retain the isolated fixture UI.
 
@@ -266,8 +272,9 @@ deployed HTTPS handoff and shared notification behavior on yertle.sandhost.org.
 Observation tests cover idle reads, burst coalescing, snapshot/read races, gaps
 between requests, revocation, admission limits, heartbeat deadlines, and cleanup.
 `tests/tests/rust-shell.js` exercises the actual Meteor/Mongo adapter in an
-isolated server, including legacy inserts, grain renames, read/dismiss, and
-source-token revocation.
+isolated server, including legacy inserts, owned/shared grain renames, sender renames, read/dismiss,
+recipient isolation, token revocation, and source-login revocation. Browser tests
+also check that sender names render as text rather than HTML.
 
 The C++ suite additionally checks pipelining across both connections, an observer
 that calls back into C++ while C++ awaits its response, explicit counter release,
@@ -296,8 +303,7 @@ output. Recheck upstream fixes before expanding this spike's use.
 
 Next useful slices:
 
-1. Expand notification formatting to match the main shell, including shared-grain
-   titles and initiating users.
+1. Finish notification presentation parity: avatars, app icons, and localized copy.
 2. Validate control-server restart recovery and main-shell visual/behavioral parity
    before migrating production UI.
 3. Add the next account-scoped read-only projection, such as the grain list,

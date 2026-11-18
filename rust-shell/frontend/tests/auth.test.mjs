@@ -25,7 +25,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let observationStarts = 0;
   const changed = () => { for (const notify of observers) notify(); };
   const add = (key, user, title) => { rows.set(key, { user, key, title, body: 'Shared notification',
-    unread: true, ongoing: false, href: '', timestamp: new Date().toISOString() }); changed(); };
+    unread: true, ongoing: false, href: '', senderName: '<script>window.senderInjected = true</script>', timestamp: new Date().toISOString() }); changed(); };
   add('alice-real-id', 'alice', 'Alice notification');
   add('bob-real-id', 'bob', 'Bob notification');
   let activeMainAccount = 'alice';
@@ -82,6 +82,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', { name: 'Connect Alice' }).click();
     await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
+    await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.senderInjected), undefined);
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);
