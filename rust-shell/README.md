@@ -186,8 +186,9 @@ charge; it does not stop the grain.
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
 and a one-shot `getGrainTitle` reply. Sharing requests show a main-shell link;
-Powerbox and `renderTemplate` requests receive an explicit unsupported error and
-a link to continue in the main shell. This is not full postMessage API parity,
+`renderTemplate` requests receive an explicit unsupported error and
+a link to continue in the main shell. Powerbox requests use the handoff below.
+This is not full postMessage API parity,
 an incognito/sharing-link flow, or session restoration across shell reconnects.
 
 Validation includes capability release, close/reopen, late creation cancellation,
@@ -199,7 +200,32 @@ keepalive and cleanup, revokes sharing while the iframe is active, checks that
 subsequent gateway requests fail, and reopens as the owner. That test exercises
 the real Meteor/C++ gateway with the main-shell parent origin; the browser/Rust
 integration test exercises the secondary HTTPS origin with an isolated adapter.
-Live secondary-origin testing on a deployed application remains useful.
+The user confirmed grain opening on the deployed secondary HTTPS origin on yertle.
+The new Powerbox handoff still needs a deployed-origin check.
+
+### Powerbox chooser handoff
+
+An embedded app's `powerboxRequest` shows **Choose in Sandstorm** and **Cancel
+request**. The button opens the existing Meteor Powerbox chooser in a separate
+window; the requesting iframe stays alive in the Rust shell. This reuses the
+existing providers, permission choices, provider-grain sessions, and capability
+issuance rather than introducing a second Powerbox authority.
+
+The opener and chooser check both message origin and source window. A random
+request nonce correlates the reply. Request data, session IDs, and returned tokens
+travel in messages, never in popup URLs. Meteor derives the requesting grain from
+an owned, marked Rust UI session, checks its lease and current grain access, and
+requires the same signed-in account. The chooser revalidates while open and before
+returning a capability. Only one request is accepted per frame at a time; requests
+expire after five minutes. Canceling, closing either view, changing accounts, or
+losing the grain session ends the handoff and disposes provider UI sessions.
+
+This is a migration bridge, not a native Svelte Powerbox chooser. A user click is
+required to open the chooser window. `renderTemplate`, sharing controls, and
+incognito flows still need the main shell. Browser tests cover a successful reply,
+duplicate requests, forged replies, explicit cancellation, and window closure.
+The real-grain integration test checks account/expiry/revocation scoping and drives
+the Meteor chooser through an embedded provider to return a capability to an app.
 
 ### Packaging audit policy
 

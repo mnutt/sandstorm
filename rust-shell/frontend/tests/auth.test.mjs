@@ -20,6 +20,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let proxy, main, grainServer, bridgeServer, browser, rust;
   const liveGrains = new Set();
   let grainOrigin;
+  let mainOrigin;
   let serial = 0;
   let leaseClockOffset = 0;
   let renewals = 0;
@@ -40,7 +41,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       open: async (id, grainId) => {
         if (grainId !== `${id}-grain`) throw Object.assign(new Error('Denied'), { status: 403 });
         const handle = ++serial; liveGrains.add(handle);
-        return { handle, view: { grainId, origin: grainOrigin, url: grainOrigin + '/?session=' + handle } };
+        return { handle, view: { grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
@@ -50,8 +51,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
       return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: `${users[id].name} grain`,
-        href: `/grain/${id}-grain`, appTitle: 'Text Editor', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
-        ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: '/grain/alice-extra',
+        href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
+        ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
     },
     dismiss: async (id, key) => {
@@ -72,6 +73,19 @@ test('authenticated notifications: handoff, shared writes, account switching and
     bridgeServer.listen(bridgeSocket); await once(bridgeServer, 'listening'); await chmod(bridgeSocket, 0o600);
     main = httpsServer(proxy.tls, async (req, res) => {
       try {
+        if (req.url === '/rust-shell-powerbox') {
+          res.setHeader('Content-Type', 'text/html');
+          res.end(`<button id="choose">Choose test capability</button><script>
+            window.addEventListener('message', event => {
+              if (event.source !== opener || event.origin !== '${proxy.origin}' || event.data.type !== 'rust-powerbox-request') return;
+              window.request = event.data;
+            });
+            opener.postMessage({type:'rust-powerbox-ready'}, '${proxy.origin}');
+            document.getElementById('choose').onclick = () => opener.postMessage({type:'rust-powerbox-result',
+              nonce:request.nonce, result:{rpcId:request.request.rpcId, token:'test-capability', descriptor:'test-descriptor'}}, '${proxy.origin}');
+          </script>`);
+          return;
+        }
         const state = new URL(req.url, 'https://localhost').searchParams.get('state');
         const code = await bridge.issue(activeMainAccount, users[activeMainAccount].hash, state);
         res.setHeader('Content-Type', 'text/html');
@@ -79,7 +93,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       } catch { res.writeHead(400); res.end(); }
     });
     main.listen(0, '127.0.0.1'); await once(main, 'listening');
-    const mainOrigin = `https://localhost:${main.address().port}`;
+    mainOrigin = `https://localhost:${main.address().port}`;
     rust = (await start('debug/sandstorm-rust-shell', [], {
       RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin,
       RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
@@ -112,7 +126,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
     await page.getByRole('button', { name: 'Grains', exact: true }).click();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
-    assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), '/grain/alice-grain');
+    assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), `${mainOrigin}/grain/alice-grain`);
     assert.equal(await page.getByRole('link', { name: 'Bob grain', exact: true }).count(), 0);
     await page.locator('.grain-item').getByText('Owned by you', { exact: true }).waitFor();
     assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Zebra shared');
@@ -152,15 +166,49 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await app.evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'title' }, '*'));
     await expect.poll(() => app.evaluate(() => window.reply?.grainTitle)).toBe('Alice grain');
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
-    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('powerbox');
-    assert.match(await app.evaluate(() => window.reply.error), /main Sandstorm shell/);
+    await page.getByRole('button', { name: 'Choose in Sandstorm' }).waitFor();
+    await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'duplicate' } }, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('duplicate');
+    assert.match(await app.evaluate(() => window.reply.error), /already open/);
+    const popupPromise = context.waitForEvent('page');
+    await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState('domcontentloaded');
+    await expect.poll(() => popup.evaluate(() => !!window.request)).toBe(true);
+    assert.equal(await popup.evaluate(() => window.request.sessionId), String(serial));
+    assert.equal(new URL(popup.url()).search, '');
+    await page.evaluate(origin => window.dispatchEvent(new MessageEvent('message', {
+      origin, source: window, data: { type: 'rust-powerbox-result', result: {rpcId:'powerbox', token:'forged'} },
+    })), mainOrigin);
+    await popup.evaluate(() => opener.postMessage({type:'rust-powerbox-result', nonce:'wrong',
+      result:{rpcId:'powerbox', token:'forged'}}, '*'));
+    await popup.getByRole('button', { name: 'Choose test capability' }).click();
+    await expect.poll(() => app.evaluate(() => window.reply?.token)).toBe('test-capability');
+    assert.equal(await app.evaluate(() => window.reply.descriptor), 'test-descriptor');
+    await expect.poll(() => popup.isClosed()).toBe(true);
+    await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'cancel' } }, '*'));
+    await page.getByRole('button', { name: 'Cancel request' }).click();
+    await expect.poll(() => app.evaluate(() => window.reply?.canceled)).toBe(true);
+    assert.equal(await app.evaluate(() => window.reply.rpcId), 'cancel');
+    await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'window-close' } }, '*'));
+    const closedPopupPromise = context.waitForEvent('page');
+    await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
+    const closedPopup = await closedPopupPromise;
+    await closedPopup.close();
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('window-close');
+    assert.equal(await app.evaluate(() => window.reply.canceled), true);
     const beforeUpdate = receivedFrames;
     add('while-open', 'alice', 'Notification while grain is open');
     await expect.poll(() => receivedFrames).toBeGreaterThan(beforeUpdate);
     await page.evaluate(() => new Promise(requestAnimationFrame));
     await expect(app.getByLabel('App state')).toHaveValue('keep this iframe alive');
     await expect.poll(() => renewals, { timeout: 15000 }).toBeGreaterThan(0);
+    await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'grain-close' } }, '*'));
+    const grainClosePopupPromise = context.waitForEvent('page');
+    await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
+    const grainClosePopup = await grainClosePopupPromise;
     await page.getByRole('button', { name: 'Close grain', exact: true }).click();
+    await expect.poll(() => grainClosePopup.isClosed()).toBe(true);
     await expect.poll(() => liveGrains.size).toBe(0);
     await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();

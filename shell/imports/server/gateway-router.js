@@ -944,6 +944,19 @@ export async function createRustGrainSession(db, accountId, grainId, parentOrigi
   });
 }
 
+export async function rustGrainPowerboxContext(db, accountId, sessionId) {
+  const row = await db.collections.sessions.findOneAsync({ _id: sessionId, userId: accountId,
+    rustShellSession: true, rustShellLeaseExpires: { $gt: Date.now() } });
+  if (!accountId || !row) throw new Meteor.Error(403, "This grain session is no longer available to this account.");
+  const grain = await db.collections.grains.findOneAsync({ _id: row.grainId });
+  const account = await db.collections.users.findOneAsync({ _id: accountId });
+  if (!account || account.suspended || !grain || grain.trashed || grain.suspended || row.denied ||
+      !await SandstormPermissions.mayOpenGrainAsync(db, { grain: { _id: row.grainId, accountId } })) {
+    throw new Meteor.Error(403, "Grain access has ended.");
+  }
+  return { grainId: row.grainId };
+}
+
 export async function keepRustGrainSession(db, handle) {
   const row = await db.collections.sessions.findOneAsync({ _id: handle.sessionId, userId: handle.accountId });
   const grain = await db.collections.grains.findOneAsync({ _id: handle.grainId });

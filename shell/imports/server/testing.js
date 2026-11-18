@@ -46,7 +46,7 @@ import {
   waitForMigrationDocument,
   waitForReplicaMigrations,
 } from "/imports/server/migration-coordination";
-import { createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { rustShellBridge } from "/imports/server/rust-shell-bridge";
 import { runDueJobs } from "/imports/server/scheduled-job";
@@ -1422,10 +1422,30 @@ if(isTesting) {
         if (!session.rustShellSession || session.rustShellLeaseExpires <= Date.now() ||
             session.parentOrigin !== process.env.ROOT_URL) throw new Error("Missing lease or parent-origin contract");
         record.sessionId = session._id;
+        const context = await rustGrainPowerboxContext(globalDb, record.accountId, session._id);
+        if (context.grainId !== grainId) throw new Error("Wrong Powerbox grain context");
+        for (const accountId of [null, "other-account"]) {
+          let denied = false;
+          try { await rustGrainPowerboxContext(globalDb, accountId, session._id); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Foreign Powerbox context was accepted");
+        }
+        await globalDb.collections.sessions.updateAsync(session._id, { $set: { rustShellLeaseExpires: 0 } });
+        let expired = false;
+        try { await rustGrainPowerboxContext(globalDb, record.accountId, session._id); }
+        catch (error) { expired = error.error === 403; }
+        if (!expired) throw new Error("Expired Powerbox context was accepted");
+        await keepRustGrainSession(globalDb, record);
         const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
         return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
       }
       if (!record) throw new Meteor.Error(404, "No test session");
+      if (operation === "enablePowerbox") {
+        record.previousRustOrigin = Meteor.settings.public.rustShellOrigin;
+        record.powerboxTest = true;
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        return true;
+      }
       if (operation === "keep") { await keepRustGrainSession(globalDb, record); return true; }
       if (operation === "revoke") {
         await globalDb.collections.apiTokens.updateAsync(record.tokenId, { $set: { revoked: true } });
@@ -1433,6 +1453,10 @@ if(isTesting) {
         try { await keepRustGrainSession(globalDb, record); }
         catch (error) { rejected = error.error === 403; }
         if (!rejected) throw new Error("Revoked UI session renewed");
+        let denied = false;
+        try { await rustGrainPowerboxContext(globalDb, record.accountId, record.sessionId); }
+        catch (error) { denied = error.error === 403; }
+        if (!denied) throw new Error("Revoked Powerbox context was accepted");
         await closeRustGrainSession(globalDb, record);
         return true;
       }
@@ -1441,6 +1465,7 @@ if(isTesting) {
         if (await globalDb.collections.sessions.findOneAsync(record.sessionId)) throw new Error("UI session leaked");
         if (record.tokenId) await globalDb.removeApiTokens({ _id: record.tokenId });
         if (record.recipient) await Meteor.users.removeAsync(record.recipient);
+        if (record.powerboxTest) Meteor.settings.public.rustShellOrigin = record.previousRustOrigin;
         rustGrainTestSessions.delete(key);
         return true;
       }

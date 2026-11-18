@@ -4,7 +4,7 @@ import { check } from "meteor/check";
 import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
-import { createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { grainMenu } from "/imports/server/rust-shell-grains";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
@@ -137,6 +137,19 @@ export const rustShellBridge = createRustShellBridge({
 });
 
 Meteor.methods({
+  async rustShellPowerboxContext(sessionId, request) {
+    check(sessionId, String);
+    if (sessionId.length > 128 || !request || typeof request !== "object" || Array.isArray(request) ||
+        !["string", "number"].includes(typeof request.rpcId) ||
+        (request.query !== undefined && (!Array.isArray(request.query) || request.query.length > 32 ||
+          request.query.some(q => typeof q !== "string" || q.length > 8192))) ||
+        (request.saveLabel !== undefined && (!request.saveLabel ||
+          typeof request.saveLabel.defaultText !== "string")) || JSON.stringify(request).length > 65536) {
+      throw new Meteor.Error(400, "Invalid Powerbox request.");
+    }
+    if (!Meteor.settings.public.rustShellOrigin) throw new Meteor.Error(503, "The Rust shell is not enabled.");
+    return rustGrainPowerboxContext(globalDb, this.userId, sessionId);
+  },
   async createRustShellGrant(state) {
     check(state, String);
     if (!process.env.RUST_SHELL_BRIDGE_SOCKET || !Meteor.settings.public.rustShellOrigin) {

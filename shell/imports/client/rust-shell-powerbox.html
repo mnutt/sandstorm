@@ -1,0 +1,12 @@
+<template name="rustShellPowerbox">
+  <main class="main-content">
+    <h1>Choose for your Rust-shell grain</h1>
+    {{#if error}}<p role="alert">{{error}}</p>{{/if}}
+    {{#if ready}}
+      {{> powerboxRequest request}}
+    {{else}}
+      <p>Waiting for the Rust shell. Use the same signed-in account in both shells.</p>
+    {{/if}}
+    <button class="cancel-rust-powerbox">Cancel request</button>
+  </main>
+</template>

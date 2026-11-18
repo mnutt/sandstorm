@@ -1,12 +1,22 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { PowerboxChooser } from './lib/powerbox';
   import type { ActiveGrain } from './lib/shell';
   let { grain, close }: { grain: ActiveGrain; close: () => void } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   let path = $state('/');
   let notice = $state('');
+  let choosing = $state(false);
+  let chooser: PowerboxChooser;
+  onMount(() => {
+    chooser = new PowerboxChooser(new URL(grain.mainHref).origin, new URL(grain.url).searchParams.get('sessionid') || '',
+      result => frame?.contentWindow?.postMessage(result, grain.origin), value => { choosing = value; });
+    return () => chooser.cancel();
+  });
   const mainHref = $derived(grain.mainHref + (path === '/' ? '' : path));
   function message(event: MessageEvent) {
+    chooser?.message(event);
     if (event.origin !== grain.origin || event.source !== frame?.contentWindow ||
         !event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return;
     const data = event.data;
@@ -18,7 +28,8 @@
     if (data.getGrainTitle && (typeof data.rpcId === 'string' || typeof data.rpcId === 'number')) {
       frame.contentWindow?.postMessage({ rpcId: data.rpcId, grainTitle: grain.title }, grain.origin);
     }
-    const unsupported = data.powerboxRequest || data.renderTemplate;
+    if (data.powerboxRequest) chooser?.request(data.powerboxRequest);
+    const unsupported = data.renderTemplate;
     if (unsupported && (typeof unsupported.rpcId === 'string' || typeof unsupported.rpcId === 'number')) {
       frame.contentWindow?.postMessage({ rpcId: unsupported.rpcId, error: 'This operation is available in the main Sandstorm shell.' }, grain.origin);
       notice = 'This app requested a feature that is available in the main shell.';
@@ -32,6 +43,9 @@
   <div class="toolbar"><h2>{frameTitle || grain.title}</h2><button onclick={close}>Close grain</button></div>
   <p><a href={mainHref}>Open in main shell ↗</a></p>
   {#if notice}<p role="status">{notice} <a href={mainHref}>Continue there.</a></p>{/if}
+  {#if choosing}<div role="status"><p>This app wants you to choose a capability.</p>
+    <button onclick={() => chooser.open()}>Choose in Sandstorm</button>
+    <button onclick={() => chooser.cancel()}>Cancel request</button></div>{/if}
   <iframe bind:this={frame} title={grain.title} src={grain.url} referrerpolicy="no-referrer"></iframe>
 </section>
 
