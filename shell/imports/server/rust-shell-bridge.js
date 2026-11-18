@@ -9,7 +9,7 @@ import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.m
 
 const text = (value, bytes) => Buffer.from(String(value || "")).subarray(0, bytes).toString();
 
-const bridge = createRustShellBridge({
+export const rustShellBridge = createRustShellBridge({
   async authorize(accountId, loginHash) {
     const user = await Meteor.users.findOneAsync({
       _id: accountId, suspended: { $exists: false },
@@ -59,6 +59,22 @@ const bridge = createRustShellBridge({
     }));
     return { entries, total: await globalDb.collections.notifications.find(query).countAsync() };
   },
+  async observe(accountId, changed) {
+    const handles = [];
+    const stop = async () => { await Promise.all(handles.map((handle) => handle.stop())); };
+    try {
+      const callbacks = { added: changed, changed, removed: changed };
+      handles.push(await globalDb.collections.notifications.find({ userId: accountId })
+          .observeChangesAsync(callbacks));
+      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1 } })
+          .observeChangesAsync(callbacks));
+      // Invalidate promptly on source-login revocation, suspension, or account deletion.
+      handles.push(await Meteor.users.find({ _id: accountId },
+          { fields: { "services.resume.loginTokens": 1, suspended: 1, expires: 1 } })
+          .observeChangesAsync(callbacks));
+      return stop;
+    } catch (error) { await stop(); throw error; }
+  },
   dismiss: (userId, id) => dismissNotificationForUser(globalDb, userId, id),
   markRead: (userId) => readNotificationsForUser(globalDb, userId),
 });
@@ -70,7 +86,7 @@ Meteor.methods({
       throw new Meteor.Error(503, "The Rust shell is not enabled.");
     }
     const hash = Accounts._getLoginToken(this.connection.id);
-    try { return await bridge.issue(this.userId, hash, state); }
+    try { return await rustShellBridge.issue(this.userId, hash, state); }
     catch (error) { throw new Meteor.Error(error.status || 500, error.message); }
   },
 });
@@ -79,7 +95,7 @@ Meteor.startup(async () => {
   const socket = process.env.RUST_SHELL_BRIDGE_SOCKET;
   if (!socket) return;
   // The process supervisor removes stale sockets before launching Meteor.
-  const server = Http.createServer(Meteor.bindEnvironment(bridgeHandler(bridge)));
+  const server = Http.createServer(Meteor.bindEnvironment(bridgeHandler(rustShellBridge)));
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;
   server.maxConnections = 64;

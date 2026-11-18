@@ -7,7 +7,8 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow, ephemeral adapter. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, now = Date.now }) {
+  let watches = 0;
   const grants = new Map();
   const sessions = new Map();
   const prune = () => {
@@ -39,7 +40,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       grants.set(hash(code), record);
       return code;
     },
-    async handle(action, input) {
+    async handle(action, input, signal = new AbortController().signal) {
       prune();
       if (action === "exchange") {
         if (!validSecret(input.code) || !validSecret(input.state)) throw unauthorized();
@@ -64,7 +65,55 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       if (action === "snapshot") {
         const result = await snapshot(record.accountId);
         await session(input.token); // Do not return data after revocation during DB reads.
-        return result;
+        return { ...result, version: hash(JSON.stringify(result)) };
+      }
+      if (action === "watch") {
+        if (!observe || !validSecret(input.after)) {
+          throw Object.assign(new Error("Invalid watch request."), { status: 400 });
+        }
+        if (watches >= 32) throw Object.assign(new Error("Too many notification watches."), { status: 503 });
+        ++watches;
+        let stop;
+        let wake;
+        let dirty = true;
+        const changed = () => { dirty = true; wake?.(); };
+        const deadline = Date.now() + 20000;
+        const aborted = () => { if (signal.aborted) throw new Error("Watch disconnected"); };
+        try {
+          // Observe before reading: writes during the read or between requests
+          // cannot fall through a snapshot/subscription gap.
+          aborted();
+          stop = await observe(record.accountId, changed);
+          let result;
+          while (true) {
+            aborted();
+            await session(input.token);
+            if (dirty) {
+              dirty = false;
+              const projection = await snapshot(record.accountId);
+              result = { ...projection, version: hash(JSON.stringify(projection)) };
+            }
+            await session(input.token);
+            aborted();
+            if (result.version !== input.after || Date.now() >= deadline) return result;
+            if (dirty) continue;
+            await new Promise((resolve) => {
+              const done = () => {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", done);
+                wake = undefined;
+                resolve();
+              };
+              const timer = setTimeout(done, Math.min(1000, Math.max(1, deadline - Date.now())));
+              wake = done;
+              signal.addEventListener("abort", done, { once: true });
+              if (dirty || signal.aborted) done();
+            });
+          }
+        } finally {
+          --watches;
+          await stop?.();
+        }
       }
       if (action === "dismiss") {
         if (typeof input.id !== "string" || !input.id || input.id.length > 256) {
@@ -84,8 +133,11 @@ export function bridgeHandler(bridge) {
   return async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "application/json");
+    const controller = new AbortController();
+    const disconnected = () => controller.abort();
+    res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|dismiss|read|logout)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];
@@ -101,13 +153,16 @@ export function bridgeHandler(bridge) {
       if (!input || typeof input !== "object" || Array.isArray(input)) {
         throw Object.assign(new Error("Invalid request."), { status: 400 });
       }
-      const output = JSON.stringify(await bridge.handle(req.url.slice(1), input));
+      const output = JSON.stringify(await bridge.handle(req.url.slice(1), input, controller.signal));
       if (Buffer.byteLength(output) > 220000) throw new Error("Projection too large");
       res.end(output);
     } catch (error) {
+      if (res.destroyed) return;
       const status = error.status || (Number.isInteger(error.error) ? error.error : 500);
       res.statusCode = status >= 400 && status < 600 ? status : 500;
       res.end(JSON.stringify({ error: res.statusCode === 500 ? "Bridge operation failed." : error.reason || error.message }));
+    } finally {
+      res.removeListener("close", disconnected);
     }
   };
 }

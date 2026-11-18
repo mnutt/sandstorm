@@ -68,3 +68,102 @@ test('bridge does not send a projection if the session is revoked during its rea
   release({ entries: ['must not escape'] });
   await assert.rejects(pending, { status: 401 });
 });
+
+async function watchFixture(overrides = {}) {
+  let reads = 0;
+  let active = 0;
+  let changed;
+  let value = 0;
+  const bridge = createRustShellBridge({
+    authorize: async () => ({ name: 'Alice', expires: Date.now() + 1000000 }),
+    snapshot: async () => { ++reads; return { entries: [{ value }], total: 1 }; },
+    observe: async (_id, notify) => { ++active; changed = notify; return () => { --active; }; },
+    dismiss: async () => {}, markRead: async () => {}, ...overrides,
+  });
+  const state = 'f'.repeat(64);
+  const code = await bridge.issue('alice', 'hash', state);
+  const { token } = await bridge.handle('exchange', { code, state });
+  const initial = await bridge.handle('snapshot', { token });
+  return { bridge, token, initial, get reads() { return reads; }, get active() { return active; },
+    change: () => { ++value; changed?.(); } };
+}
+const until = async (predicate) => {
+  const deadline = Date.now() + 3000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, 'condition timed out');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
+test('watch wakes on legacy writes, coalesces bursts, avoids idle snapshot reads, and cleans up', async () => {
+  const f = await watchFixture();
+  const pending = f.bridge.handle('watch', { token: f.token, after: f.initial.version });
+  await until(() => f.reads === 2);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(f.reads, 2, 'idle authorization checks must not rebuild projections');
+  for (let i = 0; i < 100; ++i) f.change();
+  const next = await pending;
+  assert.equal(next.entries[0].value, 100);
+  assert.equal(f.active, 0);
+  const controller = new AbortController();
+  const canceled = f.bridge.handle('watch', { token: f.token, after: next.version }, controller.signal);
+  const rejected = assert.rejects(canceled, /disconnected/);
+  await until(() => f.active === 1);
+  controller.abort();
+  await rejected;
+  assert.equal(f.active, 0);
+});
+
+test('watch catches writes between requests and during a pending snapshot', async () => {
+  let release, changed;
+  let value = 0;
+  let block = false;
+  const f = await watchFixture({
+    observe: async (_id, notify) => { changed = notify; return () => {}; },
+    snapshot: async () => {
+      const result = { entries: [{ value }], total: 1 };
+      if (block) await new Promise((resolve) => { release = resolve; });
+      return result;
+    },
+  });
+  block = true;
+  const pending = f.bridge.handle('watch', { token: f.token, after: f.initial.version });
+  await until(() => release);
+  ++value; changed(); block = false; release();
+  assert.equal((await pending).entries[0].value, 1);
+  ++value; // No live observer here: the next watch must still detect it.
+  const next = await f.bridge.handle('watch', { token: f.token, after: f.initial.version });
+  assert.equal(next.entries[0].value, 2);
+});
+
+test('idle watch enforces revocation and releases its observers', async () => {
+  const f = await watchFixture();
+  const pending = f.bridge.handle('watch', { token: f.token, after: f.initial.version });
+  const rejected = assert.rejects(pending, { status: 401 });
+  await until(() => f.active === 1);
+  await f.bridge.handle('logout', { token: f.token });
+  await rejected;
+  assert.equal(f.active, 0);
+});
+
+test('watch admission is bounded and canceled requests release capacity', async () => {
+  const f = await watchFixture();
+  const controller = new AbortController();
+  const pending = Array.from({ length: 32 }, () => assert.rejects(
+    f.bridge.handle('watch', { token: f.token, after: f.initial.version }, controller.signal), /disconnected/));
+  await until(() => f.active === 32);
+  await assert.rejects(f.bridge.handle('watch', { token: f.token, after: f.initial.version }), { status: 503 });
+  controller.abort();
+  await Promise.all(pending);
+  assert.equal(f.active, 0);
+  f.change();
+  assert.equal((await f.bridge.handle('watch', { token: f.token, after: f.initial.version })).entries[0].value, 1);
+});
+
+test('an idle watch returns its unchanged snapshot at the heartbeat deadline', { timeout: 25000 }, async () => {
+  const f = await watchFixture();
+  const result = await f.bridge.handle('watch', { token: f.token, after: f.initial.version });
+  assert.equal(result.version, f.initial.version);
+  assert.equal(f.reads, 2);
+  assert.equal(f.active, 0);
+});

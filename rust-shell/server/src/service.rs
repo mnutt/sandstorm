@@ -23,6 +23,7 @@ pub struct Shell {
     state: watch::Sender<Projection>,
     watching: Rc<Cell<bool>>,
     session: Option<crate::bridge::Session>,
+    version: String,
 }
 
 impl Shell {
@@ -52,6 +53,10 @@ impl Shell {
                 real: None,
             }]
         };
+        let version = initial
+            .as_ref()
+            .map(|snapshot| snapshot.version.clone())
+            .unwrap_or_default();
         let (state, _) = watch::channel(Projection {
             revision: 0,
             next_id: 2,
@@ -63,6 +68,7 @@ impl Shell {
             state,
             watching: Rc::new(Cell::new(false)),
             session,
+            version,
         }
     }
 
@@ -70,13 +76,14 @@ impl Shell {
         let Some(session) = &self.session else {
             return std::future::pending().await;
         };
+        let mut version = self.version.clone();
         loop {
-            // A bounded fresh projection observes writes from either shell. Every
-            // read revalidates the Meteor token; any failure closes this RPC session.
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            let Ok(snapshot) = session.snapshot().await else {
+            // Mongo observation wakes this bounded long-poll on legacy or Rust writes.
+            // The bridge revalidates authority while waiting and before returning data.
+            let Ok(snapshot) = session.watch(&version).await else {
                 return;
             };
+            version = snapshot.version.clone();
             self.state.send_if_modified(|state| {
                 let entries: Vec<_> = snapshot
                     .entries

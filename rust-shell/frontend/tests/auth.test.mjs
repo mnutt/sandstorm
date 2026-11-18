@@ -21,22 +21,26 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const users = { alice: { name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
     bob: { name: 'Bob', hash: 'bob-login', expires: Date.now() + 3600000 } };
   const rows = new Map();
-  const add = (key, user, title) => rows.set(key, { user, key, title, body: 'Shared notification',
-    unread: true, ongoing: false, href: '', timestamp: new Date().toISOString() });
+  const observers = new Set();
+  let observationStarts = 0;
+  const changed = () => { for (const notify of observers) notify(); };
+  const add = (key, user, title) => { rows.set(key, { user, key, title, body: 'Shared notification',
+    unread: true, ongoing: false, href: '', timestamp: new Date().toISOString() }); changed(); };
   add('alice-real-id', 'alice', 'Alice notification');
   add('bob-real-id', 'bob', 'Bob notification');
   let activeMainAccount = 'alice';
   const bridge = createRustShellBridge({
     authorize: async (id, hash) => users[id]?.hash === hash ? users[id] : null,
+    observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
       return { entries, total: entries.length };
     },
     dismiss: async (id, key) => {
       if (rows.get(key)?.user !== id) throw Object.assign(new Error('Not your notification'), { status: 403 });
-      rows.delete(key);
+      rows.delete(key); changed();
     },
-    markRead: async (id) => { for (const row of rows.values()) if (row.user === id) row.unread = false; },
+    markRead: async (id) => { for (const row of rows.values()) if (row.user === id) row.unread = false; changed(); },
   });
   try {
     proxy = await httpsProxy(directory, socket);
@@ -81,6 +85,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);
+    await expect.poll(() => observers.size).toBe(1);
+    const starts = observationStarts;
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    assert.equal(observationStarts, starts, 'idle watch must survive the ordinary five-second HTTP timeout');
     add('from-legacy', 'alice', 'Written by main shell');
     await page.getByRole('heading', { name: /Written by main shell/ }).waitFor();
     await page.getByRole('button', { name: 'Dismiss Written by main shell', exact: true }).click();
@@ -109,6 +117,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close(); await stop(rust);
+    await expect.poll(() => observers.size).toBe(0);
     for (const server of [main, bridgeServer]) if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
     await proxy?.close();
     await rm(directory, { recursive: true, force: true });

@@ -95,9 +95,9 @@ change the Rust shell's selected account. **Disconnect** revokes the Rust sessio
 Meteor restarts discard linked sessions and require a fresh handoff.
 
 Installed mode reads up to 100 of the account's newest real notifications, with a
-total count. Rust polls the permission-filtered projection once per second and
-pushes changed snapshots over Cap'n Proto. Main-shell writes therefore appear on
-the next poll. Dismiss, cancel ongoing activity, and mark-all-read delegate to the
+total count. Mongo observers wake a pending Rust request when notifications,
+owned grain titles, or account authority change. Rust pushes changed snapshots
+over Cap'n Proto. Dismiss, cancel ongoing activity, and mark-all-read delegate to the
 same Meteor functions used by the main UI, including ownership and cleanup checks.
 Links open the main shell; formatting is deliberately simpler than its full UI.
 There is no test-notification button in this mode. Standalone runs without
@@ -107,8 +107,19 @@ The private bridge uses bounded JSON HTTP over a Unix socket. It exposes only
 session exchange/validation and account-scoped notification operations; it never
 accepts browser-provided account IDs or Mongo selectors. Browser RPC remains
 Cap'n Proto. Authentication failures close active RPC connections and clear old
-UI state on reconnect; periodic revocation detection follows the polling interval
-plus the bridge request timeout.
+UI state on reconnect. While idle, authority is checked every second without
+rebuilding notification projections; account changes also wake the request.
+
+The internal `watch` operation is a bounded long-poll, with one request in flight
+per Rust connection and at most 32 active watches in Meteor. Observers are attached
+before reading a snapshot. A content hash detects changes between requests, and
+a dirty flag catches writes during a read without accumulating an event queue.
+Every returned projection is reauthorized. Unchanged requests return after 20
+seconds so Rust can establish a fresh watch (30-second HTTP deadline). Disconnects,
+errors, completion, and cancellation release the request's Mongo observers.
+This is ephemeral observation, not durable replay. Each browser connection owns
+its projection observation until disconnect; the browser callback capability
+separately controls delivery of those snapshots.
 
 ### Packaging audit policy
 
@@ -250,8 +261,13 @@ passed against the fast bundle in an isolated Sandstorm server, covering the
 shared mutation functions and publication scoping. Native Sandstorm CTests pass.
 The full `make test` target currently stops at an audit finding in the separate
 Meteor test-app packaging step; the notification regression was run directly via
-`tests/run-local.sh` because it does not need that app. A deployed HTTPS handoff
-against real Meteor accounts still needs validation.
+`tests/run-local.sh` because it does not need that app. The user confirmed the
+deployed HTTPS handoff and shared notification behavior on yertle.sandhost.org.
+Observation tests cover idle reads, burst coalescing, snapshot/read races, gaps
+between requests, revocation, admission limits, heartbeat deadlines, and cleanup.
+`tests/tests/rust-shell.js` exercises the actual Meteor/Mongo adapter in an
+isolated server, including legacy inserts, grain renames, read/dismiss, and
+source-token revocation.
 
 The C++ suite additionally checks pipelining across both connections, an observer
 that calls back into C++ while C++ awaits its response, explicit counter release,
@@ -280,13 +296,12 @@ output. Recheck upstream fixes before expanding this spike's use.
 
 Next useful slices:
 
-1. Validate the installed Meteor handoff and notification behavior against real
-   accounts; browser authentication tests currently use the production bridge core
-   with an in-memory database adapter and a simulated main-shell login form.
-2. Replace polling with a bounded Meteor observation stream and expand notification
-   formatting to match the main shell.
-3. Validate control-server restart recovery and main-shell visual/behavioral parity
+1. Expand notification formatting to match the main shell, including shared-grain
+   titles and initiating users.
+2. Validate control-server restart recovery and main-shell visual/behavioral parity
    before migrating production UI.
+3. Add the next account-scoped read-only projection, such as the grain list,
+   keeping existing services responsible for grain lifecycle and permissions.
 
 This preview establishes the executable stack and bounded three-language
 interoperability evidence. It does not establish generic membrane behavior,

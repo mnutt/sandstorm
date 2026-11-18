@@ -30,6 +30,7 @@ impl Bridge {
         let mut response = self
             .0
             .post(format!("http://bridge/{action}"))
+            .timeout(Duration::from_secs(if action == "watch" { 30 } else { 5 }))
             .json(&input)
             .send()
             .await
@@ -68,7 +69,13 @@ impl Session {
         self.bridge.call(action, input).await
     }
     pub async fn snapshot(&self) -> Result<Snapshot, Error> {
-        serde_json::from_value(self.call("snapshot", json!({})).await?).map_err(|_| {
+        self.projection("snapshot", json!({})).await
+    }
+    pub async fn watch(&self, version: &str) -> Result<Snapshot, Error> {
+        self.projection("watch", json!({ "after": version })).await
+    }
+    async fn projection(&self, action: &str, input: Value) -> Result<Snapshot, Error> {
+        serde_json::from_value(self.call(action, input).await?).map_err(|_| {
             (
                 StatusCode::BAD_GATEWAY,
                 "Invalid notification projection.".into(),
@@ -90,6 +97,7 @@ pub struct Entry {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
+    pub version: String,
     pub entries: Vec<Entry>,
     pub total: u32,
 }

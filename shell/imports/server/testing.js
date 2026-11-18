@@ -46,6 +46,7 @@ import {
   waitForMigrationDocument,
   waitForReplicaMigrations,
 } from "/imports/server/migration-coordination";
+import { rustShellBridge } from "/imports/server/rust-shell-bridge";
 import { runDueJobs } from "/imports/server/scheduled-job";
 import {
   Downloader,
@@ -1384,6 +1385,62 @@ if(isTesting) {
         await globalDb.collections.scheduledJobs.removeAsync({ _id: { $in: [ownerJobId, otherJobId] } });
         await globalDb.collections.grains.removeAsync({ _id: { $in: [ownerGrainId, otherGrainId] } });
         await Meteor.users.removeAsync({ _id: { $in: [ownerId, otherId, adminId] } });
+      }
+    },
+
+    testRegressionRustShellObservation: async function () {
+      const userId = "test-rust-watch-" + Random.id();
+      const grainId = "test-rust-grain-" + Random.id();
+      const notificationId = "test-rust-notification-" + Random.id();
+      const loginHash = Crypto.randomBytes(32).toString("hex");
+      const state = Crypto.randomBytes(32).toString("hex");
+      const controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), 10000);
+      let token;
+      const call = (action, input = {}) => rustShellBridge.handle(action, { token, ...input }, controller.signal);
+      const require = (condition, message) => {
+        if (!condition) throw new Meteor.Error("rust-observation-regression", message);
+      };
+      try {
+        await Meteor.users.insertAsync({ _id: userId, loginCredentials: [], profile: { name: "Observer test" },
+          services: { resume: { loginTokens: [{ hashedToken: loginHash, when: new Date() }] } } });
+        await globalDb.collections.grains.insertAsync({ _id: grainId, userId, title: "Before rename" });
+        const code = await rustShellBridge.issue(userId, loginHash, state);
+        ({ token } = await rustShellBridge.handle("exchange", { code, state }));
+        let view = await call("snapshot");
+        require(view.total === 0, "New account must have an empty projection");
+        const observeWrite = async (write) => {
+          const pending = call("watch", { after: view.version });
+          // Attach a rejection handler immediately, including if the DB write fails.
+          pending.catch(() => {});
+          await write();
+          view = await pending;
+        };
+        await observeWrite(() => globalDb.collections.notifications.insertAsync({
+          _id: notificationId, userId, grainId, text: { defaultText: "changed a document" },
+          timestamp: new Date(), isUnread: true,
+        }));
+        require(view.total === 1 && view.entries[0].title === "Before rename", "Legacy insert must wake observation");
+        await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $set: { title: "After rename" } }));
+        require(view.entries[0].title === "After rename", "Grain title changes must invalidate the projection");
+        await observeWrite(() => call("read"));
+        require(!view.entries[0].unread, "Mark-read must update the observed record");
+        await observeWrite(() => call("dismiss", { id: notificationId }));
+        require(view.total === 0, "Dismiss must remove the shared record");
+        const pending = call("watch", { after: view.version }).then(
+            () => { throw new Meteor.Error("rust-observation-regression", "Revoked watch returned data"); },
+            (error) => { require(error.status === 401, "Revoked watch must be unauthorized"); });
+        pending.catch(() => {});
+        await Meteor.users.updateAsync(userId, { $set: { "services.resume.loginTokens": [] } });
+        await pending;
+        return true;
+      } finally {
+        clearTimeout(deadline);
+        controller.abort();
+        if (token) await call("logout");
+        await globalDb.collections.notifications.removeAsync({ userId });
+        await globalDb.collections.grains.removeAsync({ _id: grainId });
+        await Meteor.users.removeAsync({ _id: userId });
       }
     },
 
