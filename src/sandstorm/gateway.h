@@ -194,6 +194,7 @@ public:
   // Password, if provided, must remain valid while GatewayTlsManager exists.
 
   kj::Promise<void> listenHttps(kj::ConnectionReceiver& port);
+  kj::Promise<void> listenHttps(kj::ConnectionReceiver& port, kj::HttpServer& target);
   // Given a raw network port, listen for connections, perform TLS handshakes, and serve HTTP over
   // the TLS conenction.
   //
@@ -233,7 +234,7 @@ private:
                     kj::Maybe<kj::StringPtr> privateKeyPassword,
                     kj::PromiseFulfillerPair<void> readyPaf);
 
-  kj::Promise<void> listenLoop(kj::ConnectionReceiver& port);
+  kj::Promise<void> listenLoop(kj::ConnectionReceiver& port, kj::HttpServer& target);
   kj::Promise<void> listenSmtpLoop(kj::ConnectionReceiver& port);
   kj::Promise<void> listenSmtpsLoop(kj::ConnectionReceiver& port);
 

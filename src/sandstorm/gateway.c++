@@ -945,8 +945,12 @@ GatewayTlsManager::GatewayTlsManager(
       tasks(*this) {}
 
 kj::Promise<void> GatewayTlsManager::listenHttps(kj::ConnectionReceiver& port) {
-  return ready.addBranch().then([this, &port]() {
-    return listenLoop(port);
+  return listenHttps(port, server);
+}
+
+kj::Promise<void> GatewayTlsManager::listenHttps(kj::ConnectionReceiver& port, kj::HttpServer& target) {
+  return ready.addBranch().then([this, &port, &target]() {
+    return listenLoop(port, target);
   });
 }
 
@@ -1017,18 +1021,18 @@ kj::Promise<void> GatewayTlsManager::subscribeKeys(GatewayRouter::Client gateway
   });
 }
 
-kj::Promise<void> GatewayTlsManager::listenLoop(kj::ConnectionReceiver& port) {
-  return port.accept().then([this, &port](kj::Own<kj::AsyncIoStream>&& stream) {
+kj::Promise<void> GatewayTlsManager::listenLoop(kj::ConnectionReceiver& port, kj::HttpServer& target) {
+  return port.accept().then([this, &port, &target](kj::Own<kj::AsyncIoStream>&& stream) {
     KJ_IF_MAYBE(t, currentTls) {
       auto tls = kj::addRef(**t);
       tasks.add(tls->tls.wrapServer(kj::mv(stream))
-          .then([this](kj::Own<kj::AsyncIoStream>&& encrypted) {
-        return server.listenHttp(kj::mv(encrypted));
+          .then([&target](kj::Own<kj::AsyncIoStream>&& encrypted) {
+        return target.listenHttp(kj::mv(encrypted));
       }).attach(kj::mv(tls)));
     } else {
       KJ_LOG(ERROR, "refused HTTPS connection because no TLS keys are configured");
     }
-    return listenLoop(port);
+    return listenLoop(port, target);
   });
 }
 

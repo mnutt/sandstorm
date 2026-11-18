@@ -14,6 +14,8 @@ struct UserIds {
 
 struct Config {
   kj::Maybe<uint> httpsPort;
+  kj::Maybe<uint> rustShellPort;
+  kj::String rustShellBindIp = nullptr;
   kj::Array<uint> ports;
   uint mongoPort = 3001;
   UserIds uids;
@@ -48,6 +50,7 @@ struct Config {
 // If `parseUids` is true, we initialize `uids` from SERVER_USER.  This requires shelling
 // out to id(1).  If false, we ignore SERVER_USER.
 Config readConfig(const char *path, bool parseUids);
+kj::String rustShellOrigin(const Config& config);
 
 }; // namespace sandstorm
 

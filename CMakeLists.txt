@@ -31,6 +31,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(SANDSTORM_BUILD 0 CACHE STRING "Sandstorm release build number")
 option(SANDSTORM_BUILD_NODE_CAPNP "Build the capnp.node addon" ON)
 option(SANDSTORM_BUILD_FRONTEND "Enable Meteor shell build targets" ON)
+option(SANDSTORM_BUILD_RUST_SHELL "Package the experimental secondary Rust shell" ON)
 option(SANDSTORM_STATIC_RUNTIME_BINARIES
   "Statically link the sandbox runtime binaries" ON)
 set(SANDSTORM_STODGY_TESTER "$ENV{HOME}/.local/bin/stodgy-tester" CACHE FILEPATH

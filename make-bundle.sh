@@ -120,15 +120,21 @@ cp "$SOURCE_ROOT/recover-sandcats.sh" "$BUNDLE_DIR/recover-sandcats.sh"
 # pins build helpers that have since received security fixes, so update those pins before install.
 # Native extensions must use Meteor's Node and build helpers rather than whatever is first on the
 # host PATH.
+# node-gyp is needed only while rebuilding native modules, not at runtime. Keep
+# it in devDependencies and prune build helpers before auditing/shipping the bundle.
 (cd "$BUNDLE_DIR/programs/server" && \
  chmod u+w package.json npm-shrinkwrap.json && \
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
    "$METEOR_DEV_BUNDLE/bin/npm" pkg set \
      dependencies.underscore=1.13.8 \
-     dependencies.node-gyp=12.4.0 \
+     devDependencies.node-gyp=12.4.0 \
      dependencies.@mapbox/node-pre-gyp=2.0.3 && \
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
-   "$METEOR_DEV_BUNDLE/bin/npm" install --omit=dev --no-audit && \
+   "$METEOR_DEV_BUNDLE/bin/npm" pkg delete dependencies.node-gyp && \
+ PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
+   "$METEOR_DEV_BUNDLE/bin/npm" install --include=dev --no-audit && \
+ PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
+   "$METEOR_DEV_BUNDLE/bin/npm" prune --omit=dev --ignore-scripts --no-audit && \
  PATH=$METEOR_DEV_BUNDLE/lib/node_modules/.bin:$METEOR_DEV_BUNDLE/bin:$PATH \
    "$METEOR_DEV_BUNDLE/bin/npm" audit --omit=dev --audit-level=high)
 
@@ -143,6 +149,11 @@ mkdir -p "$BUNDLE_DIR/bin"
 cp "$NATIVE_STAGE/bin/sandstorm-http-bridge" "$BUNDLE_DIR/bin/sandstorm-http-bridge"
 cp "$NATIVE_STAGE/bin/sandstorm" "$BUNDLE_DIR/sandstorm"
 cp "$METEOR_DEV_BUNDLE/bin/node" "$BUNDLE_DIR/bin"
+if [ -n "${SANDSTORM_RUST_SHELL_DIR:-}" ]; then
+  cp "$SANDSTORM_RUST_SHELL_DIR/target/release/sandstorm-rust-shell" "$BUNDLE_DIR/bin/"
+  mkdir -p "$BUNDLE_DIR/rust-shell"
+  cp -r "$SANDSTORM_RUST_SHELL_DIR/frontend/dist" "$BUNDLE_DIR/rust-shell/"
+fi
 
 # We used to pull mongodb out of the meteor dev bundle, but we need to figure out how to safely
 # upgrade some databases created with very old mongo versions, so we're shipping mongo 2.6 for

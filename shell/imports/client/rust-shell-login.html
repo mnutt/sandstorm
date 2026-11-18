@@ -1,0 +1,16 @@
+<template name="rustShellLogin">
+  <main class="main-content">
+    <h1>Connect the Rust shell</h1>
+    {{#if enabled}}
+      {{#if currentUser}}
+        <p>Connect as <strong>{{accountName}}</strong> to view and dismiss this account's notifications.</p>
+        <button class="connect-rust-shell" disabled="{{busy}}">Connect this account</button>
+      {{else}}
+        <p>Sign in using the main shell's sign-in button, then connect this account.</p>
+      {{/if}}
+    {{else}}
+      <p>Start from the Rust shell's “Sign in with Sandstorm” link.</p>
+    {{/if}}
+    {{#if error}}<p role="alert">{{error}}</p>{{/if}}
+  </main>
+</template>
