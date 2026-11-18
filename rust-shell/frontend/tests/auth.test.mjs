@@ -60,11 +60,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
         if (![`${id}-grain`, `${id}-hidden`, `${id}-created`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
         const handle = ++serial; liveGrains.add(handle);
-        return { handle, view: { grainId, title: grainId.endsWith('-hidden') ? 'Hidden grain' : '', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
+        return { handle, view: { grainId, title: grainId.endsWith('-hidden') ? 'Hidden grain' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
-      rename: async (_handle, title, beforeWrite) => { await beforeWrite(); grainTitles.alice = title; changed(); return title; },
+      rename: async (_handle, title, beforeWrite) => { await beforeWrite(); grainTitles.alice = title; changed(); return { title, ownerTitle: title }; },
       template: async () => ({ id: ++templates, token: 'sensitive-template-token', host: new URL(grainOrigin).host }),
       revokeTemplate: async () => { --templates; },
     },
@@ -75,7 +75,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`,
+      return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
@@ -165,9 +165,12 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
-    await page.getByRole('button', {name:'Apps',exact:true}).click();
+    await page.getByRole('link', {name:'Apps',exact:true}).click();
     await page.getByLabel('Installed app action').waitFor();
     assert.equal(new URL(page.url()).pathname,'/apps');
+    await expect(page).toHaveTitle('Apps · Sandstorm');
+    await expect(page.locator('.route-content')).toBeFocused();
+    await expect(page.getByRole('link', {name:'Apps',exact:true})).toHaveAttribute('aria-current','page');
     await page.reload();
     await page.getByLabel('Installed app action').selectOption('alice-action');
     await page.getByLabel('Grain title').fill('Created in Rust');
@@ -177,7 +180,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(creations,1);
     await page.getByRole('button', {name:'Close grain',exact:true}).click();
     failCreation = true;
-    await page.getByRole('button', {name:'Apps',exact:true}).click();
+    await page.getByRole('link', {name:'Apps',exact:true}).click();
+    await page.getByText('Grain created.', {exact:true}).waitFor();
+    await page.getByRole('button', {name:'Create another grain',exact:true}).click();
     await page.getByLabel('Installed app action').selectOption('alice-action');
     await page.getByLabel('Grain title').fill('Created in Rust');
     await page.getByRole('button', {name:'Create grain',exact:true}).click();
@@ -187,7 +192,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', {name:'Check grains',exact:true}).click();
     assert.equal(creations,2);
     failCreation = false;
-    await page.getByRole('button', { name: 'Grains', exact: true }).click();
+    await page.getByRole('link', {name:'Apps',exact:true}).click();
+    await page.getByText('The request was not retried. Check your grains before creating another.').waitFor();
+    await expect(page.getByRole('button', {name:'Create grain',exact:true})).toBeDisabled();
+    await page.getByRole('link', { name: 'Grains', exact: true }).click();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
     await page.reload();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
@@ -265,6 +273,12 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await app.evaluate(() => parent.postMessage({ setTitle: 'App page title', setPath: '/document?x=1#section' }, '*'));
     await page.getByRole('heading', { name: 'App page title' }).waitFor();
     await app.evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'title' }, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.grainTitle)).toBe('Alice grain');
+    await app.evaluate(() => parent.postMessage({ getGrainTitle: {}, subscribe: true, rpcId:'subscribed-title' }, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('subscribed-title');
+    grainTitles.alice = 'Owner rename'; changed();
+    await expect.poll(() => app.evaluate(() => window.reply?.grainTitle)).toBe('Owner rename');
+    grainTitles.alice = 'Alice grain'; changed();
     await expect.poll(() => app.evaluate(() => window.reply?.grainTitle)).toBe('Alice grain');
     await app.evaluate(() => parent.postMessage({ renderTemplate: { rpcId: 'template',
       template: '<script>window.injected=true</script> $API_TOKEN $API_HOST $GRAIN_TITLE_SLUG',
@@ -451,7 +465,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal((await context.cookies()).find(c => c.name === '__Host-sandstorm-rust-session').value, loginBeforeRestart);
     await page.reload();
     await page.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
-    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
     await expect.poll(() => liveGrains.size).toBe(0);
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
@@ -486,7 +500,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     holdOpen = true;
     await racing.getByRole('button', {name:'Open Alice grain here', exact:true}).click();
     await expect.poll(() => !!releaseOpen).toBe(true);
-    await racing.getByRole('button', {name:'Notifications', exact:true}).click();
+    await racing.getByRole('link', {name:'Notifications', exact:true}).click();
     holdOpen = false; releaseOpen();
     await racing.waitForURL('**/notifications');
     await racing.getByRole('heading', {name:/Alice notification/}).waitFor();
@@ -504,12 +518,14 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('heading', { name: /Bob notification/ }).waitFor();
     await other.getByRole('heading', { name: /Bob notification/ }).waitFor();
     assert.equal(await other.getByRole('heading', { name: /Alice notification/ }).count(), 0);
-    await other.getByRole('button', { name: 'Grains', exact: true }).click();
+    await other.getByRole('link', { name: 'Grains', exact: true }).click();
     await other.getByRole('link', { name: 'Bob grain', exact: true }).waitFor();
     await other.locator('.grain-item').getByText('Shared with you', { exact: true }).waitFor();
     assert.equal(await other.getByRole('link', { name: 'Alice grain', exact: true }).count(), 0);
     await other.getByRole('button', { name: 'Open Bob grain here', exact: true }).click();
     await other.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
+    await other.frameLocator('iframe').locator('body').evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'shared-title' }, '*'));
+    await expect.poll(() => other.frameLocator('iframe').locator('body').evaluate(() => window.reply?.grainTitle)).toBe('Owner title');
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await expect.poll(() => liveGrains.size).toBe(0);
     await expect.poll(() => other.locator('iframe').count()).toBe(0);

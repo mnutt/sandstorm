@@ -6,7 +6,7 @@ import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
-import { grainMenu, rustGrainTitle } from "/imports/server/rust-shell-grains";
+import { grainMenu, rustGrainTitles } from "/imports/server/rust-shell-grains";
 import { rustAppActions, createRustGrain } from "/imports/server/rust-shell-apps";
 import { renameGrainForUser } from "/imports/server/grain-server";
 import { globalDb } from "/imports/db-deprecated";
@@ -40,18 +40,21 @@ export const rustShellBridge = createRustShellBridge({
     async open(accountId, grainId) {
       const parentOrigin = Meteor.settings.public.rustShellOrigin;
       if (!parentOrigin) throw new Meteor.Error(503, "Rust grain sessions are not enabled.");
-      const title = text(await rustGrainTitle(globalDb, accountId, grainId), 256);
+      const titles = await rustGrainTitles(globalDb, accountId, grainId);
+      const title = text(titles.title, 256);
+      const ownerTitle = text(titles.ownerTitle, 256);
       const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
       const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return { handle: { sessionId: session._id, accountId, grainId },
-        view: { grainId, origin, title, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
+        view: { grainId, origin, title, ownerTitle, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
     },
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
     template: (handle, options) => createRustTemplateToken(globalDb, handle, options),
     async rename(handle, title, beforeWrite) {
       await renameGrainForUser(handle.accountId, handle.grainId, title, beforeWrite);
-      return text(await rustGrainTitle(globalDb, handle.accountId, handle.grainId), 256);
+      const titles = await rustGrainTitles(globalDb, handle.accountId, handle.grainId);
+      return { title: text(titles.title, 256), ownerTitle: text(titles.ownerTitle, 256) };
     },
     revokeTemplate: result => globalDb.removeApiTokens({ _id: result.id }),
   },

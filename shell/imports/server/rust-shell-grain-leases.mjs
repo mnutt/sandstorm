@@ -70,9 +70,9 @@ export function createGrainLeases({ open, keep, close, template, rename, revokeT
       };
       try {
         await beforeWrite();
-        const title = await rename(handle, input.title.trim(), beforeWrite);
+        const result = await rename(handle, input.title.trim(), beforeWrite);
         await beforeWrite();
-        return { title };
+        return result;
       } finally { record.renaming = false; }
     },
     async template(token, input, signal) {

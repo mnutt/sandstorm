@@ -16,6 +16,8 @@ pub struct View {
     pub url: String,
     #[serde(default)]
     pub title: String,
+    #[serde(default, rename = "ownerTitle")]
+    pub owner_title: String,
     #[serde(default, rename = "mainHref")]
     pub main_href: String,
 }
@@ -138,6 +140,9 @@ impl grain_session::Server for Lease {
             )
             .await
             .map_err(|(_, error)| capnp::Error::failed(error))?;
+        results
+            .get()
+            .set_owner_title(value["ownerTitle"].as_str().unwrap_or_default());
         results.get().set_title(
             value["title"]
                 .as_str()

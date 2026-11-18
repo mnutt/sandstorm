@@ -22,6 +22,7 @@ struct Grain {
   owned @3 :Bool;
   lastUsed @4 :Text;
   appTitle @5 :Text;
+  ownerTitle @6 :Text;
 }
 
 struct Snapshot {
@@ -52,11 +53,12 @@ struct GrainView {
   url @2 :Text;
   title @3 :Text;
   mainHref @4 :Text;
+  ownerTitle @5 :Text;
 }
 interface GrainSession {
   close @0 () -> ();
   renderTemplate @1 (options :Text) -> (token :Text, host :Text);
-  rename @2 (title :Text) -> (title :Text);
+  rename @2 (title :Text) -> (title :Text, ownerTitle :Text);
   # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.

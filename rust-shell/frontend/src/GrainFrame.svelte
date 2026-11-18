@@ -2,13 +2,17 @@
   import { appPath } from './lib/router';
   import { onMount, untrack } from 'svelte';
   import { PowerboxChooser } from './lib/powerbox';
-  import { SharingWindow } from './lib/sharing';
+  import { SharingWindow, type SharingState } from './lib/sharing';
+  import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
   let { grain, close, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; close: () => void; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   let path = $state(untrack(() => grain.path));
-  let notice = $state('');
+  let sharingState: SharingState = $state({ status: 'idle' });
+  const titles = new GrainTitleSubscriptions(untrack(() => grain.ownerTitle),
+    result => frame?.contentWindow?.postMessage(result, grain.origin));
+  $effect(() => titles.update(grain.ownerTitle));
   let editing = $state(false);
   let draftTitle = $state('');
   let renaming = $state(false);
@@ -16,7 +20,8 @@
   async function saveTitle(event: SubmitEvent) {
     event.preventDefault();
     if (renaming || !draftTitle.trim()) return;
-    renaming = true; renameError = '';
+    renaming = true;
+    renameError = '';
     try { await rename(draftTitle.trim()); editing = false; }
     catch (error) { renameError = `Could not confirm rename. Check the current title before trying again. ${String(error)}`; }
     finally { renaming = false; }
@@ -28,30 +33,30 @@
     chooser = new PowerboxChooser(new URL(grain.mainHref).origin, new URL(grain.url).searchParams.get('sessionid') || '',
       result => frame?.contentWindow?.postMessage(result, grain.origin), value => { choosing = value; });
     sharing = new SharingWindow(new URL(grain.mainHref).origin, new URL(grain.url).searchParams.get('sessionid') || '',
-      value => { notice = value; });
-    return () => { chooser.cancel(); sharing.cancel(); };
+      value => { sharingState = value; });
+    return () => { titles.clear(); chooser.cancel(); sharing.cancel(); };
   });
   const mainHref = $derived(grain.mainHref + (path === '/' ? '' : path));
   function message(event: MessageEvent) {
     chooser?.message(event);
     sharing?.message(event);
-    if (event.origin !== grain.origin || event.source !== frame?.contentWindow ||
-        !event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return;
-    const data = event.data;
+    if (event.origin !== grain.origin || event.source !== frame?.contentWindow) return;
+    const data = record(event.data);
+    if (!data) return;
     if (typeof data.setTitle === 'string') frameTitle = data.setTitle.slice(0, 160);
     if (typeof data.setPath === 'string') {
       const next = appPath(data.setPath || '/');
       if (next) { path = next; pathChanged(path); }
     }
-    if (data.getGrainTitle && (typeof data.rpcId === 'string' || typeof data.rpcId === 'number')) {
-      frame.contentWindow?.postMessage({ rpcId: data.rpcId, grainTitle: grain.title }, grain.origin);
-    }
+    if (data.getGrainTitle) titles.request(data.rpcId, data.getGrainTitle, data.subscribe);
     if (data.powerboxRequest) chooser?.request(data.powerboxRequest);
-    if (data.renderTemplate && typeof data.renderTemplate.rpcId === 'string') {
+    const template = record(data.renderTemplate);
+    if (template && typeof template.rpcId === 'string' && template.rpcId.length <= 256) {
       const source = event.source as Window;
-      const rpcId = data.renderTemplate.rpcId;
-      renderTemplate(data.renderTemplate).then(uri => source.postMessage({ rpcId, uri }, grain.origin),
-        error => source.postMessage({ rpcId, error: String(error) }, grain.origin));
+      const rpcId = template.rpcId;
+      const origin = grain.origin;
+      renderTemplate(template).then(uri => source.postMessage({ rpcId, uri }, origin),
+        error => source.postMessage({ rpcId, error: String(error) }, origin));
     }
     if (data.startSharing) sharing?.request('share', data.startSharing);
     if (data.showConnectionGraph) sharing?.request('access');
@@ -75,9 +80,12 @@
   <p><a href={mainHref}>Open in main shell ↗</a>
     <button onclick={() => { sharing.request('share'); sharing.open(); }}>Share</button>
     <button onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</button></p>
-  {#if notice}<div role="status"><p>{notice}</p>
-    <button onclick={() => sharing.open()}>Open sharing window</button>
-    <button onclick={() => sharing.cancel()}>Close sharing window</button></div>{/if}
+  {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
+    {#if sharingState.status !== 'failed'}
+      <button onclick={() => sharing.open()}>Open sharing window</button>
+      <button onclick={() => sharing.cancel()}>Close sharing window</button>
+    {:else}<button onclick={() => sharing.cancel()}>Dismiss sharing error</button>{/if}
+  </div>{/if}
   {#if choosing}<div role="status"><p>This app wants you to choose a capability.</p>
     <button onclick={() => chooser.open()}>Choose in Sandstorm</button>
     <button onclick={() => chooser.cancel()}>Cancel request</button></div>{/if}
@@ -85,12 +93,12 @@
 </section>
 
 <style>
-  .grain-view { min-width: 0; background: white; border: 1px solid #ddd; padding: 16px; }
+  .grain-view { min-width: 0; background: var(--surface); border: 1px solid var(--border); padding: 16px; }
   .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   h2 { margin: 0; font-size: 20px; overflow-wrap: anywhere; }
   button { font: inherit; padding: 8px 12px; cursor: pointer; }
-  a { color: #633388; }
+  a { color: var(--accent); }
   form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
   input { font: inherit; padding: 8px; max-width: 100%; box-sizing: border-box; }
-  iframe { width: 100%; height: 70vh; min-height: 360px; border: 1px solid #ddd; }
+  iframe { width: 100%; height: 70vh; min-height: 360px; border: 1px solid var(--border); }
 </style>

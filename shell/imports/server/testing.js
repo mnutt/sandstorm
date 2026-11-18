@@ -1424,11 +1424,15 @@ if(isTesting) {
         const recipientRename = await link(recipient, hash);
         await ownerRename("Owner rename");
         require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "Owner rename", "Recipient did not follow owner rename");
-        require((await recipientRename("My private name")).title === "My private name", "Rename response used the wrong title");
+        const personalRename = await recipientRename("My private name");
+        require(personalRename.title === "My private name", "Rename response used the wrong title");
+        require(personalRename.ownerTitle === "Owner rename", "Rename response exposed the personal alias as owner title");
         require((await globalDb.collections.grains.findOneAsync(grainId)).title === "Owner rename", "Recipient changed owner's title");
         require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "My private name", "Recipient rename was not saved");
         await ownerRename("Later owner rename");
         require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "My private name", "Owner overwrote recipient's personal title");
+        const personalProjection = (await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId);
+        require(personalProjection.ownerTitle === "Later owner rename", "Projection did not preserve the distinct owner title");
         await recipientRename("Later owner rename");
         const row = await globalDb.collections.apiTokens.findOneAsync(share.id);
         require(!row.owner.user.renamed, "Matching upstream title did not reset personal rename");

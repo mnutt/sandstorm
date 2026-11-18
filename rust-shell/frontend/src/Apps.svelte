@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import type { CreationState } from './lib/apps';
   import { rememberRoute } from './lib/router';
   import type { ShellService, ShellState, AppAction } from './lib/shell';
-  let { service, status, fixture, created, checkGrains }: { service: ShellService; status: ShellState['status']; fixture: boolean;
+  let { service, status, fixture, creation, created, checkGrains }: { service: ShellService; status: ShellState['status']; fixture: boolean; creation: CreationState;
     created: (id: string) => void; checkGrains: () => void } = $props();
   let actions: AppAction[] = $state([]);
   let limited = $state(false);
   let loading = $state(false);
-  let creating = $state(false);
+  const creating = $derived(creation.status === 'pending');
   let error = $state('');
-  let uncertain = $state(false);
+  const uncertain = $derived(creation.status === 'unknown');
   let selected = $state('');
   let title = $state('New grain');
   let epoch = 0;
@@ -31,14 +32,14 @@
   onDestroy(() => { alive = false; ++epoch; });
   async function create(event: SubmitEvent) {
     event.preventDefault();
-    if (creating || uncertain || !selected || !title.trim()) return;
-    creating = true; error = '';
+    if (creation.status !== 'idle' || !selected || !title.trim()) return;
+    error = '';
     try {
       const id = await service.createGrain(selected, title);
       if (alive) created(id);
     } catch (failure) {
-      if (alive) { uncertain = true; error = `Could not confirm grain creation. ${String(failure)}`; }
-    } finally { if (alive) creating = false; }
+      // The account-scoped service retains the outcome even after this page unmounts.
+    }
   }
 </script>
 <section aria-labelledby="apps-title">
@@ -60,17 +61,18 @@
         </select>
         <label for="new-grain-title">Grain title</label>
         <input id="new-grain-title" bind:value={title} maxlength="160" required disabled={creating || uncertain} />
-        <button disabled={creating || uncertain || !selected || !title.trim()}>{creating ? 'Creating grain…' : 'Create grain'}</button>
+        <button disabled={creation.status !== 'idle' || !selected || !title.trim()}>{creating ? 'Creating grain…' : 'Create grain'}</button>
       </form>
     {/if}
     {#if limited}<p>Showing the first 100 installed actions. Use the main shell for the full list.</p>{/if}
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
-  {#if uncertain}<p>The request was not retried. Check your grains before creating another.</p><button onclick={checkGrains}>Check grains</button>{/if}
+  {#if creation.status === 'created'}<p>Grain created.</p><button onclick={() => created(creation.grainId)}>Open created grain</button><button onclick={() => service.acknowledgeCreation()}>Create another grain</button>{/if}
+  {#if uncertain}<p role="alert">{creation.status === 'unknown' ? creation.error : ''}</p><p>The request was not retried. Check your grains before creating another.</p><button onclick={checkGrains}>Check grains</button><button onclick={() => service.acknowledgeCreation()}>I checked my grains</button>{/if}
 </section>
 <style>
-  section { background:white; padding:24px; border:1px solid #ddd; }
+  section { background:var(--surface); padding:24px; border:1px solid var(--border); }
   form { display:grid; gap:12px; max-width:520px; margin-top:20px; }
   button, input, select { font:inherit; padding:8px; }
-  [role=alert] { color:#922; }
+  [role=alert] { color:var(--danger); }
 </style>

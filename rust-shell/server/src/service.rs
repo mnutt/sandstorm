@@ -270,6 +270,7 @@ impl shell::Server for Shell {
         out.set_origin(&view.origin);
         out.set_url(&view.url);
         out.set_title(&view.title);
+        out.set_owner_title(&view.owner_title);
         out.set_main_href(&view.main_href);
         Ok(())
     }
@@ -330,6 +331,7 @@ impl shell::Server for Shell {
                             let mut out = grains.reborrow().get(i as u32);
                             out.set_key(&grain.key);
                             out.set_title(&grain.title);
+                            out.set_owner_title(&grain.owner_title);
                             out.set_href(&grain.href);
                             out.set_owned(grain.owned);
                             out.set_last_used(&grain.last_used);

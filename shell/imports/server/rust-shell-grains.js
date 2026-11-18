@@ -2,13 +2,14 @@ import { SandstormDb } from "/imports/sandstorm-db/db";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 
 // Match the account's displayed title, including owner renames and personal overrides.
-export async function rustGrainTitle(db, accountId, grainId) {
+export async function rustGrainTitles(db, accountId, grainId) {
   const grain = await db.collections.grains.findOneAsync({ _id: grainId, userId: accountId }, { fields: { title: 1 } });
-  if (grain) return grain.title;
+  if (grain) return { title: grain.title, ownerTitle: grain.title };
   const token = await db.collections.apiTokens.findOneAsync({ grainId,
     objectId: { $exists: false }, "owner.user.accountId": accountId },
     { sort: { created: 1, _id: 1 }, fields: { "owner.user": 1 } });
-  return token ? computeTitleFromTokenOwnerUser(token.owner.user).title : "shared grain";
+  const fullTitle = token ? computeTitleFromTokenOwnerUser(token.owner.user) : { title: "shared grain" };
+  return { title: fullTitle.title, ownerTitle: fullTitle.renamedFrom ?? fullTitle.title };
 }
 
 const LIMIT = 50;
@@ -49,6 +50,7 @@ export async function grainMenu(db, accountId, mainUrl) {
   };
   const entry = (row, isOwned) => ({ key: row._id,
     title: text(isOwned ? row.title : computeTitleFromTokenOwnerUser(row.owner).title),
+    ownerTitle: text(isOwned ? row.title : row.owner.upstreamTitle || row.owner.title),
     appTitle: Buffer.from(String(appName(row, isOwned))).subarray(0, 160).toString(),
     owned: isOwned, lastUsed: date(row.lastUsed || row.created),
     href: new URL("/grain/" + encodeURIComponent(row._id), mainUrl).href,

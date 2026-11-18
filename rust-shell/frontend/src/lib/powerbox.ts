@@ -1,21 +1,16 @@
+import { record, rpcId, powerboxRequest, type PowerboxRequest } from './protocol';
 // One chooser per active frame. Secrets travel in messages, never in popup URLs.
 export class PowerboxChooser {
-  private pending?: { request: Record<string, unknown>; popup?: Window; nonce: string; sent: boolean; timer: ReturnType<typeof setInterval> };
+  private pending?: { request: PowerboxRequest; popup?: Window; nonce: string; sent: boolean; timer: ReturnType<typeof setInterval> };
   constructor(private mainOrigin: string, private sessionId: string,
     private reply: (value: Record<string, unknown>) => void, private changed: (pending: boolean) => void) {}
 
   request(value: unknown) {
-    if (!value || typeof value !== 'object') return;
-    const request = value as Record<string, unknown>;
-    if (typeof request.rpcId !== 'string' && typeof request.rpcId !== 'number') return;
-    if (this.pending) { this.reply({ rpcId: request.rpcId, error: 'A Powerbox request is already open.' }); return; }
-    if ((typeof request.rpcId === 'string' && request.rpcId.length > 256) ||
-        (request.query !== undefined && (!Array.isArray(request.query) || request.query.length > 32 ||
-          request.query.some(q => typeof q !== 'string' || q.length > 8192))) ||
-        (request.saveLabel !== undefined && (!request.saveLabel || typeof request.saveLabel !== 'object' ||
-          typeof (request.saveLabel as { defaultText?: unknown }).defaultText !== 'string')) || JSON.stringify(request).length > 65536) {
-      this.reply({ rpcId: request.rpcId, error: 'Invalid Powerbox request.' }); return;
-    }
+    const data = record(value);
+    if (!data || !rpcId(data.rpcId)) return;
+    if (this.pending) { this.reply({ rpcId: data.rpcId, error: 'A Powerbox request is already open.' }); return; }
+    const request = powerboxRequest(value);
+    if (!request) { this.reply({ rpcId: data.rpcId, error: 'Invalid Powerbox request.' }); return; }
     const expires = Date.now() + 5 * 60 * 1000;
     const timer = setInterval(() => {
       if (this.pending?.popup?.closed || Date.now() >= expires) this.cancel();
@@ -33,14 +28,14 @@ export class PowerboxChooser {
   message(event: MessageEvent) {
     const pending = this.pending;
     if (!pending?.popup || event.source !== pending.popup || event.origin !== this.mainOrigin) return;
-    const data = event.data;
+    const data = record(event.data);
     if (!data || typeof data !== 'object') return;
     if (data.type === 'rust-powerbox-ready' && !pending.sent) {
       pending.sent = true;
       pending.popup.postMessage({ type: 'rust-powerbox-request', nonce: pending.nonce,
         sessionId: this.sessionId, request: pending.request }, this.mainOrigin);
     } else if (data.type === 'rust-powerbox-result' && data.nonce === pending.nonce && pending.sent) {
-      const result = data.result;
+      const result = record(data.result);
       if (!result || typeof result !== 'object' || result.rpcId !== pending.request.rpcId) return;
       if (result.canceled === true) this.finish({ rpcId: result.rpcId, canceled: true });
       else if (typeof result.error === 'string') this.finish({ rpcId: result.rpcId, error: result.error });

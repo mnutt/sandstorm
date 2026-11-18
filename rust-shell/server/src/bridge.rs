@@ -114,6 +114,8 @@ pub struct Entry {
 pub struct Grain {
     pub key: String,
     pub title: String,
+    #[serde(default, rename = "ownerTitle")]
+    pub owner_title: String,
     pub href: String,
     pub owned: bool,
     #[serde(rename = "lastUsed")]

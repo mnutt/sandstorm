@@ -1,0 +1,149 @@
+import { Conn } from 'capnp-es';
+import { Observer, Shell, type Shell$Client, type Subscription$Client, type Snapshot } from '../generated/shell';
+import type { ConnectionStatus } from './model';
+import { runOperation, type OperationOptions, errorMessage } from './operations';
+import { WebSocketTransport } from './transport';
+
+interface SessionInfo { fixture: boolean; account: { name: string; key: string } | null }
+interface ConnectionEvents {
+  reset: () => void;
+  session: (session: SessionInfo) => void;
+  status: (status: ConnectionStatus, error: string) => void;
+  snapshot: (snapshot: Snapshot) => void;
+}
+class MainShellUnavailable extends Error {}
+
+// Sole owner of authentication, reconnect policy, transport and subscription.
+export class ShellConnection {
+  private conn?: Conn;
+  private socket?: WebSocket;
+  private client?: Shell$Client;
+  private subscription?: Subscription$Client;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private startupTimer?: ReturnType<typeof setTimeout>;
+  private lifetime = new AbortController();
+  private stopped = true;
+  private retry = 500;
+  private generation = 0;
+  private failCurrent: (error: Error) => void = () => {};
+
+  constructor(private events: ConnectionEvents) {}
+  get signal() { return this.lifetime.signal; }
+  get shell() {
+    if (!this.client) throw new Error('Connect to Sandstorm first.');
+    return this.client;
+  }
+  run<T>(promise: PromiseLike<T>, label: string, options: OperationOptions<T> = {}) {
+    const generation = this.generation;
+    return runOperation(promise, label, {
+      ...options, signal: options.signal ?? this.signal,
+      onTimeout: () => {
+        if (generation === this.generation) this.failCurrent(new Error(`${label} timed out. Reconnecting…`));
+      },
+    });
+  }
+  start() {
+    if (!this.stopped) return;
+    this.stopped = false;
+    void this.connect();
+  }
+  private clear() {
+    this.lifetime.abort();
+    this.lifetime = new AbortController();
+    clearTimeout(this.startupTimer);
+    this.events.reset();
+    this.subscription = undefined;
+    this.client = undefined;
+    this.conn?.shutdown();
+    this.conn = undefined;
+    if (this.socket) {
+      this.socket.onopen = this.socket.onclose = this.socket.onerror = null;
+      this.socket.close();
+      this.socket = undefined;
+    }
+  }
+  private async connect() {
+    if (this.stopped) return;
+    const generation = ++this.generation;
+    this.clear();
+    const fail = this.failCurrent = (error: Error) => {
+      if (generation !== this.generation || this.stopped) return;
+      ++this.generation;
+      this.clear();
+      this.events.status(error instanceof MainShellUnavailable ? 'waiting' : 'reconnecting',
+        error instanceof MainShellUnavailable ? '' : error.message);
+      this.retryTimer = setTimeout(() => void this.connect(), this.retry);
+      this.retry = Math.min(this.retry * 2, 5000);
+    };
+    try {
+      const signal = AbortSignal.any([this.signal, AbortSignal.timeout(10000)]);
+      const response = await fetch('/auth/session', { cache: 'no-store', signal });
+      if (generation !== this.generation || this.stopped) return;
+      if (response.status === 401) {
+        this.events.session({ fixture: false, account: null });
+        this.events.status('signed-out', '');
+        return;
+      }
+      if (response.status === 502 || response.status === 503) throw new MainShellUnavailable();
+      const session = await response.json();
+      if (generation !== this.generation || this.stopped) return;
+      if (!response.ok) throw new Error(session.error || 'Unable to check your session');
+      this.events.session(session);
+    } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); return; }
+    const url = new URL('/rpc', location.href);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = this.socket = new WebSocket(url);
+    socket.onerror = () => fail(new Error('Unable to connect to the Rust shell'));
+    socket.onclose = () => fail(new Error('Connection closed'));
+    this.startupTimer = setTimeout(() => fail(new Error('Live updates did not start. Retrying…')), 10000);
+    socket.onopen = async () => {
+      if (generation !== this.generation) return;
+      try {
+        const conn = this.conn = new Conn(new WebSocketTransport(socket, fail));
+        conn.onError = error => fail(new Error(errorMessage(error)));
+        const shell = this.client = conn.bootstrap(Shell);
+        const observer = new Observer.Server({ replace: async params => {
+          if (generation !== this.generation) return;
+          clearTimeout(this.startupTimer);
+          this.retry = 500;
+          this.events.snapshot(params.snapshot);
+        } }).client();
+        const result = await this.run(shell.watch(params => { params.observer = observer; }).promise(), 'Subscribe');
+        if (generation !== this.generation) return;
+        this.subscription = result.subscription;
+        // This is a lifetime signal, deliberately not an ordinary timed RPC.
+        void result.subscription.whenClosed().promise().then(
+          () => fail(new Error('Live updates stopped. Reconnecting…')),
+          () => fail(new Error('Live updates failed. Reconnecting…')),
+        );
+      } catch (error) { fail(new Error(errorMessage(error))); }
+    };
+  }
+  reconnect() {
+    clearTimeout(this.retryTimer);
+    ++this.generation;
+    this.events.status('connecting', '');
+    void this.connect();
+  }
+  async logout() {
+    const generation = this.generation;
+    const response = await fetch('/auth/logout', {
+      method: 'POST', signal: AbortSignal.any([this.signal, AbortSignal.timeout(10000)]),
+    });
+    if (generation !== this.generation) return;
+    if (!response.ok) throw new Error('Unable to disconnect. Please try again.');
+    ++this.generation;
+    clearTimeout(this.retryTimer);
+    this.clear();
+    this.events.session({ fixture: false, account: null });
+    this.events.status('signed-out', '');
+  }
+  stop() {
+    this.stopped = true;
+    ++this.generation;
+    clearTimeout(this.retryTimer);
+    void this.subscription?.cancel().promise().catch(() => {});
+    this.clear();
+    this.events.status('stopped', '');
+  }
+}

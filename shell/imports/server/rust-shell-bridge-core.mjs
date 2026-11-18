@@ -71,7 +71,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
           const linked = { accountId: record.accountId, loginHash: record.loginHash,
             expires: Math.min(account.expires, now() + 12 * 60 * 60 * 1000) };
           await sessions.put(hash(token), linked);
-          return { token, account: { name: account.name }, expires: linked.expires };
+          return { token, account: { name: account.name, key: hash(record.accountId) }, expires: linked.expires };
         });
         exchanging = exchange.catch(() => {});
         return exchange;
@@ -115,7 +115,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       if (action === "renderTemplate") return leases.template(input.token, input, signal);
       if (action === "renameGrain") return leases.rename(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
-      if (action === "session") return { account: { name: account.name }, expires: record.expires };
+      if (action === "session") return { account: { name: account.name, key: hash(record.accountId) }, expires: record.expires };
       if (action === "snapshot") {
         const result = await snapshot(record.accountId);
         await session(input.token); // Do not return data after revocation during DB reads.

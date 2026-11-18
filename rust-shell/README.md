@@ -1,8 +1,8 @@
 # Experimental Rust shell
 
 A separate Rust/Axum process serving a static Svelte 5 / TypeScript frontend.
-This is an initial spike for `~/docs/sandstorm/new-architecture.md`, using a
-real notifications and a read-only grain menu through a narrowly scoped Meteor
+This is an initial spike for `~/docs/sandstorm/new-architecture.md`, using
+real notifications and a grain menu through a narrowly scoped Meteor
 bridge when installed.
 Standalone runs use fixtures, including a separate C++ capability fixture for
 browser → Rust → C++ RPC. Meteor remains the account and database authority.
@@ -169,7 +169,8 @@ suppressed even for owned grains outside the preview or in the trash. Trashed,
 suspended, and directly revoked records are excluded. A limit indicator links to
 the complete main-shell list; this is not a paginated replacement yet.
 
-Shared entries use only recipient token metadata. Menu presence does not grant
+Shared entries use recipient token metadata for display names and upstream
+owner titles, matching the main shell’s title helper. Menu presence does not grant
 access or resolve every upstream sharing-chain requirement: the main shell checks
 those when opening the link. No privileged backend capabilities cross the API.
 Mongo observation covers title, usage, trash, ownership, suspension, and token
@@ -192,7 +193,13 @@ It admits one in-flight creation per account and eight across the bridge.
 Creation is never automatically retried. A lost response may mean the grain was
 created; the UI disables another submission and asks the user to check their
 grains. Navigation or disconnect does not delete a grain that already committed.
-This is not durable idempotency or recovery of a creation result across restart.
+Creation outcomes are retained in the account-scoped service when leaving and
+returning to Apps, including pending, created, and unknown results. A successful
+result offers reopening that grain or explicitly starting another; an unknown
+result requires acknowledging that the grain list was checked. A stable opaque
+account key from the session endpoint separates accounts with identical names.
+This is in-memory state: a full browser reload loses it. It is not durable
+idempotency or recovery of a creation result across restart.
 
 The browser suite covers creation, route restoration, and a failed response
 without replay. Bridge tests cover admission, cancellation and logout before
@@ -245,7 +252,10 @@ frame continuity across both Rust and legacy title changes.
 
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
-and a one-shot `getGrainTitle` reply. Sharing requests use a main-shell dialog handoff;
+and `getGrainTitle` replies with optional `subscribe: true` updates. The app
+receives the owner title, never the recipient’s personal alias; up to 32 title
+subscriptions live with the frame. Live updates currently cover grains in the
+loaded menu. Sharing requests use a main-shell dialog handoff;
 `renderTemplate` uses an isolated shell-origin display (below). Powerbox requests
 use the main-shell chooser handoff.
 This is not full postMessage API parity,
@@ -535,10 +545,36 @@ restarts the C++ fixture to verify old-capability failure and fresh-connection
 recovery. Each test owns its child processes and socket directory; cleanup has a
 deadline and removes only those artifacts.
 
-Known dependency audit finding: npm currently reports a high-severity picomatch
-ReDoS advisory through the **development** file-discovery tools (Vite and
-svelte-check). No Vite development server is run or exposed; Axum serves static
-output. Recheck upstream fixes before expanding this spike's use.
+The frontend dependency installation reported zero npm audit findings during this
+change's validation. This is separate from the main Meteor dependency tree.
+
+## Frontend organization and operation policy
+
+`App.svelte` composes route pages and layout. `Notifications.svelte`, `Grains.svelte`,
+`Apps.svelte`, and `GrainFrame.svelte` own their presentation and local form state.
+`styles.css` holds common controls and color tokens. Navigation links support
+normal browser modifiers/new tabs; client navigation updates the document title,
+focuses the route content, and announces the page name.
+
+`lib/shell.ts` composes the services into plain `ShellState`. `connection.ts` alone
+owns authentication, the transport, subscriptions, and reconnect policy.
+`grains.ts` owns the active capability and template lifetime; `apps.ts` owns
+account-scoped creation outcomes. `navigation.ts` owns route intent, separately
+from connection recovery. `protocol.ts` validates untrusted message payloads;
+frame/popup owners still enforce exact origin, source window, and popup nonce.
+`sharing.ts` reports explicit pending, blocked, open, and failed states.
+
+Ordinary RPCs have a ten-second browser deadline and are aborted locally when
+the connection changes. A timeout reconnects that connection, never replays the
+operation. Navigation detaches the frame immediately; remote cleanup is bounded,
+and late open results are released. Connection errors are separate from
+notification/grain operation errors so snapshots cannot erase an unknown-outcome
+warning. A timeout does not prove a mutation failed on the server.
+
+`npm run check` checks Svelte/TypeScript and the trusted public offer-template
+script. Focused tests cover deadlines, late cleanup, account-scoped creation,
+mutation-error retention, navigation, malformed structured clones, title
+subscriptions, and popup blocking in addition to the browser integration suite.
 
 ## Ownership ledger and next steps
 
