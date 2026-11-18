@@ -1395,6 +1395,9 @@ if(isTesting) {
       const senderId = "test-rust-sender-" + Random.id();
       const sharedGrainId = "test-rust-shared-" + Random.id();
       const tokenId = "test-rust-token-" + Random.id();
+      const duplicateTokenId = "test-rust-duplicate-" + Random.id();
+      const selfTokenId = "test-rust-self-" + Random.id();
+      const extraGrainIds = Array.from({ length: 50 }, () => "test-rust-limit-" + Random.id());
       const loginHash = Crypto.randomBytes(32).toString("hex");
       const state = Crypto.randomBytes(32).toString("hex");
       const controller = new AbortController();
@@ -1412,6 +1415,8 @@ if(isTesting) {
         ({ token } = await rustShellBridge.handle("exchange", { code, state }));
         let view = await call("snapshot");
         require(view.total === 0, "New account must have an empty projection");
+        require(view.grains.length === 1 && view.grains[0].key === grainId && view.grains[0].owned,
+            "Grain menu must show the owned grain");
         const observeWrite = async (write) => {
           const pending = call("watch", { after: view.version });
           // Attach a rejection handler immediately, including if the DB write fails.
@@ -1426,6 +1431,17 @@ if(isTesting) {
         require(view.total === 1 && view.entries[0].title === "Before rename", "Legacy insert must wake observation");
         await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $set: { title: "After rename" } }));
         require(view.entries[0].title === "After rename", "Grain title changes must invalidate the projection");
+        require(view.grains[0].title === "After rename", "Grain menu must receive title changes");
+        await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $set: { trashed: new Date() } }));
+        require(view.grains.length === 0, "Trashed owned grain must disappear from the menu");
+        await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $unset: { trashed: 1 } }));
+        require(view.grains.length === 1, "Restored grain must reappear");
+        await observeWrite(() => globalDb.collections.grains.rawCollection().insertMany(extraGrainIds.map((_id) => ({
+          _id, userId, title: "Extra grain", lastUsed: new Date(),
+        }))));
+        require(view.grains.length === 50 && view.grainsLimited, "Large accounts must have a bounded preview");
+        await observeWrite(() => globalDb.collections.grains.removeAsync({ _id: { $in: extraGrainIds } }));
+        require(view.grains.length === 1 && !view.grainsLimited, "Removing excess grains must clear the limit indicator");
         await observeWrite(() => call("read"));
         require(!view.entries[0].unread, "Mark-read must update the observed record");
         await observeWrite(() => call("dismiss", { id: notificationId }));
@@ -1440,10 +1456,26 @@ if(isTesting) {
           text: { defaultText: "edited a page" }, timestamp: new Date(), isUnread: true,
         }));
         require(view.entries[0].title === "Grain activity", "Must not expose another owner's grain or token title");
+        require(!view.grains.some((grain) => grain.key === sharedGrainId), "Another recipient's grain must not appear");
         require(view.entries[0].senderName === "Sender name", "Referenced sender name must be projected");
         await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
             { $set: { "owner.user.accountId": userId, "owner.user.title": "Saved title", "owner.user.upstreamTitle": "Shared title" } }));
         require(view.entries[0].title === "Shared title", "Shared grain must use the recipient's upstream title");
+        require(view.grains.some((grain) => grain.key === sharedGrainId && !grain.owned && grain.title === "Shared title"),
+            "Shared grain must use recipient metadata");
+        await globalDb.collections.apiTokens.insertAsync({ _id: duplicateTokenId, grainId: sharedGrainId,
+          created: new Date(Date.now() + 1000), owner: { user: { accountId: userId, title: "Later token title", denormalizedGrainMetadata: {} } } });
+        await globalDb.collections.apiTokens.insertAsync({ _id: selfTokenId, grainId,
+          created: new Date(), owner: { user: { accountId: userId, title: "Self share", denormalizedGrainMetadata: {} } } });
+        view = await call("snapshot");
+        require(view.grains.length === 2 && view.grains.find((grain) => grain.key === sharedGrainId).title === "Shared title",
+            "Duplicate and self shares must not duplicate menu entries or override the oldest title");
+        await globalDb.collections.apiTokens.removeAsync({ _id: duplicateTokenId });
+        view = await call("snapshot");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $set: { trashed: new Date() } }));
+        require(view.grains.length === 1, "Trashed share must disappear");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $unset: { trashed: 1 } }));
+        require(view.grains.length === 2, "Restored share must reappear");
         await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
             { $set: { "owner.user.renamed": true, "owner.user.title": "My title" } }));
         require(view.entries[0].title === "My title", "Recipient rename must take precedence");
@@ -1451,6 +1483,7 @@ if(isTesting) {
         require(view.entries[0].senderName === "Renamed sender", "Sender rename must wake observation");
         await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $set: { revoked: true } }));
         require(view.entries[0].title === "Grain activity", "Revoked recipient metadata must disappear");
+        require(!view.grains.some((grain) => grain.key === sharedGrainId), "Revoked share must disappear from the menu");
         await observeWrite(() => globalDb.collections.notifications.updateAsync(notificationId,
             { $unset: { initiatingAccount: 1 }, $set: { initiatorAnonymous: true } }));
         require(view.entries[0].senderName === "Anonymous user", "Anonymous activity must have a clear sender label");
@@ -1466,8 +1499,8 @@ if(isTesting) {
         controller.abort();
         if (token) await call("logout");
         await globalDb.collections.notifications.removeAsync({ userId });
-        await globalDb.collections.apiTokens.removeAsync({ _id: tokenId });
-        await globalDb.collections.grains.removeAsync({ _id: { $in: [grainId, sharedGrainId] } });
+        await globalDb.collections.apiTokens.removeAsync({ _id: { $in: [tokenId, duplicateTokenId, selfTokenId] } });
+        await globalDb.collections.grains.removeAsync({ _id: { $in: [grainId, sharedGrainId, ...extraGrainIds] } });
         await Meteor.users.removeAsync({ _id: senderId });
         await Meteor.users.removeAsync({ _id: userId });
       }

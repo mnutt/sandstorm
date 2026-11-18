@@ -2,7 +2,8 @@
 
 A separate Rust/Axum process serving a static Svelte 5 / TypeScript frontend.
 This is an initial spike for `~/docs/sandstorm/new-architecture.md`, using a
-real notifications through a narrowly scoped Meteor bridge when installed.
+real notifications and a read-only grain menu through a narrowly scoped Meteor
+bridge when installed.
 Standalone runs use fixtures, including a separate C++ capability fixture for
 browser → Rust → C++ RPC. Meteor remains the account and database authority.
 
@@ -126,6 +127,26 @@ errors, completion, and cancellation release the request's Mongo observers.
 This is ephemeral observation, not durable replay. Each browser connection owns
 its projection observation until disconnect; the browser callback capability
 separately controls delivery of those snapshots.
+
+### Read-only grain menu
+
+The **Grains** page shares the authenticated connection and revisioned account
+snapshot with notifications. It shows titles, owned/shared labels, last-used times,
+and links into the main shell. The title filter searches only the loaded preview.
+There are no grain lifecycle mutations or new UI sessions in Rust.
+
+The projection includes at most 50 owned grains and 50 shared candidates. Mongo
+groups recipient tokens by grain before limiting; the oldest token supplies the
+recipient's title and the latest usage time determines ordering. Self-shares are
+suppressed even for owned grains outside the preview or in the trash. Trashed,
+suspended, and directly revoked records are excluded. A limit indicator links to
+the complete main-shell list; this is not a paginated replacement yet.
+
+Shared entries use only recipient token metadata. Menu presence does not grant
+access or resolve every upstream sharing-chain requirement: the main shell checks
+those when opening the link. No privileged backend capabilities cross the API.
+Mongo observation covers title, usage, trash, ownership, suspension, and token
+changes. Account switching, disconnect, and logout clear both projections.
 
 ### Packaging audit policy
 
@@ -274,7 +295,10 @@ between requests, revocation, admission limits, heartbeat deadlines, and cleanup
 `tests/tests/rust-shell.js` exercises the actual Meteor/Mongo adapter in an
 isolated server, including legacy inserts, owned/shared grain renames, sender renames, read/dismiss,
 recipient isolation, token revocation, and source-login revocation. Browser tests
-also check that sender names render as text rather than HTML.
+also check that sender names render as text rather than HTML. Grain-menu checks
+cover recipient isolation, shared/owned deduplication, trash/restore, limits, and
+revocation; browser checks cover filtering, links, account switching, and clearing
+the list on logout.
 
 The C++ suite additionally checks pipelining across both connections, an observer
 that calls back into C++ while C++ awaits its response, explicit counter release,
@@ -299,6 +323,7 @@ output. Recheck upstream fixes before expanding this spike's use.
 | Accounts, packages, sharing, Powerbox | Existing authority and storage | Existing shell/backend | Unchanged; baseline suite not rerun |
 | HTTPS and certificate renewal | Existing TLS key subscription | Existing gateway and shell; secondary listener shares keys | HTTPS/WSS proxy test; deployment validation still required |
 | Rust process lifecycle | Optional config, packaged executable and private Unix socket | Existing Sandstorm monitor | Config tests; remove secondary-port config to disable |
+| Grain menu | Account-owned grains and recipient token metadata | Meteor projection; Rust/Svelte display | Mongo/browser tests; disable secondary listener |
 | Grain sessions and lifecycle | Existing gateway/backend/supervisors | Existing services | Rust never launches or opens a grain |
 
 Next useful slices:
@@ -306,8 +331,8 @@ Next useful slices:
 1. Finish notification presentation parity: avatars, app icons, and localized copy.
 2. Validate control-server restart recovery and main-shell visual/behavioral parity
    before migrating production UI.
-3. Add the next account-scoped read-only projection, such as the grain list,
-   keeping existing services responsible for grain lifecycle and permissions.
+3. Add pagination and richer metadata to the grain menu while keeping existing
+   services responsible for grain lifecycle and permissions.
 
 This preview establishes the executable stack and bounded three-language
 interoperability evidence. It does not establish generic membrane behavior,

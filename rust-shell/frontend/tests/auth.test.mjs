@@ -34,7 +34,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { entries, total: entries.length };
+      return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: `${users[id].name} grain`,
+        href: `/grain/${id}-grain`, owned: id === 'alice', lastUsed: new Date(0).toISOString() }], grainsLimited: false };
     },
     dismiss: async (id, key) => {
       if (rows.get(key)?.user !== id) throw Object.assign(new Error('Not your notification'), { status: 403 });
@@ -84,6 +85,15 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
+    await page.getByRole('button', { name: 'Grains', exact: true }).click();
+    await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), '/grain/alice-grain');
+    assert.equal(await page.getByRole('link', { name: 'Bob grain', exact: true }).count(), 0);
+    await page.getByText('Owned by you', { exact: true }).waitFor();
+    await page.getByLabel('Filter shown grains').fill('nothing matches');
+    await page.getByText('No matching grains.', { exact: true }).waitFor();
+    await page.getByLabel('Filter shown grains').fill('');
+    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);
@@ -108,8 +118,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('heading', { name: /Bob notification/ }).waitFor();
     await other.getByRole('heading', { name: /Bob notification/ }).waitFor();
     assert.equal(await other.getByRole('heading', { name: /Alice notification/ }).count(), 0);
+    await other.getByRole('button', { name: 'Grains', exact: true }).click();
+    await other.getByRole('link', { name: 'Bob grain', exact: true }).waitFor();
+    await other.getByText('Shared with you', { exact: true }).waitFor();
+    assert.equal(await other.getByRole('link', { name: 'Alice grain', exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await other.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
+    assert.equal(await other.locator('.grain-item').count(), 0);
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).click();
     await page.getByRole('button', { name: 'Connect Bob' }).click();
     await page.getByRole('heading', { name: /Bob notification/ }).waitFor();

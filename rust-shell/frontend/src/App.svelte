@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { NotificationsService, type NotificationState } from './lib/notifications';
+  import { ShellService, type ShellState } from './lib/shell';
 
-  let state: NotificationState = $state({ status: 'connecting', entries: [], revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 });
-  const notifications = new NotificationsService((next) => { state = next; });
+  let model: ShellState = $state({ status: 'connecting', entries: [], grains: [], grainsLimited: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 });
+  const notifications = new ShellService((next) => { model = next; });
+  let view = $state<'notifications' | 'grains'>('notifications');
+  let search = $state('');
+  const visibleGrains = $derived(model.grains.filter((grain) => grain.title.toLocaleLowerCase().includes(search.toLocaleLowerCase())));
   onMount(() => { notifications.start(); return () => notifications.stop(); });
 </script>
 
@@ -15,12 +18,16 @@
     <h1>Shell preview</h1>
     <p>A small first step toward the new architecture.</p>
     <a href="/main-shell">Open the main shell ↗</a>
+    <nav aria-label="Shell pages">
+      <button class="secondary" aria-current={view === 'notifications' ? 'page' : undefined} onclick={() => { view = 'notifications'; }}>Notifications</button>
+      <button class="secondary" aria-current={view === 'grains' ? 'page' : undefined} onclick={() => { view = 'grains'; }}>Grains</button>
+    </nav>
     <hr />
-    {#if state.fixture}
+    {#if model.fixture}
       <h2>Fixture mode</h2>
       <p>These notifications are test data, private to this connection. Reconnecting resets them.</p>
-    {:else if state.account}
-      <h2>Connected as {state.account}</h2>
+    {:else if model.account}
+      <h2>Connected as {model.account}</h2>
       <p>Notifications and dismissals are shared with the main shell. Changes appear within a few seconds.</p>
       <p><a href="/auth/start">Switch account</a></p>
       <button class="secondary" onclick={() => notifications.logout()}>Disconnect</button>
@@ -30,30 +37,58 @@
     {/if}
     <p>Apps and grains still open in the main shell.</p>
   </aside>
+  {#if view === 'grains'}
+  <section aria-labelledby="grains-title">
+    <div class="heading"><h2 id="grains-title">Grains</h2><span class="status" role="status">{model.status}</span></div>
+    {#if model.status === 'signed-out'}
+      <p><a href="/auth/start">Sign in with Sandstorm</a> to see your grains.</p>
+    {:else if model.fixture}
+      <p class="empty">Connect to an installed Sandstorm server to see real grains.</p>
+    {:else if model.status !== 'ready'}
+      <p class="empty">Loading your grains…</p>
+    {:else}
+      <p>Open a grain in the main shell. Creating, sharing, and deleting grains remain there.</p>
+      <label for="grain-search">Filter shown grains</label>
+      <input id="grain-search" type="search" bind:value={search} placeholder="Search by title" />
+      {#if visibleGrains.length === 0}<p class="empty">{model.grains.length ? 'No matching grains.' : 'You have no grains to show.'}</p>{/if}
+      <ul>
+        {#each visibleGrains as grain (grain.key)}
+          <li class="grain-item"><div>
+            <h3><a href={grain.href}>{grain.title}</a></h3>
+            <p>{grain.owned ? 'Owned by you' : 'Shared with you'}</p>
+            {#if grain.lastUsed}<time datetime={grain.lastUsed}>Last used {new Date(grain.lastUsed).toLocaleString()}</time>{/if}
+          </div></li>
+        {/each}
+      </ul>
+      {#if model.grainsLimited}<p>This is a limited preview of your grains. <a href="/main-shell">View all grains in the main shell.</a></p>{/if}
+    {/if}
+    {#if model.error}<p class="error" role="alert">{model.error}</p>{/if}
+  </section>
+  {:else}
   <section aria-labelledby="notifications-title">
-    <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{state.status}</span></div>
+    <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{model.status}</span></div>
     <div class="actions">
-      {#if state.status === 'signed-out'}
+      {#if model.status === 'signed-out'}
         <a href="/auth/start">Sign in with Sandstorm</a>
       {:else}
-        {#if state.fixture}
-          <button onclick={() => notifications.addFixture()} disabled={state.status !== 'ready' || state.pending}>Add test notification</button>
+        {#if model.fixture}
+          <button onclick={() => notifications.addFixture()} disabled={model.status !== 'ready' || model.pending}>Add test notification</button>
         {:else}
-          <button onclick={() => notifications.markRead()} disabled={state.status !== 'ready' || state.pending}>Mark all as read</button>
+          <button onclick={() => notifications.markRead()} disabled={model.status !== 'ready' || model.pending}>Mark all as read</button>
         {/if}
         <button class="secondary" onclick={() => notifications.reconnect()}>Reconnect</button>
       {/if}
     </div>
-    {#if state.error}<p class="error" role="alert">{state.error}</p>{/if}
-    {#if state.status === 'signed-out'}
+    {#if model.error}<p class="error" role="alert">{model.error}</p>{/if}
+    {#if model.status === 'signed-out'}
       <p class="empty">Connect your account to load notifications.</p>
-    {:else if state.status !== 'ready'}
+    {:else if model.status !== 'ready'}
       <p class="empty">Connecting to the Rust shell…</p>
-    {:else if state.entries.length === 0}
+    {:else if model.entries.length === 0}
       <p class="empty">You have no notifications.</p>
     {:else}
       <ul>
-        {#each state.entries as entry (entry.id)}
+        {#each model.entries as entry (entry.id)}
           <li class="notification-item">
             <div>
               <h3 class="notification-title">{entry.title} {#if entry.unread}<small>Unread</small>{/if}</h3>
@@ -63,15 +98,16 @@
               {#if entry.timestamp}<time datetime={entry.timestamp}>{new Date(entry.timestamp).toLocaleString()}</time>{/if}
               {#if entry.href}<p><a href={entry.href}>Open in main shell ↗</a></p>{/if}
             </div>
-            <button class="secondary" disabled={state.pending} aria-label={`${entry.ongoing ? 'Cancel activity for' : 'Dismiss'} ${entry.title}`}
+            <button class="secondary" disabled={model.pending} aria-label={`${entry.ongoing ? 'Cancel activity for' : 'Dismiss'} ${entry.title}`}
               onclick={() => { if (!entry.ongoing || confirm(`Stop the ongoing activity for ${entry.title}?`)) notifications.dismiss(entry.id); }}>{entry.ongoing ? 'Cancel activity' : 'Dismiss'}</button>
           </li>
         {/each}
       </ul>
     {/if}
-    {#if state.total > state.entries.length && state.status === 'ready'}<p>Showing {state.entries.length} of {state.total} notifications. <a href="/main-shell">View all in the main shell.</a></p>{/if}
-    <footer>Rust / Axum · Svelte / TypeScript · Cap’n Proto RPC<br />Snapshot revision {state.revision}</footer>
+    {#if model.total > model.entries.length && model.status === 'ready'}<p>Showing {model.entries.length} of {model.total} notifications. <a href="/main-shell">View all in the main shell.</a></p>{/if}
+    <footer>Rust / Axum · Svelte / TypeScript · Cap’n Proto RPC<br />Snapshot revision {model.revision}</footer>
   </section>
+  {/if}
 </main>
 
 <style>
@@ -82,6 +118,10 @@
   main { max-width: 1100px; margin: 40px auto; padding: 0 24px; display: grid; grid-template-columns: 240px 1fr; gap: 36px; }
   h1 { font-size: 24px; margin-top: 0; } h2 { font-size: 20px; } h3 { font-size: 16px; margin: 0; }
   aside p { color: #666; } aside h2 { font-size: 15px; } a { color: #633388; }
+  nav { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+  nav [aria-current="page"] { background: #eee4f4; border-color: #633388; }
+  input { display: block; width: 100%; padding: 8px; margin: 8px 0 20px; font: inherit; border: 1px solid #aaa; border-radius: 3px; }
+  .grain-item a { overflow-wrap: anywhere; }
   hr { border: 0; border-top: 1px solid #ddd; margin: 24px 0; }
   section { min-width: 0; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 24px; }
   .heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; } .heading h2 { margin: 0; }

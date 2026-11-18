@@ -98,7 +98,21 @@ pub struct Entry {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
+pub struct Grain {
+    pub key: String,
+    pub title: String,
+    pub href: String,
+    pub owned: bool,
+    #[serde(rename = "lastUsed")]
+    pub last_used: String,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub grains: Vec<Grain>,
+    #[serde(default, rename = "grainsLimited")]
+    pub grains_limited: bool,
     pub version: String,
     pub entries: Vec<Entry>,
     pub total: u32,

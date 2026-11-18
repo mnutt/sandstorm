@@ -15,6 +15,8 @@ struct Projection {
     next_id: u32,
     entries: Vec<Entry>,
     total: u32,
+    grains: Vec<crate::bridge::Grain>,
+    grains_limited: bool,
 }
 
 #[derive(Clone)]
@@ -61,6 +63,13 @@ impl Shell {
             revision: 0,
             next_id: 2,
             entries,
+            grains: initial
+                .as_ref()
+                .map(|snapshot| snapshot.grains.clone())
+                .unwrap_or_default(),
+            grains_limited: initial
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.grains_limited),
             total: initial.map(|snapshot| snapshot.total).unwrap_or(1),
         });
         Self {
@@ -95,9 +104,15 @@ impl Shell {
                         real: Some(real),
                     })
                     .collect();
-                if state.entries == entries && state.total == snapshot.total {
+                if state.entries == entries
+                    && state.total == snapshot.total
+                    && state.grains == snapshot.grains
+                    && state.grains_limited == snapshot.grains_limited
+                {
                     return false;
                 }
+                state.grains = snapshot.grains;
+                state.grains_limited = snapshot.grains_limited;
                 state.entries = entries;
                 state.total = snapshot.total;
                 state.revision += 1;
@@ -196,6 +211,18 @@ impl shell::Server for Shell {
                     let mut out = request.get().init_snapshot();
                     out.set_revision(snapshot.revision);
                     out.set_total(snapshot.total);
+                    out.set_grains_limited(snapshot.grains_limited);
+                    {
+                        let mut grains = out.reborrow().init_grains(snapshot.grains.len() as u32);
+                        for (i, grain) in snapshot.grains.iter().enumerate() {
+                            let mut out = grains.reborrow().get(i as u32);
+                            out.set_key(&grain.key);
+                            out.set_title(&grain.title);
+                            out.set_href(&grain.href);
+                            out.set_owned(grain.owned);
+                            out.set_last_used(&grain.last_used);
+                        }
+                    }
                     let mut entries = out.init_entries(snapshot.entries.len() as u32);
                     for (i, entry) in snapshot.entries.iter().enumerate() {
                         let mut out = entries.reborrow().get(i as u32);

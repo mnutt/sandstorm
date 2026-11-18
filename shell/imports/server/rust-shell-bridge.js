@@ -4,6 +4,7 @@ import { check } from "meteor/check";
 import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
+import { grainMenu } from "/imports/server/rust-shell-grains";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
@@ -78,7 +79,8 @@ export const rustShellBridge = createRustShellBridge({
       return { key: row._id, senderName: text(senderName, 160), title: text(title, 160), body: text(body, 512), href,
         unread: !!row.isUnread, ongoing: !!row.ongoing, timestamp: row.timestamp?.toISOString() || "" };
     }));
-    return { entries, total: await globalDb.collections.notifications.find(query).countAsync() };
+    return { entries, total: await globalDb.collections.notifications.find(query).countAsync(),
+      ...await grainMenu(globalDb, accountId, process.env.ROOT_URL) };
   },
   async observe(accountId, changed) {
     const handles = [];
@@ -87,10 +89,10 @@ export const rustShellBridge = createRustShellBridge({
       const callbacks = { added: changed, changed, removed: changed };
       handles.push(await globalDb.collections.notifications.find({ userId: accountId })
           .observeChangesAsync(callbacks));
-      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1 } })
+      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1, lastUsed: 1, created: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
       handles.push(await globalDb.collections.apiTokens.find({ "owner.user.accountId": accountId },
-          { fields: { grainId: 1, "owner.user": 1, created: 1, revoked: 1 } })
+          { fields: { grainId: 1, "owner.user": 1, created: 1, lastUsed: 1, revoked: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
       // Notification observation is already active. A new referenced sender
       // changes the snapshot, causing the next watch to attach its profile observer.

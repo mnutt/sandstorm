@@ -15,10 +15,20 @@ struct Notification {
   senderName @8 :Text;
 }
 
+struct Grain {
+  key @0 :Text;
+  title @1 :Text;
+  href @2 :Text;
+  owned @3 :Bool;
+  lastUsed @4 :Text;
+}
+
 struct Snapshot {
   revision @0 :UInt32;
   entries @1 :List(Notification);
   total @2 :UInt32;
+  grains @3 :List(Grain);
+  grainsLimited @4 :Bool;
   # Each callback replaces the entire projection. First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }

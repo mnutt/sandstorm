@@ -3,7 +3,10 @@ import { Observer, Shell, type Shell$Client, type Subscription$Client } from '..
 import { WebSocketTransport } from './transport';
 
 export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string; senderName: string }
-export interface NotificationState {
+export interface Grain { key: string; title: string; href: string; owned: boolean; lastUsed: string }
+export interface ShellState {
+  grains: Grain[];
+  grainsLimited: boolean;
   status: 'connecting' | 'ready' | 'reconnecting' | 'stopped' | 'signed-out';
   entries: Notification[];
   revision: number;
@@ -15,8 +18,8 @@ export interface NotificationState {
 }
 
 // Owns all live capabilities. Svelte receives only decoded values.
-export class NotificationsService {
-  private state: NotificationState = { status: 'connecting', entries: [], revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 };
+export class ShellService {
+  private state: ShellState = { status: 'connecting', entries: [], grains: [], grainsLimited: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 };
   private conn?: Conn;
   private socket?: WebSocket;
   private shell?: Shell$Client;
@@ -27,9 +30,9 @@ export class NotificationsService {
   private stopped = true;
   private retry = 500;
 
-  constructor(private changed: (state: NotificationState) => void) {}
+  constructor(private changed: (state: ShellState) => void) {}
 
-  private update(patch: Partial<NotificationState>) {
+  private update(patch: Partial<ShellState>) {
     this.state = { ...this.state, ...patch };
     this.changed(this.state);
   }
@@ -57,7 +60,7 @@ export class NotificationsService {
       if (generation !== this.generation || this.stopped) return;
       ++this.generation;
       this.clearConnection();
-      this.update({ status: 'reconnecting', entries: [], pending: false, error: error.message });
+      this.update({ status: 'reconnecting', entries: [], grains: [], grainsLimited: false, pending: false, error: error.message });
       this.timer = setTimeout(() => this.connect(), this.retry);
       this.retry = Math.min(this.retry * 2, 5000);
     };
@@ -65,7 +68,7 @@ export class NotificationsService {
       const response = await fetch('/auth/session', { cache: 'no-store' });
       if (generation !== this.generation || this.stopped) return;
       if (response.status === 401) {
-        this.update({ status: 'signed-out', entries: [], account: null, fixture: false, error: '', pending: false, total: 0 });
+        this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, account: null, fixture: false, error: '', pending: false, total: 0 });
         return;
       }
       const session = await response.json();
@@ -94,7 +97,10 @@ export class NotificationsService {
               href: entry.href, unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp, senderName: entry.senderName });
             clearTimeout(this.deadline);
             this.retry = 500;
-            this.update({ status: 'ready', entries, revision: snapshot.revision, total: snapshot.total, error: '' });
+            const grains: Grain[] = [];
+            for (const grain of snapshot.grains) grains.push({ key: grain.key, title: grain.title,
+              href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed });
+            this.update({ status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited, revision: snapshot.revision, total: snapshot.total, error: '' });
           },
         }).client();
         const result = await shell.watch((params) => { params.observer = observer; }).promise();
@@ -117,7 +123,7 @@ export class NotificationsService {
       ++this.generation;
       clearTimeout(this.timer);
       this.clearConnection();
-      this.update({ status: 'signed-out', entries: [], account: null, total: 0, pending: false, error: '' });
+      this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, account: null, total: 0, pending: false, error: '' });
     } catch (error) { this.update({ error: String(error) }); }
   }
 
@@ -143,7 +149,7 @@ export class NotificationsService {
   reconnect() {
     ++this.generation;
     clearTimeout(this.timer);
-    this.update({ status: 'connecting', entries: [], error: '', pending: false });
+    this.update({ status: 'connecting', entries: [], grains: [], grainsLimited: false, error: '', pending: false });
     this.connect();
   }
 
@@ -154,6 +160,6 @@ export class NotificationsService {
     // Explicit cancellation is best effort; closing the connection also releases it.
     void this.subscription?.cancel().promise().catch(() => {});
     this.clearConnection();
-    this.update({ status: 'stopped', entries: [], pending: false });
+    this.update({ status: 'stopped', entries: [], grains: [], grainsLimited: false, pending: false });
   }
 }
