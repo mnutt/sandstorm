@@ -7,17 +7,22 @@ import { createServer as httpServer } from 'node:http';
 import { createServer as httpsServer } from 'node:https';
 import { once } from 'node:events';
 import { chromium, expect } from '@playwright/test';
-import { start, stop } from './harness.mjs';
+import { start, stop, serveProbe } from './harness.mjs';
 import { httpsProxy } from './https-harness.mjs';
 import { createRustShellBridge, bridgeHandler } from '../../../shell/imports/server/rust-shell-bridge-core.mjs';
 
 // Uses the production bridge authority/HTTP implementation with an in-memory DB
 // adapter. No test writes or login tokens touch the installed Meteor/Mongo server.
-test('authenticated notifications: handoff, shared writes, account switching and revocation', { timeout: 60000 }, async () => {
+test('authenticated notifications: handoff, shared writes, account switching and revocation', { timeout: 90000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'rust-shell-auth-'));
   const socket = join(directory, 'rust.sock');
   const bridgeSocket = join(directory, 'meteor.sock');
-  let proxy, main, bridgeServer, browser, rust;
+  let proxy, main, grainServer, bridgeServer, browser, rust;
+  const liveGrains = new Set();
+  let grainOrigin;
+  let serial = 0;
+  let leaseClockOffset = 0;
+  let renewals = 0;
   const users = { alice: { name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
     bob: { name: 'Bob', hash: 'bob-login', expires: Date.now() + 3600000 } };
   const rows = new Map();
@@ -30,6 +35,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
   add('bob-real-id', 'bob', 'Bob notification');
   let activeMainAccount = 'alice';
   const bridge = createRustShellBridge({
+    now: () => Date.now() + leaseClockOffset,
+    grains: {
+      open: async (id, grainId) => {
+        if (grainId !== `${id}-grain`) throw Object.assign(new Error('Denied'), { status: 403 });
+        const handle = ++serial; liveGrains.add(handle);
+        return { handle, view: { grainId, origin: grainOrigin, url: grainOrigin + '/?session=' + handle } };
+      },
+      keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
+      close: async (handle) => { liveGrains.delete(handle); },
+    },
     authorize: async (id, hash) => users[id]?.hash === hash ? users[id] : null,
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
@@ -47,6 +62,12 @@ test('authenticated notifications: handoff, shared writes, account switching and
   });
   try {
     proxy = await httpsProxy(directory, socket);
+    grainServer = httpsServer(proxy.tls, (_req, res) => {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<h1>Embedded test grain</h1><input aria-label="App state"><script>window.addEventListener("message", event => { window.reply = event.data; });</script>');
+    });
+    grainServer.listen(0, '127.0.0.1'); await once(grainServer, 'listening');
+    grainOrigin = `https://localhost:${grainServer.address().port}`;
     bridgeServer = httpServer(bridgeHandler(bridge));
     bridgeServer.listen(bridgeSocket); await once(bridgeServer, 'listening'); await chmod(bridgeSocket, 0o600);
     main = httpsServer(proxy.tls, async (req, res) => {
@@ -69,6 +90,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const context = await browser.newContext();
     const page = await context.newPage();
     const errors = [];
+    let receivedFrames = 0;
+    page.on('websocket', (socket) => socket.on('framereceived', () => { ++receivedFrames; }));
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(proxy.origin);
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
@@ -104,6 +127,63 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByLabel('Filter shown grains').fill('nothing matches');
     await page.getByText('No matching grains.', { exact: true }).waitFor();
     await page.getByLabel('Filter shown grains').fill('');
+    await serveProbe(page, './grain-session-probe.ts', 'grain-session-probe.js');
+    await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.open()));
+    await expect.poll(() => liveGrains.size).toBe(1);
+    await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.release()));
+    await expect.poll(() => liveGrains.size).toBe(0);
+    await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.disconnect()));
+    await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
+    assert.equal(liveGrains.size, 1);
+    const app = page.frames().find((frame) => frame.url().startsWith(grainOrigin));
+    await app.getByLabel('App state').fill('keep this iframe alive');
+    await page.evaluate((origin) => window.dispatchEvent(new MessageEvent('message', {
+      origin, source: window, data: { setTitle: 'Forged title' },
+    })), grainOrigin);
+    assert.equal(await page.getByRole('heading', { name: 'Forged title' }).count(), 0);
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://untrusted.test', source: document.querySelector('iframe').contentWindow,
+      data: { setTitle: 'Wrong origin' },
+    })));
+    assert.equal(await page.getByRole('heading', { name: 'Wrong origin' }).count(), 0);
+    await app.evaluate(() => parent.postMessage({ setTitle: 'App page title', setPath: '/document?x=1#section' }, '*'));
+    await page.getByRole('heading', { name: 'App page title' }).waitFor();
+    await app.evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'title' }, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.grainTitle)).toBe('Alice grain');
+    await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('powerbox');
+    assert.match(await app.evaluate(() => window.reply.error), /main Sandstorm shell/);
+    const beforeUpdate = receivedFrames;
+    add('while-open', 'alice', 'Notification while grain is open');
+    await expect.poll(() => receivedFrames).toBeGreaterThan(beforeUpdate);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    await expect(app.getByLabel('App state')).toHaveValue('keep this iframe alive');
+    await expect.poll(() => renewals, { timeout: 15000 }).toBeGreaterThan(0);
+    await page.getByRole('button', { name: 'Close grain', exact: true }).click();
+    await expect.poll(() => liveGrains.size).toBe(0);
+    await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
+    // A Rust crash closes the browser view; Meteor's bounded lease survives only
+    // until expiry. The independent grain host stays alive throughout.
+    rust.kill('SIGKILL'); await stop(rust);
+    await expect.poll(() => page.locator('iframe').count()).toBe(0);
+    leaseClockOffset += 46000;
+    await bridge.sweepGrains();
+    assert.equal(liveGrains.size, 0);
+    await rm(socket, { force: true });
+    rust = (await start('debug/sandstorm-rust-shell', [], {
+      RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin,
+      RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
+      RUST_SHELL_FIXTURE_SOCKET: '',
+    }, /Rust shell: (https:\/\/\S+)/)).child;
+    await page.reload();
+    await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
+    await page.getByRole('button', { name: 'Grains', exact: true }).click();
+    await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
+    await page.reload();
+    await expect.poll(() => liveGrains.size).toBe(0);
     await page.getByRole('button', { name: 'Notifications', exact: true }).click();
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
@@ -137,7 +217,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await other.getByRole('link', { name: 'Bob grain', exact: true }).waitFor();
     await other.locator('.grain-item').getByText('Shared with you', { exact: true }).waitFor();
     assert.equal(await other.getByRole('link', { name: 'Alice grain', exact: true }).count(), 0);
+    await other.getByRole('button', { name: 'Open Bob grain here', exact: true }).click();
+    await other.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+    await expect.poll(() => liveGrains.size).toBe(0);
+    await expect.poll(() => other.locator('iframe').count()).toBe(0);
     await other.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
     assert.equal(await other.locator('.grain-item').count(), 0);
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).click();
@@ -147,10 +231,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
     assert.equal(await page.locator('.notification-item').count(), 0);
     assert.deepEqual(errors, []);
+  } catch (error) {
+    console.error("Grain browser test failed:", error.message);
+    throw error;
   } finally {
     await browser?.close(); await stop(rust);
+    leaseClockOffset += 46000;
+    await bridge.sweepGrains();
     await expect.poll(() => observers.size).toBe(0);
-    for (const server of [main, bridgeServer]) if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+    await expect.poll(() => liveGrains.size).toBe(0);
+    for (const server of [main, grainServer, bridgeServer]) if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
     await proxy?.close();
     await rm(directory, { recursive: true, force: true });
   }

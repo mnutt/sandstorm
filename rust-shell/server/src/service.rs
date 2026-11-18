@@ -26,6 +26,7 @@ pub struct Shell {
     watching: Rc<Cell<bool>>,
     session: Option<crate::bridge::Session>,
     version: String,
+    pub grain: Option<Rc<crate::grain::Scope>>,
 }
 
 impl Shell {
@@ -33,7 +34,7 @@ impl Shell {
         interop: Rc<crate::interop::Link>,
         session: Option<crate::bridge::Session>,
         initial: Option<crate::bridge::Snapshot>,
-    ) -> Self {
+    ) -> capnp::Result<Self> {
         let entries = if let Some(initial) = &initial {
             initial
                 .entries
@@ -72,13 +73,15 @@ impl Shell {
                 .is_some_and(|snapshot| snapshot.grains_limited),
             total: initial.map(|snapshot| snapshot.total).unwrap_or(1),
         });
-        Self {
+        let grain = session.clone().map(crate::grain::Scope::new).transpose()?;
+        Ok(Self {
+            grain,
             interop,
             state,
             watching: Rc::new(Cell::new(false)),
             session,
             version,
-        }
+        })
     }
 
     pub async fn synchronize(&self) {
@@ -164,6 +167,26 @@ impl subscription::Server for Subscription {
 }
 
 impl shell::Server for Shell {
+    async fn open_grain(
+        self: Rc<Self>,
+        params: shell::OpenGrainParams,
+        mut results: shell::OpenGrainResults,
+    ) -> capnp::Result<()> {
+        let scope = self
+            .grain
+            .as_ref()
+            .ok_or_else(|| capnp::Error::failed("Grains require a signed-in account".into()))?;
+        let grain_id = params.get()?.get_grain_id()?.to_str()?.to_owned();
+        let (view, session) = scope.open(grain_id).await?;
+        let mut out = results.get();
+        out.set_session(session);
+        let mut out = out.init_view();
+        out.set_grain_id(&view.grain_id);
+        out.set_origin(&view.origin);
+        out.set_url(&view.url);
+        Ok(())
+    }
+
     async fn dismiss_real(
         self: Rc<Self>,
         params: shell::DismissRealParams,

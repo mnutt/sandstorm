@@ -1,3 +1,4 @@
+import { createGrainLeases } from "./rust-shell-grain-leases.mjs";
 import { createHash, randomBytes } from "node:crypto";
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
@@ -7,7 +8,7 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow, ephemeral adapter. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, grains = {}, now = Date.now }) {
   let watches = 0;
   const grants = new Map();
   const sessions = new Map();
@@ -27,9 +28,11 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
     const key = hash(token);
     const record = sessions.get(key);
     try { return { record, account: await validate(record) }; }
-    catch (error) { sessions.delete(key); throw error; }
+    catch (error) { sessions.delete(key); await leases.revoke(token); throw error; }
   };
+  const leases = createGrainLeases({ ...grains, validate: session, now });
   return {
+    sweepGrains: () => leases.sweep(),
     async issue(accountId, loginHash, state) {
       prune();
       if (!validSecret(state) || !accountId || !loginHash) throw unauthorized();
@@ -50,17 +53,27 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
         if (!record || record.state !== input.state) throw unauthorized();
         const account = await validate(record);
         if (sessions.size >= 1024) throw Object.assign(new Error("Too many linked sessions."), { status: 503 });
-        if (validSecret(input.previous)) sessions.delete(hash(input.previous));
+        if (validSecret(input.previous)) {
+          sessions.delete(hash(input.previous));
+          await leases.revoke(input.previous);
+        }
         const token = secret();
         record.expires = Math.min(account.expires, now() + 12 * 60 * 60 * 1000);
         sessions.set(hash(token), record);
         return { token, account: { name: account.name }, expires: record.expires };
       }
       if (action === "logout") {
-        if (validSecret(input.token)) sessions.delete(hash(input.token));
+        if (validSecret(input.token)) {
+          sessions.delete(hash(input.token));
+          await leases.revoke(input.token);
+        }
         return {};
       }
+      // Cleanup remains possible after expiration; scope ownership is still checked.
+      if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
+      if (action === "openGrain") return leases.open(input.token, record.accountId, input, signal);
+      if (action === "keepGrain") return leases.keep(input.token, input);
       if (action === "session") return { account: { name: account.name }, expires: record.expires };
       if (action === "snapshot") {
         const result = await snapshot(record.accountId);
@@ -137,7 +150,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

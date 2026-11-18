@@ -1,8 +1,9 @@
 <script lang="ts">
+  import GrainFrame from './GrainFrame.svelte';
   import { onMount } from 'svelte';
   import { ShellService, type ShellState } from './lib/shell';
 
-  let model: ShellState = $state({ status: 'connecting', entries: [], grains: [], grainsLimited: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 });
+  let model: ShellState = $state({ status: 'connecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 });
   const notifications = new ShellService((next) => { model = next; });
   let view = $state<'notifications' | 'grains'>('notifications');
   let search = $state('');
@@ -25,8 +26,8 @@
     <p>A small first step toward the new architecture.</p>
     <a href="/main-shell">Open the main shell ↗</a>
     <nav aria-label="Shell pages">
-      <button class="secondary" aria-current={view === 'notifications' ? 'page' : undefined} onclick={() => { view = 'notifications'; }}>Notifications</button>
-      <button class="secondary" aria-current={view === 'grains' ? 'page' : undefined} onclick={() => { view = 'grains'; }}>Grains</button>
+      <button class="secondary" aria-current={view === 'notifications' ? 'page' : undefined} onclick={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); view = 'notifications'; }}>Notifications</button>
+      <button class="secondary" aria-current={view === 'grains' ? 'page' : undefined} onclick={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); view = 'grains'; }}>Grains</button>
     </nav>
     <hr />
     {#if model.fixture}
@@ -41,9 +42,13 @@
       <h2>Your Sandstorm account</h2>
       <p>Sign in through the main shell to see your real notifications.</p>
     {/if}
-    <p>Apps and grains still open in the main shell.</p>
+    <p>Grains can open here. App management and sharing remain in the main shell.</p>
   </aside>
-  {#if view === 'grains'}
+  {#if model.activeGrain}
+    {#key model.activeGrain.url}
+      <GrainFrame grain={model.activeGrain} close={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); }} />
+    {/key}
+  {:else if view === 'grains'}
   <section aria-labelledby="grains-title">
     <div class="heading"><h2 id="grains-title">Grains</h2><span class="status" role="status">{model.status}</span></div>
     {#if model.status === 'signed-out'}
@@ -54,7 +59,7 @@
     {:else if model.fixture}
       <p class="empty">Connect to an installed Sandstorm server to see real grains.</p>
     {:else}
-      <p>Open a grain in the main shell. Creating, sharing, and deleting grains remain there.</p>
+      <p>Open a grain here using your Sandstorm identity. Sharing and Powerbox remain in the main shell.</p>
       <label for="grain-search">Filter shown grains</label>
       <input id="grain-search" type="search" bind:value={search} placeholder="Search by title or app" />
       <div class="grain-controls">
@@ -70,11 +75,12 @@
             <h3><a href={grain.href}>{grain.title}</a></h3>
             <p><span>{grain.appTitle || 'Unknown app'}</span> · <span>{grain.owned ? 'Owned by you' : 'Shared with you'}</span></p>
             {#if grain.lastUsed}<time datetime={grain.lastUsed}>Last used {new Date(grain.lastUsed).toLocaleString()}</time>{/if}
-          </div></li>
+          </div><button disabled={model.openingGrain} onclick={() => notifications.openGrain(grain)} aria-label={`Open ${grain.title} here`}>Open here</button></li>
         {/each}
       </ul>
       {#if model.grainsLimited}<p>This is a limited preview of your grains. <a href="/main-shell">View all grains in the main shell.</a></p>{/if}
     {/if}
+    {#if model.openingGrain}<p role="status">Opening grain…</p>{/if}
     {#if model.error}<p class="error" role="alert">{model.error}</p>{/if}
   </section>
   {:else}

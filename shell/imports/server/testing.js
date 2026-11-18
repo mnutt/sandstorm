@@ -46,6 +46,8 @@ import {
   waitForMigrationDocument,
   waitForReplicaMigrations,
 } from "/imports/server/migration-coordination";
+import { createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { rustShellBridge } from "/imports/server/rust-shell-bridge";
 import { runDueJobs } from "/imports/server/scheduled-job";
 import {
@@ -59,6 +61,8 @@ import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/auto
 import { isTesting } from "/imports/shared/testing";
 import Crypto from "crypto";
 import { EventEmitter } from "events";
+
+const rustGrainTestSessions = new Map();
 
 async function clearUser(id) {
   await globalDb.collections.userActions.removeAsync({ userId: id });
@@ -1386,6 +1390,61 @@ if(isTesting) {
         await globalDb.collections.grains.removeAsync({ _id: { $in: [ownerGrainId, otherGrainId] } });
         await Meteor.users.removeAsync({ _id: { $in: [ownerId, otherId, adminId] } });
       }
+    },
+
+    async testRustGrainSession(operation, grainId) {
+      check(operation, String);
+      check(grainId, String);
+      const grain = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!grain || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const key = this.userId + ":" + grainId;
+      let record = rustGrainTestSessions.get(key);
+      if (operation === "open" || operation === "shared") {
+        if (record) throw new Meteor.Error(409, "Close test session first");
+        record = { accountId: this.userId, grainId };
+        rustGrainTestSessions.set(key, record);
+        if (operation === "shared") {
+          record.recipient = "rust-session-recipient-" + Random.id();
+          await Meteor.users.insertAsync({ _id: record.recipient, type: "account", loginCredentials: [],
+            nonloginCredentials: [], profile: { name: "Rust session recipient", handle: "recipient", pronoun: "neutral" } });
+          // A stranger cannot obtain a UI session just by knowing a grain ID.
+          let rejected = false;
+          try { await createRustGrainSession(globalDb, record.recipient, grainId, process.env.ROOT_URL); }
+          catch (error) { rejected = error.error === 403; }
+          if (!rejected) throw new Error("Unauthorized UI session was accepted");
+          const share = await SandstormPermissions.createNewApiToken(globalDb, { accountId: this.userId },
+              grainId, "Rust grain session test", { allAccess: null },
+              { user: { accountId: record.recipient, title: "Shared test grain" } });
+          record.tokenId = share.id;
+          record.accountId = record.recipient;
+        }
+        const session = await createRustGrainSession(globalDb, record.accountId, grainId, process.env.ROOT_URL);
+        if (!session.rustShellSession || session.rustShellLeaseExpires <= Date.now() ||
+            session.parentOrigin !== process.env.ROOT_URL) throw new Error("Missing lease or parent-origin contract");
+        record.sessionId = session._id;
+        const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
+        return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
+      }
+      if (!record) throw new Meteor.Error(404, "No test session");
+      if (operation === "keep") { await keepRustGrainSession(globalDb, record); return true; }
+      if (operation === "revoke") {
+        await globalDb.collections.apiTokens.updateAsync(record.tokenId, { $set: { revoked: true } });
+        let rejected = false;
+        try { await keepRustGrainSession(globalDb, record); }
+        catch (error) { rejected = error.error === 403; }
+        if (!rejected) throw new Error("Revoked UI session renewed");
+        await closeRustGrainSession(globalDb, record);
+        return true;
+      }
+      if (operation === "close") {
+        await closeRustGrainSession(globalDb, record);
+        if (await globalDb.collections.sessions.findOneAsync(record.sessionId)) throw new Error("UI session leaked");
+        if (record.tokenId) await globalDb.removeApiTokens({ _id: record.tokenId });
+        if (record.recipient) await Meteor.users.removeAsync(record.recipient);
+        rustGrainTestSessions.delete(key);
+        return true;
+      }
+      throw new Meteor.Error(400, "Unknown test operation");
     },
 
     testRegressionRustShellObservation: async function () {

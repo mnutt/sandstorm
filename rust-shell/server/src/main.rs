@@ -1,5 +1,6 @@
 mod auth;
 mod bridge;
+mod grain;
 mod interop;
 mod service;
 mod transport;
@@ -166,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
         .layer(SetResponseHeaderLayer::overriding(
             header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static("default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"),
+            HeaderValue::from_static("default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'"),
         ))
         .layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"),

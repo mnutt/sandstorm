@@ -140,7 +140,8 @@ App names come from referenced packages for owned grains and recipient metadata
 for shares. Package-name changes wake observation. Missing metadata displays an
 unknown-app label. Refresh/reconnect clears old data and obtains a new authorized
 snapshot; the initial session check has a timeout and is canceled on reconnect.
-There are no grain lifecycle mutations or new UI sessions in Rust.
+The menu remains read-only. **Open here** now requests an explicitly leased UI
+session from Meteor; Rust does not own grain execution.
 
 The projection includes at most 50 owned grains and 50 shared candidates. Mongo
 groups recipient tokens by grain before limiting; the oldest token supplies the
@@ -154,6 +155,51 @@ access or resolve every upstream sharing-chain requirement: the main shell check
 those when opening the link. No privileged backend capabilities cross the API.
 Mongo observation covers title, usage, trash, ownership, suspension, and token
 changes. Account switching, disconnect, and logout clear both projections.
+
+### Embedded grain UI sessions
+
+**Open here** opens one grain per browser connection, using the signed-in account's
+Sandstorm identity. Meteor checks `mayOpenGrainAsync` and uses the existing
+`createSession` path with the configured Rust HTTPS origin as `parentOrigin`.
+The normal gateway supplies the app iframe, performs full permissions checks,
+and retains its existing revocation observer. Rust never receives `Backend`.
+The initialization URL goes only into the iframe and is not persisted in shell
+history or storage. The shell CSP permits HTTPS frames; only Meteor's authorized
+session response supplies the frame URL.
+
+`openGrain()` returns a `GrainSession` capability. Explicit close, capability
+release, navigation away, and WebSocket disconnect close the UI session. Rust
+renews its lease every 10 seconds; Meteor expires abandoned leases after 45
+seconds, checked every five seconds. Admission is limited to 32 leases globally
+and eight per linked login. Closing, logout, or cancellation while opening also
+cleans up a session that finishes creation late. Old session handles cannot close
+a replacement session. Closing removes the UI session record, never the grain.
+
+A Rust crash clears the old iframe; reconnect does not replay the open operation.
+The user can explicitly reopen with the same linked Meteor login. Meteor restart
+invalidates linked logins and removes marked experimental UI sessions. Their
+expiry is also recorded in Mongo. If Mongo is unavailable during cleanup, the
+existing idle-session cleanup remains the fallback. Rolling back to a bundle
+without this bridge leaves its existing three-minute idle-session cleanup in
+charge; it does not stop the grain.
+
+Iframe messages require both the exact session origin and the active frame's
+source window. The first slice supports display-only `setTitle`, local `setPath`,
+and a one-shot `getGrainTitle` reply. Sharing requests show a main-shell link;
+Powerbox and `renderTemplate` requests receive an explicit unsupported error and
+a link to continue in the main shell. This is not full postMessage API parity,
+an incognito/sharing-link flow, or session restoration across shell reconnects.
+
+Validation includes capability release, close/reopen, late creation cancellation,
+source-login revocation, logout with an active iframe, lease renewal/expiry,
+iframe continuity during notification updates, forged messages, and Rust crash/
+restart against an independent test grain host. `tests/tests/rust-grain-session.js`
+opens the real Sandstorm test app through owned and shared UI sessions, verifies
+keepalive and cleanup, revokes sharing while the iframe is active, checks that
+subsequent gateway requests fail, and reopens as the owner. That test exercises
+the real Meteor/C++ gateway with the main-shell parent origin; the browser/Rust
+integration test exercises the secondary HTTPS origin with an isolated adapter.
+Live secondary-origin testing on a deployed application remains useful.
 
 ### Packaging audit policy
 
@@ -331,15 +377,16 @@ output. Recheck upstream fixes before expanding this spike's use.
 | HTTPS and certificate renewal | Existing TLS key subscription | Existing gateway and shell; secondary listener shares keys | HTTPS/WSS proxy test; deployment validation still required |
 | Rust process lifecycle | Optional config, packaged executable and private Unix socket | Existing Sandstorm monitor | Config tests; remove secondary-port config to disable |
 | Grain menu | Account-owned grains and recipient token metadata | Meteor projection; Rust/Svelte display | Mongo/browser tests; disable secondary listener |
-| Grain sessions and lifecycle | Existing gateway/backend/supervisors | Existing services | Rust never launches or opens a grain |
+| Grain UI sessions | Meteor account and permission checks; existing session records | Meteor creates/revokes; Rust owns lease lifetime; gateway serves frames | Real test-app and Rust/browser lifecycle tests |
+| Grain execution | Existing backend/supervisors | Existing services | No new launcher or shutdown path |
 
 Next useful slices:
 
 1. Finish notification presentation parity: avatars, app icons, and localized copy.
 2. Validate control-server restart recovery and main-shell visual/behavioral parity
    before migrating production UI.
-3. Add pagination and richer metadata to the grain menu while keeping existing
-   services responsible for grain lifecycle and permissions.
+3. Extend embedded-app compatibility (Powerbox and other postMessage APIs), with
+   existing services retaining authority and lifecycle ownership.
 
 This preview establishes the executable stack and bounded three-language
 interoperability evidence. It does not establish generic membrane behavior,

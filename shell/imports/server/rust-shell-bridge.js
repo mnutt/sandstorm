@@ -4,6 +4,7 @@ import { check } from "meteor/check";
 import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
+import { createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { grainMenu } from "/imports/server/rust-shell-grains";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
@@ -12,6 +13,18 @@ import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.m
 const text = (value, bytes) => Buffer.from(String(value || "")).subarray(0, bytes).toString();
 
 export const rustShellBridge = createRustShellBridge({
+  grains: {
+    async open(accountId, grainId) {
+      const parentOrigin = Meteor.settings.public.rustShellOrigin;
+      if (!parentOrigin) throw new Meteor.Error(503, "Rust grain sessions are not enabled.");
+      const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
+      const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
+      return { handle: { sessionId: session._id, accountId, grainId },
+        view: { grainId, origin, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
+    },
+    keep: (handle) => keepRustGrainSession(globalDb, handle),
+    close: (handle) => closeRustGrainSession(globalDb, handle),
+  },
   async authorize(accountId, loginHash) {
     const user = await Meteor.users.findOneAsync({
       _id: accountId, suspended: { $exists: false },
@@ -138,6 +151,16 @@ Meteor.methods({
 Meteor.startup(async () => {
   const socket = process.env.RUST_SHELL_BRIDGE_SOCKET;
   if (!socket) return;
+  // Linked login grants are ephemeral across Meteor restart, so their UI
+  // sessions must also be revoked, without stopping the underlying grains.
+  await globalDb.collections.sessions.removeAsync({ rustShellSession: true });
+  Meteor.setInterval(() => (async () => {
+    await rustShellBridge.sweepGrains();
+    await globalDb.collections.sessions.removeAsync({ rustShellSession: true,
+      rustShellLeaseExpires: { $lt: Date.now() } });
+  })().catch((error) => {
+    console.error("Rust grain session cleanup failed:", error.code || error.error || "unknown");
+  }), 5000);
   // The process supervisor removes stale sockets before launching Meteor.
   const server = Http.createServer(Meteor.bindEnvironment(bridgeHandler(rustShellBridge)));
   server.requestTimeout = 5000;

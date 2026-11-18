@@ -1,10 +1,13 @@
 import { Conn } from 'capnp-es';
-import { Observer, Shell, type Shell$Client, type Subscription$Client } from '../generated/shell';
+import { Observer, Shell, type Shell$Client, type Subscription$Client, type GrainSession$Client } from '../generated/shell';
 import { WebSocketTransport } from './transport';
 
 export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string; senderName: string }
 export interface Grain { key: string; title: string; href: string; owned: boolean; lastUsed: string; appTitle: string }
+export interface ActiveGrain { grainId: string; origin: string; url: string; title: string; mainHref: string }
 export interface ShellState {
+  activeGrain: ActiveGrain | null;
+  openingGrain: boolean;
   grains: Grain[];
   grainsLimited: boolean;
   status: 'connecting' | 'ready' | 'reconnecting' | 'stopped' | 'signed-out';
@@ -19,7 +22,9 @@ export interface ShellState {
 
 // Owns all live capabilities. Svelte receives only decoded values.
 export class ShellService {
-  private state: ShellState = { status: 'connecting', entries: [], grains: [], grainsLimited: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 };
+  private state: ShellState = { status: 'connecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 };
+  private grainSession?: GrainSession$Client;
+  private grainGeneration = 0;
   private conn?: Conn;
   private socket?: WebSocket;
   private shell?: Shell$Client;
@@ -41,6 +46,11 @@ export class ShellService {
   start() { if (this.stopped) { this.stopped = false; this.connect(); } }
 
   private clearConnection() {
+    ++this.grainGeneration;
+    // Release may try to send on an already broken transport. Teardown must
+    // still clear the iframe; the server scope/lease owns remote cleanup.
+    try { this.grainSession?.client.close(); } catch { /* transport already closed */ }
+    this.grainSession = undefined;
     clearTimeout(this.deadline);
     this.authRequest?.abort();
     this.authRequest = undefined;
@@ -63,7 +73,7 @@ export class ShellService {
       if (generation !== this.generation || this.stopped) return;
       ++this.generation;
       this.clearConnection();
-      this.update({ status: 'reconnecting', entries: [], grains: [], grainsLimited: false, pending: false, error: error.message });
+      this.update({ status: 'reconnecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, pending: false, error: error.message });
       this.timer = setTimeout(() => this.connect(), this.retry);
       this.retry = Math.min(this.retry * 2, 5000);
     };
@@ -75,7 +85,7 @@ export class ShellService {
       if (response.status === 401) {
         clearTimeout(this.deadline);
         this.authRequest = undefined;
-        this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, account: null, fixture: false, error: '', pending: false, total: 0 });
+        this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, account: null, fixture: false, error: '', pending: false, total: 0 });
         return;
       }
       const session = await response.json();
@@ -118,6 +128,48 @@ export class ShellService {
     };
   }
 
+  async closeGrain() {
+    ++this.grainGeneration;
+    const session = this.grainSession;
+    this.grainSession = undefined;
+    this.update({ activeGrain: null, openingGrain: false });
+    if (session) {
+      try { await session.close().promise(); }
+      finally { session.client.close(); }
+    }
+  }
+
+  async openGrain(grain: Grain) {
+    if (!this.shell || this.state.status !== 'ready' || this.state.openingGrain) return;
+    const generation = this.generation;
+    try { await this.closeGrain(); }
+    catch { this.reconnect(); return; }
+    if (!this.shell || generation !== this.generation) return;
+    const operation = ++this.grainGeneration;
+    this.update({ openingGrain: true, error: '' });
+    try {
+      const result = await this.shell.openGrain((params) => { params.grainId = grain.key; }).promise();
+      if (generation !== this.generation || operation !== this.grainGeneration) {
+        await result.session.close().promise().catch(() => {});
+        result.session.client.close();
+        return;
+      }
+      const url = new URL(result.view.url);
+      if (url.origin !== result.view.origin || !['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+        await result.session.close().promise().catch(() => {});
+        result.session.client.close();
+        throw new Error('Invalid grain session origin');
+      }
+      this.grainSession = result.session;
+      this.update({ activeGrain: { grainId: result.view.grainId, origin: result.view.origin,
+        url: result.view.url, title: grain.title, mainHref: grain.href }, openingGrain: false });
+    } catch (error) {
+      if (generation === this.generation && operation === this.grainGeneration) {
+        this.update({ openingGrain: false, error: `Unable to open grain: ${String(error)}` });
+      }
+    }
+  }
+
   async dismiss(id: string) {
     await this.mutate((shell) => this.state.fixture
       ? shell.dismiss((params) => { params.id = Number(id); }).promise()
@@ -132,7 +184,7 @@ export class ShellService {
       ++this.generation;
       clearTimeout(this.timer);
       this.clearConnection();
-      this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, account: null, total: 0, pending: false, error: '' });
+      this.update({ status: 'signed-out', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, account: null, total: 0, pending: false, error: '' });
     } catch (error) { this.update({ error: String(error) }); }
   }
 
@@ -158,7 +210,7 @@ export class ShellService {
   reconnect() {
     ++this.generation;
     clearTimeout(this.timer);
-    this.update({ status: 'connecting', entries: [], grains: [], grainsLimited: false, error: '', pending: false });
+    this.update({ status: 'connecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, error: '', pending: false });
     this.connect();
   }
 
@@ -169,6 +221,6 @@ export class ShellService {
     // Explicit cancellation is best effort; closing the connection also releases it.
     void this.subscription?.cancel().promise().catch(() => {});
     this.clearConnection();
-    this.update({ status: 'stopped', entries: [], grains: [], grainsLimited: false, pending: false });
+    this.update({ status: 'stopped', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, pending: false });
   }
 }

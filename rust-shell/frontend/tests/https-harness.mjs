@@ -31,6 +31,7 @@ export async function httpsProxy(directory, socketPath) {
       downstream.pipe(upstream); upstream.pipe(downstream);
     });
     upstream.on('error', () => downstream.destroy());
+    upstream.on('close', () => downstream.destroy());
     downstream.on('error', () => upstream.destroy());
     downstream.on('close', () => upstream.destroy());
   });

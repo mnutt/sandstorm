@@ -54,7 +54,9 @@ pub async fn serve(
     );
     let link = Rc::new(crate::interop::Link::new(fixture_socket));
     let _scope = link.scope();
-    let service = crate::service::Shell::new(link.clone(), session, initial);
+    let Ok(service) = crate::service::Shell::new(link.clone(), session, initial) else {
+        return;
+    };
     let bootstrap: crate::shell_capnp::shell::Client = capnp_rpc::new_client(service.clone());
     let rpc = RpcSystem::new(Box::new(network), Some(bootstrap.client));
     let incoming = async {
@@ -84,13 +86,24 @@ pub async fn serve(
             }
         }
     };
+    let maintain = async {
+        if let Some(scope) = &service.grain {
+            scope.maintain().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
     // Dropping any one future drops the RPC system, capabilities and both IO halves.
     tokio::select! {
         _ = rpc => {},
         _ = incoming => {},
         _ = outgoing => {},
         _ = service.synchronize() => {},
+        _ = maintain => {},
         _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {},
+    }
+    if let Some(scope) = &service.grain {
+        scope.close_all().await;
     }
 }
 

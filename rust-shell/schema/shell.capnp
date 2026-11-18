@@ -43,6 +43,15 @@ interface Subscription {
   # Dropping this capability also cancels observation.
 }
 
+struct GrainView {
+  grainId @0 :Text;
+  origin @1 :Text;
+  url @2 :Text;
+}
+interface GrainSession {
+  close @0 () -> ();
+  # Explicit close, release, or browser disconnect ends the UI session lease.
+}
 interface Shell {
   watch @0 (observer :Observer) -> (subscription :Subscription);
   dismiss @1 (id :UInt32) -> ();
@@ -53,4 +62,5 @@ interface Shell {
   # The browser never chooses a socket or receives Sandstorm Backend authority.
   dismissReal @4 (key :Text) -> ();
   markRead @5 () -> ();
+  openGrain @6 (grainId :Text) -> (view :GrainView, session :GrainSession);
 }

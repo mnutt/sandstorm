@@ -876,6 +876,10 @@ async function createSession(db, userId, sessionId, options) {
     hasLoaded: false,
   };
 
+  if (options.rustShell) {
+    session.rustShellSession = true;
+    session.rustShellLeaseExpires = Date.now() + 45000;
+  }
   if (options.parentOrigin) {
     session.parentOrigin = options.parentOrigin;
   }
@@ -925,6 +929,36 @@ async function createSession(db, userId, sessionId, options) {
 
   await globalDb.collections.sessions.insertAsync(session);
   return session;
+}
+
+// Narrow entry point for the experimental shell. The gateway still performs
+// the full permission check and attaches its existing revocation observer.
+export async function createRustGrainSession(db, accountId, grainId, parentOrigin) {
+  const grain = await db.collections.grains.findOneAsync({ _id: grainId });
+  if (!grain || grain.trashed || grain.suspended ||
+      !await SandstormPermissions.mayOpenGrainAsync(db, { grain: { _id: grainId, accountId } })) {
+    throw new Meteor.Error(403, "You do not have access to this grain.");
+  }
+  return createSession(db, accountId, Crypto.randomBytes(32).toString("hex"), {
+    grainId, revealIdentity: true, parentOrigin, rustShell: true,
+  });
+}
+
+export async function keepRustGrainSession(db, handle) {
+  const row = await db.collections.sessions.findOneAsync({ _id: handle.sessionId, userId: handle.accountId });
+  const grain = await db.collections.grains.findOneAsync({ _id: handle.grainId });
+  if (!row || row.denied || !grain || grain.trashed || grain.suspended ||
+      !await SandstormPermissions.mayOpenGrainAsync(db,
+          { grain: { _id: handle.grainId, accountId: handle.accountId } })) {
+    throw new Meteor.Error(403, "Grain access has ended.");
+  }
+  await bumpSession(handle.sessionId);
+  await db.collections.sessions.updateAsync({ _id: handle.sessionId, userId: handle.accountId },
+      { $set: { rustShellLeaseExpires: Date.now() + 45000 } });
+}
+
+export async function closeRustGrainSession(db, handle) {
+  await db.collections.sessions.removeAsync({ _id: handle.sessionId, userId: handle.accountId });
 }
 
 // Kill off sessions idle for >~3 minutes.
