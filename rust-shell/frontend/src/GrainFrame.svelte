@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { appPath } from './lib/router';
+  import { onMount, untrack } from 'svelte';
   import { PowerboxChooser } from './lib/powerbox';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, close, renderTemplate }: { grain: ActiveGrain; close: () => void; renderTemplate: (input: unknown) => Promise<string> } = $props();
+  let { grain, close, renderTemplate, pathChanged }: { grain: ActiveGrain; close: () => void; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
-  let path = $state('/');
+  let path = $state(untrack(() => grain.path));
   let notice = $state('');
   let choosing = $state(false);
   let chooser: PowerboxChooser;
@@ -21,9 +22,9 @@
         !event.data || typeof event.data !== 'object' || Array.isArray(event.data)) return;
     const data = event.data;
     if (typeof data.setTitle === 'string') frameTitle = data.setTitle.slice(0, 160);
-    if (typeof data.setPath === 'string' && data.setPath.length <= 2048 && data.setPath.startsWith('/') && !data.setPath.startsWith('//') && !data.setPath.includes('\\')) {
-      const target = new URL(data.setPath, grain.origin);
-      if (target.origin === grain.origin) path = target.pathname + target.search + target.hash;
+    if (typeof data.setPath === 'string') {
+      const next = appPath(data.setPath || '/');
+      if (next) { path = next; pathChanged(path); }
     }
     if (data.getGrainTitle && (typeof data.rpcId === 'string' || typeof data.rpcId === 'number')) {
       frame.contentWindow?.postMessage({ rpcId: data.rpcId, grainTitle: grain.title }, grain.origin);

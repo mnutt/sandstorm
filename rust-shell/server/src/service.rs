@@ -184,6 +184,8 @@ impl shell::Server for Shell {
         out.set_grain_id(&view.grain_id);
         out.set_origin(&view.origin);
         out.set_url(&view.url);
+        out.set_title(&view.title);
+        out.set_main_href(&view.main_href);
         Ok(())
     }
 

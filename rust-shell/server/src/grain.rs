@@ -14,6 +14,10 @@ pub struct View {
     pub grain_id: String,
     pub origin: String,
     pub url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, rename = "mainHref")]
+    pub main_href: String,
 }
 
 pub struct Scope {

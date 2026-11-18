@@ -5,7 +5,7 @@ import { WebSocketTransport } from './transport';
 
 export interface Notification { id: string; title: string; body: string; href: string; unread: boolean; ongoing: boolean; timestamp: string; senderName: string }
 export interface Grain { key: string; title: string; href: string; owned: boolean; lastUsed: string; appTitle: string }
-export interface ActiveGrain { grainId: string; origin: string; url: string; title: string; mainHref: string }
+export interface ActiveGrain { path: string; grainId: string; origin: string; url: string; title: string; mainHref: string }
 export interface ShellState {
   activeGrain: ActiveGrain | null;
   openingGrain: boolean;
@@ -156,7 +156,9 @@ export class ShellService {
     });
   }
 
-  async openGrain(grain: Grain) {
+  async openGrain(requested: Grain | string, path = '/') {
+    const grain = typeof requested === 'string' ? this.state.grains.find(g => g.key === requested) ||
+      { key: requested, title: 'Grain', href: location.origin + '/main-shell' } : requested;
     if (!this.shell || this.state.status !== 'ready' || this.state.openingGrain) return;
     const generation = this.generation;
     try { await this.closeGrain(); }
@@ -177,9 +179,10 @@ export class ShellService {
         result.session.client.close();
         throw new Error('Invalid grain session origin');
       }
+      url.searchParams.set('path', path);
       this.grainSession = result.session;
-      this.update({ activeGrain: { grainId: result.view.grainId, origin: result.view.origin,
-        url: result.view.url, title: grain.title, mainHref: grain.href }, openingGrain: false });
+      this.update({ activeGrain: { path, grainId: result.view.grainId, origin: result.view.origin,
+        url: url.href, title: result.view.title || grain.title, mainHref: result.view.mainHref || grain.href }, openingGrain: false });
     } catch (error) {
       if (generation === this.generation && operation === this.grainGeneration) {
         this.update({ openingGrain: false, error: `Unable to open grain: ${String(error)}` });

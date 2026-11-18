@@ -195,6 +195,7 @@ cleans up a session that finishes creation late. Old session handles cannot clos
 a replacement session. Closing removes the UI session record, never the grain.
 
 A Rust crash clears the old iframe; reconnect does not replay the open operation.
+The URL remains available for an explicit reopen or browser reload.
 The user can explicitly reopen with the same linked Meteor login. Meteor restart
 preserves valid linked logins and removes marked experimental UI sessions. Their
 expiry is also recorded in Mongo. If Mongo is unavailable during cleanup, the
@@ -208,7 +209,7 @@ and a one-shot `getGrainTitle` reply. Sharing requests show a main-shell link;
 `renderTemplate` uses an isolated shell-origin display (below). Powerbox requests
 use the main-shell chooser handoff.
 This is not full postMessage API parity,
-an incognito/sharing-link flow, or session restoration across shell reconnects.
+an incognito/sharing-link flow, or live-session restoration across reconnects.
 
 Validation includes capability release, close/reopen, late creation cancellation,
 source-login revocation, logout with an active iframe, lease renewal/expiry,
@@ -220,7 +221,32 @@ subsequent gateway requests fail, and reopens as the owner. That test exercises
 the real Meteor/C++ gateway with the main-shell parent origin; the browser/Rust
 integration test exercises the secondary HTTPS origin with an isolated adapter.
 The user confirmed grain opening on the deployed secondary HTTPS origin on yertle.
-The new Powerbox handoff still needs a deployed-origin check.
+The user also confirmed the Powerbox handoff and Davros API templates on yertle.
+
+### URL navigation
+
+The shell has `/notifications`, `/grains`, and `/grain/<id>/<app-path>` routes.
+Sidebar navigation and opening/closing grains participate in browser history;
+Back/Forward closes the prior UI lease before opening the destination. Valid
+app `setPath` messages replace the current route, including query and fragment,
+without replacing the iframe. Origin and source-window checks still apply.
+
+Reloading or following a bookmark opens a fresh, authorized UI session at the
+requested app path. The URL contains the grain ID and app path, never a UI session
+ID or shell bearer token. Direct links do not depend on membership in the bounded
+grain menu; Meteor checks access and supplies the account-scoped grain title.
+Only explicit SPA routes serve the frontend index; unknown API and asset paths
+remain errors. Invalid app paths cannot navigate to another origin.
+
+A transient connection failure preserves the route but does not silently reopen
+the grain. Use **Reopen grain** or reload to restore it. Returning from the main
+shell's sign-in handoff restores the route from a short-lived, tab-local record;
+only validated shell paths are accepted. Powerbox operations and API-token
+issuance are never replayed by the router.
+
+Browser coverage includes page and app-path reload, fresh session IDs, history
+navigation, direct links beyond the menu, denied grain access, login return paths,
+and navigation away during an in-flight grain opening.
 
 ### Powerbox chooser handoff
 

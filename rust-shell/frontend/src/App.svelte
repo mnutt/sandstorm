@@ -1,11 +1,43 @@
 <script lang="ts">
+  import { initialRoute, readRoute, grainRoute, routeKey, rememberRoute } from './lib/router';
   import GrainFrame from './GrainFrame.svelte';
   import { onMount } from 'svelte';
   import { ShellService, type ShellState } from './lib/shell';
 
   let model: ShellState = $state({ status: 'connecting', entries: [], grains: [], grainsLimited: false, activeGrain: null, openingGrain: false, revision: 0, error: '', pending: false, fixture: true, account: null, total: 0 });
   const notifications = new ShellService((next) => { model = next; });
-  let view = $state<'notifications' | 'grains'>('notifications');
+  let route = $state(initialRoute());
+  let attempt = $state('');
+  const view = $derived(route.page === 'notifications' ? 'notifications' : 'grains');
+  let navigation = Promise.resolve();
+  let navigationId = 0;
+  let changingRoute = $state(false);
+  let opening = Promise.resolve();
+  function navigate(path: string, pop = false) {
+    const id = ++navigationId;
+    changingRoute = true;
+    navigation = navigation.catch(() => {}).then(async () => {
+      await notifications.closeGrain();
+      await opening;
+      if (id !== navigationId) return;
+      if (!pop && location.pathname + location.search + location.hash !== path) history.pushState(null, '', path);
+      route = readRoute();
+      attempt = '';
+      changingRoute = false;
+    }).catch(() => { if (id === navigationId) changingRoute = false; notifications.reconnect(); });
+  }
+  function updatePath(path: string) {
+    if (route.page !== 'grain' || route.grainId !== model.activeGrain?.grainId) return;
+    history.replaceState(null, '', grainRoute(route.grainId, path));
+    route = readRoute();
+    attempt = routeKey(route);
+  }
+  $effect(() => {
+    if (!changingRoute && route.page === 'grain' && model.status === 'ready' && !model.openingGrain && !model.activeGrain && attempt !== routeKey(route)) {
+      attempt = routeKey(route);
+      opening = notifications.openGrain(route.grainId, route.path);
+    }
+  });
   let search = $state('');
   let sort = $state('recent');
   let ownership = $state('all');
@@ -17,6 +49,7 @@
   onMount(() => { notifications.start(); return () => notifications.stop(); });
 </script>
 
+<svelte:window onpopstate={() => navigate(location.pathname + location.search + location.hash, true)} />
 <svelte:head><meta name="description" content="Experimental Sandstorm shell running on Rust and Svelte." /></svelte:head>
 
 <header><strong>Sandstorm</strong><span>Rust shell · experimental</span></header>
@@ -26,8 +59,8 @@
     <p>A small first step toward the new architecture.</p>
     <a href="/main-shell">Open the main shell ↗</a>
     <nav aria-label="Shell pages">
-      <button class="secondary" aria-current={view === 'notifications' ? 'page' : undefined} onclick={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); view = 'notifications'; }}>Notifications</button>
-      <button class="secondary" aria-current={view === 'grains' ? 'page' : undefined} onclick={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); view = 'grains'; }}>Grains</button>
+      <button class="secondary" aria-current={view === 'notifications' ? 'page' : undefined} onclick={() => navigate('/notifications')}>Notifications</button>
+      <button class="secondary" aria-current={view === 'grains' ? 'page' : undefined} onclick={() => navigate('/grains')}>Grains</button>
     </nav>
     <hr />
     {#if model.fixture}
@@ -36,7 +69,7 @@
     {:else if model.account}
       <h2>Connected as {model.account}</h2>
       <p>Notifications and dismissals are shared with the main shell. Changes appear within a few seconds.</p>
-      <p><a href="/auth/start">Switch account</a></p>
+      <p><a href="/auth/start" onclick={rememberRoute}>Switch account</a></p>
       <button class="secondary" onclick={() => notifications.logout()}>Disconnect</button>
     {:else}
       <h2>Your Sandstorm account</h2>
@@ -46,13 +79,27 @@
   </aside>
   {#if model.activeGrain}
     {#key model.activeGrain.url}
-      <GrainFrame renderTemplate={(input) => notifications.renderTemplate(input)} grain={model.activeGrain} close={() => { void notifications.closeGrain().catch(() => notifications.reconnect()); }} />
+      <GrainFrame pathChanged={updatePath} renderTemplate={(input) => notifications.renderTemplate(input)} grain={model.activeGrain} close={() => navigate('/grains')} />
     {/key}
+  {:else if route.page === 'missing'}
+    <section><h2>Page not found</h2><button onclick={() => navigate('/grains')}>Go to grains</button></section>
+  {:else if route.page === 'grain'}
+    <section aria-label="Grain route">
+      <h2>Grain</h2>
+      {#if model.status === 'signed-out'}
+        <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to open this grain.</p>
+      {:else if model.status === 'waiting'}
+        <p>Waiting for the main shell… Your login will be checked when it returns.</p>
+      {:else if model.status !== 'ready' || model.openingGrain || changingRoute}<p role="status">Opening grain…</p>
+      {:else}<button onclick={() => { attempt = ''; }}>Reopen grain</button>{/if}
+      {#if model.error}<p role="alert">{model.error}</p>{/if}
+      <button class="secondary" onclick={() => navigate('/grains')}>Back to grains</button>
+    </section>
   {:else if view === 'grains'}
   <section aria-labelledby="grains-title">
     <div class="heading"><h2 id="grains-title">Grains</h2><span class="status" role="status">{model.status}</span></div>
     {#if model.status === 'signed-out'}
-      <p><a href="/auth/start">Sign in with Sandstorm</a> to see your grains.</p>
+      <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your grains.</p>
     {:else if model.status !== 'ready'}
       <p class="empty">{model.status === 'waiting' ? 'Waiting for the main shell… Your login will be checked when it returns.' : model.status === 'reconnecting' ? 'Connection lost. Reconnecting…' : 'Loading your grains…'}</p>
       <button class="secondary" onclick={() => notifications.reconnect()}>Reconnect</button>
@@ -75,7 +122,7 @@
             <h3><a href={grain.href}>{grain.title}</a></h3>
             <p><span>{grain.appTitle || 'Unknown app'}</span> · <span>{grain.owned ? 'Owned by you' : 'Shared with you'}</span></p>
             {#if grain.lastUsed}<time datetime={grain.lastUsed}>Last used {new Date(grain.lastUsed).toLocaleString()}</time>{/if}
-          </div><button disabled={model.openingGrain} onclick={() => notifications.openGrain(grain)} aria-label={`Open ${grain.title} here`}>Open here</button></li>
+          </div><button disabled={model.openingGrain} onclick={() => navigate(grainRoute(grain.key))} aria-label={`Open ${grain.title} here`}>Open here</button></li>
         {/each}
       </ul>
       {#if model.grainsLimited}<p>This is a limited preview of your grains. <a href="/main-shell">View all grains in the main shell.</a></p>{/if}
@@ -88,7 +135,7 @@
     <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{model.status}</span></div>
     <div class="actions">
       {#if model.status === 'signed-out'}
-        <a href="/auth/start">Sign in with Sandstorm</a>
+        <a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a>
       {:else}
         {#if model.fixture}
           <button onclick={() => notifications.addFixture()} disabled={model.status !== 'ready' || model.pending}>Add test notification</button>

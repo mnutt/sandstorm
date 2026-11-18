@@ -47,6 +47,8 @@ struct GrainView {
   grainId @0 :Text;
   origin @1 :Text;
   url @2 :Text;
+  title @3 :Text;
+  mainHref @4 :Text;
 }
 interface GrainSession {
   close @0 () -> ();

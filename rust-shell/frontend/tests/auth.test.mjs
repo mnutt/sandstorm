@@ -26,6 +26,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let leaseClockOffset = 0;
   let renewals = 0;
   let templates = 0;
+  let holdOpen = false;
+  let releaseOpen;
   const users = { alice: { name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
     bob: { name: 'Bob', hash: 'bob-login', expires: Date.now() + 3600000 } };
   const rows = new Map();
@@ -44,9 +46,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     now: () => Date.now() + leaseClockOffset,
     grains: {
       open: async (id, grainId) => {
-        if (grainId !== `${id}-grain`) throw Object.assign(new Error('Denied'), { status: 403 });
+        if (![`${id}-grain`, `${id}-hidden`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
+        if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
         const handle = ++serial; liveGrains.add(handle);
-        return { handle, view: { grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
+        return { handle, view: { grainId, title: grainId.endsWith('-hidden') ? 'Hidden grain' : '', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
@@ -140,6 +143,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
     await page.getByRole('button', { name: 'Grains', exact: true }).click();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
+    await page.reload();
+    await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/grains');
     assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), `${mainOrigin}/grain/alice-grain`);
     assert.equal(await page.getByRole('link', { name: 'Bob grain', exact: true }).count(), 0);
     await page.locator('.grain-item').getByText('Owned by you', { exact: true }).waitFor();
@@ -164,7 +170,27 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     assert.equal(liveGrains.size, 1);
+    assert.equal(new URL(page.url()).pathname, '/grain/alice-grain');
+    const originalUrl = await page.locator('iframe').getAttribute('src');
+    await page.frames().find(frame => frame.url().startsWith(grainOrigin)).evaluate(() =>
+      parent.postMessage({setPath:'/folder/document?mode=edit#heading'}, '*'));
+    await page.waitForURL('**/grain/alice-grain/folder/document?mode=edit#heading');
+    await page.reload();
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
+    const restoredUrl = new URL(await page.locator('iframe').getAttribute('src'));
+    assert.equal(restoredUrl.searchParams.get('path'), '/folder/document?mode=edit#heading');
+    assert.notEqual(restoredUrl.searchParams.get('sessionid'), new URL(originalUrl).searchParams.get('sessionid'));
+    assert.equal(page.url().includes('sessionid'), false);
+    await page.goBack();
+    await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
+    await expect.poll(() => liveGrains.size).toBe(0);
+    await page.goForward();
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     const app = page.frames().find((frame) => frame.url().startsWith(grainOrigin));
+    const pathBeforeForged = page.url();
+    await app.evaluate(() => parent.postMessage({setPath:'//untrusted.test/'}, '*'));
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    assert.equal(page.url(), pathBeforeForged);
     await app.getByLabel('App state').fill('keep this iframe alive');
     await page.evaluate((origin) => window.dispatchEvent(new MessageEvent('message', {
       origin, source: window, data: { setTitle: 'Forged title' },
@@ -285,9 +311,6 @@ test('authenticated notifications: handoff, shared writes, account switching and
       RUST_SHELL_FIXTURE_SOCKET: '',
     }, /Rust shell: (https:\/\/\S+)/)).child;
     await page.reload();
-    await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
-    await page.getByRole('button', { name: 'Grains', exact: true }).click();
-    await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     // Recreate Meteor's bridge over the same durable store while an app and
     // chooser are active. Startup discards UI sessions, never the linked login.
@@ -305,12 +328,14 @@ test('authenticated notifications: handoff, shared writes, account switching and
     bridge = createRustShellBridge(bridgeOptions);
     liveGrains.clear(); // Production removes marked Mongo UI sessions at startup.
     bridgeOffline = false;
-    await page.getByRole('button', {name:'Open Alice grain here', exact:true}).waitFor();
+    await page.getByRole('button', {name:'Reopen grain', exact:true}).waitFor();
     assert.equal(await page.locator('iframe').count(), 0, 'restart must not replay grain opening');
     assert.equal((await context.cookies()).find(c => c.name === '__Host-sandstorm-rust-session').value, loginBeforeRestart);
     await page.reload();
-    await expect.poll(() => liveGrains.size).toBe(0);
+    await page.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
     await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+    await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
+    await expect.poll(() => liveGrains.size).toBe(0);
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);
@@ -330,6 +355,28 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', { name: 'Mark all as read' }).click();
     await expect.poll(() => rows.get('alice-real-id').unread).toBe(false);
     assert.equal(rows.get('bob-real-id').unread, true);
+    const deep = await context.newPage();
+    await deep.goto(proxy.origin + '/grain/alice-hidden/deep?q=1#part');
+    await deep.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
+    await deep.getByRole('heading', {name:'Hidden grain', exact:true}).waitFor();
+    await deep.goto(proxy.origin + '/grain/bob-grain');
+    await expect(deep.getByRole('alert')).toContainText('Unable to open grain');
+    assert.equal(await deep.locator('iframe').count(), 0);
+    await deep.close();
+    const racing = await context.newPage();
+    await racing.goto(proxy.origin + '/grains');
+    holdOpen = true;
+    await racing.getByRole('button', {name:'Open Alice grain here', exact:true}).click();
+    await expect.poll(() => !!releaseOpen).toBe(true);
+    await racing.getByRole('button', {name:'Notifications', exact:true}).click();
+    holdOpen = false; releaseOpen();
+    await racing.waitForURL('**/notifications');
+    await racing.getByRole('heading', {name:/Alice notification/}).waitFor();
+    assert.equal(await racing.locator('iframe').count(), 0);
+    await expect.poll(() => liveGrains.size).toBe(0);
+    assert.equal(await racing.evaluate(async () => (await fetch('/auth/unknown')).status), 404);
+    assert.equal(await racing.evaluate(async () => (await fetch('/missing.js')).status), 404);
+    await racing.close();
     const other = await context.newPage();
     await other.goto(proxy.origin);
     await other.getByRole('heading', { name: /Alice notification/ }).waitFor();
@@ -356,6 +403,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
     users.bob.hash = 'revoked-by-main-shell';
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
     assert.equal(await page.locator('.notification-item').count(), 0);
+    const freshContext = await browser.newContext();
+    const fresh = await freshContext.newPage();
+    activeMainAccount = 'alice';
+    await fresh.goto(proxy.origin + '/grain/alice-hidden/clients?tab=sync#url');
+    await fresh.getByRole('link', {name:'Sign in with Sandstorm'}).click();
+    await fresh.getByRole('button', {name:'Connect Alice'}).click();
+    await fresh.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
+    assert.equal(new URL(fresh.url()).pathname + new URL(fresh.url()).search + new URL(fresh.url()).hash,
+      '/grain/alice-hidden/clients?tab=sync#url');
+    await freshContext.close();
     assert.deepEqual(errors, []);
   } catch (error) {
     console.error("Grain browser test failed:", error.message);

@@ -1,20 +1,22 @@
 "use strict";
 const utils = require('../utils');
 
-function operation(browser, action, embed) {
-  browser.frame(null).executeAsync(function (action, embed, done) {
+function operation(browser, action, embed, path = '/') {
+  browser.frame(null).executeAsync(function (action, embed, path, done) {
     const grainId = window.location.pathname.split('/')[2];
     Meteor.call('testRustGrainSession', action, grainId, function (error, result) {
       if (!error && embed) {
         document.getElementById('rust-session-test')?.remove();
         const frame = document.createElement('iframe');
-        frame.id = 'rust-session-test'; frame.src = result.url;
+        frame.id = 'rust-session-test';
+        const target = new URL(result.url); target.searchParams.set('path', path);
+        frame.src = target.href;
         frame.style = 'position:fixed;inset:0;width:100%;height:100%;z-index:99999;background:white';
         document.body.appendChild(frame);
       }
       done({ error: error?.message, ok: !!result });
     });
-  }, [action, embed], function (result) {
+  }, [action, embed, path], function (result) {
     browser.assert.equal(result.value.error, null, action + ' UI session succeeded');
     browser.assert.equal(result.value.ok, true);
   });
@@ -23,8 +25,14 @@ function operation(browser, action, embed) {
 module.exports['Real grain iframe session, close/reopen, shared access and revocation'] = function (browser) {
   browser.loginDevAccount().uploadTestApp().timeouts('script', 30000).grainFrame()
     .waitForElementPresent('#do-test-system-api', utils.medium_wait).frame(null);
-  operation(browser, 'open', true);
-  browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
+  operation(browser, 'open', true, '/?restored=1#section');
+  browser.frameSelector('#rust-session-test').waitForElementPresent('body', utils.medium_wait);
+  browser.execute(function () { return location.search + location.hash; }, [], result => {
+    browser.assert.equal(result.value, '?restored=1#section', 'gateway restores the requested app query and fragment');
+  });
+  // The test app deliberately serves only the literal root path, without a query.
+  browser.execute(function () { location.replace('/'); })
+    .waitForElementPresent('#do-test-system-api', utils.medium_wait);
   // Exercise the actual Meteor chooser against the leased session. This isolated
   // server uses the main origin as the simulated Rust opener; the HTTPS browser
   // suite separately verifies the cross-origin handoff.

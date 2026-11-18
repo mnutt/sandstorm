@@ -21,7 +21,10 @@ use axum::{
 };
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
-use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
+};
 
 type Connection = (
     axum::extract::ws::WebSocket,
@@ -149,7 +152,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sockets,
         permits: Arc::new(Semaphore::new(16)),
     };
+    let index = ServeFile::new(assets.join("index.html"));
     let app = Router::new()
+        .route_service("/notifications", index.clone())
+        .route_service("/grains", index.clone())
+        .route_service("/grain/{id}", index.clone())
+        .route_service("/grain/{id}/", index.clone())
+        .route_service("/grain/{id}/{*path}", index)
         .route("/healthz", get(move || async move { if fixture { "rust-shell fixture spike\n" } else { "rust-shell authenticated bridge\n" } }))
         .route("/auth/session", get(auth::status))
         .route("/auth/start", get(auth::start))

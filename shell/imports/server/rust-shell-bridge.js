@@ -36,10 +36,11 @@ export const rustShellBridge = createRustShellBridge({
     async open(accountId, grainId) {
       const parentOrigin = Meteor.settings.public.rustShellOrigin;
       if (!parentOrigin) throw new Meteor.Error(503, "Rust grain sessions are not enabled.");
+      const title = text(await globalDb.userGrainTitle(grainId, accountId), 256);
       const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
       const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return { handle: { sessionId: session._id, accountId, grainId },
-        view: { grainId, origin, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
+        view: { grainId, origin, title, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
     },
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
