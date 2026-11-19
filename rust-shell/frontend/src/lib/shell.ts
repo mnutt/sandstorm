@@ -41,7 +41,7 @@ export class ShellService {
           this.update({ notificationError: '', grainError: '' });
         }
         this.apps.selectAccount(key);
-        this.update({ fixture: session.fixture, account: session.account?.name ?? null, accountKey:key });
+        this.update({ fixture: session.fixture, account: session.account?.name ?? null, accountKey:key, accountPictureUrl:session.account?.pictureUrl || '' });
       },
       status: (status, connectionError) => this.update({
         status, connectionError, entries: [], grains: [], grainsLimited: false, total: 0,
@@ -68,14 +68,14 @@ export class ShellService {
     for (const entry of snapshot.entries) entries.push({
       id: entry.key || String(entry.id), title: entry.title, body: entry.body,
       href: entry.href, nativePath: entry.nativePath, nativeAction: entry.nativeAction, unread: entry.unread, ongoing: entry.ongoing,
-      timestamp: entry.timestamp, senderName: entry.senderName,
+      timestamp: entry.timestamp, senderName: entry.senderName, senderPictureUrl:entry.senderPictureUrl,
     });
     const grains: Grain[] = [];
     for (const grain of snapshot.grains) grains.push({
       key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
       href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
     });
-    this.update({ status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
+    this.update({ accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
       revision: snapshot.revision, total: snapshot.total, connectionError: '' });
     this.grains.applyMenu(grains);
   }

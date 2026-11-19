@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from './components/ui/Avatar.svelte';
   import { Popover } from 'bits-ui';
   import Button from './components/ui/Button.svelte';
   import { isPlainNavigation } from './lib/navigation';
@@ -18,7 +19,7 @@
 <Popover.Root bind:open>
   <Popover.Trigger disabled={checking} aria-label={`Account: ${label}`}>
     {#snippet child({ props })}
-      <button {...props} class="trigger"><span>{label}</span><span aria-hidden="true">▾</span></button>
+      <button {...props} class="trigger"><Avatar name={model.account || ''} src={model.accountPictureUrl} /><span class="account-name">{label}</span><span aria-hidden="true">▾</span></button>
     {/snippet}
   </Popover.Trigger>
   <Popover.Portal>
@@ -28,7 +29,7 @@
       {#snippet child({ props, wrapperProps })}
       <div {...wrapperProps}>
         <div {...props} class="account-menu" aria-label="Account controls">
-          <strong>{model.account ? `Connected as ${model.account}` : label}</strong>
+          <div class="identity"><Avatar name={model.account || ''} src={model.accountPictureUrl} size={28} /><strong>{model.account ? `Connected as ${model.account}` : label}</strong></div>
           <a href="/account" onclick={event => { navigating = isPlainNavigation(event); navigate(event, '/account'); open = false; }}>Account</a>
           {#if model.account}
             <a href="/auth/start" onclick={rememberRoute}>Switch account</a>
@@ -46,6 +47,7 @@
 </Popover.Root>
 
 <style>
+  .identity { display:flex; align-items:center; gap:.5rem; }
   .trigger {
     display: flex;
     align-items: center;
@@ -61,7 +63,7 @@
     cursor: pointer;
   }
 
-  .trigger span:first-child {
+  .account-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

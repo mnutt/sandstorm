@@ -12,6 +12,7 @@ export interface Notification {
   ongoing: boolean;
   timestamp: string;
   senderName: string;
+  senderPictureUrl: string;
 }
 export interface Grain {
   appId: string;
@@ -61,6 +62,7 @@ export interface ShellState {
   fixture: boolean;
   account: string | null;
   accountKey: string | null;
+  accountPictureUrl: string;
   total: number;
   creation: CreationState;
   profile: ProfileState;
@@ -70,6 +72,6 @@ export function initialShellState(): ShellState {
     profile: emptyProfile(), status: 'connecting', entries: [], grains: [], grainsLimited: false,
     activeGrain: null, openGrains: [], openingGrain: false, revision: 0,
     connectionError: '', notificationError: '', grainError: '', pending: false,
-    fixture: true, account: null, accountKey:null, total: 0, creation: { status: 'idle' },
+    fixture: true, accountPictureUrl: '', account: null, accountKey:null, total: 0, creation: { status: 'idle' },
   };
 }

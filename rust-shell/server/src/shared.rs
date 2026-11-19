@@ -95,6 +95,7 @@ impl shared_shell::Server for SharedShell {
         out.set_title(info["title"].as_str().unwrap_or("Shared grain"));
         out.set_guests_allowed(info["guestsAllowed"].as_bool().unwrap_or(false));
         out.set_signed_in(info["signedIn"].as_bool().unwrap_or(false));
+        out.set_account_picture_url(info["accountPictureUrl"].as_str().unwrap_or_default());
         out.set_account_name(info["accountName"].as_str().unwrap_or_default());
         Ok(())
     }

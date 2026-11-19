@@ -4,7 +4,7 @@ import type { ConnectionStatus } from './model';
 import { runOperation, type OperationOptions, errorMessage } from './operations';
 import { WebSocketTransport } from './transport';
 
-interface SessionInfo { fixture: boolean; account: { name: string; key: string } | null }
+interface SessionInfo { fixture: boolean; account: { name: string; key: string; pictureUrl?: string } | null }
 interface ConnectionEvents {
   reset: () => void;
   session: (session: SessionInfo) => void;

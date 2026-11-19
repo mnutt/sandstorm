@@ -1,3 +1,4 @@
+import { rustUserPicture } from "/imports/server/rust-shell-users";
 import { Meteor } from "meteor/meteor";
 import { check, Match } from "meteor/check";
 import { SandstormPermissions, updateApiTokenForAccount } from "/imports/sandstorm-permissions/permissions";
@@ -48,7 +49,7 @@ export async function rustSharingState(db, handle) {
   const grants = await Promise.all(rows.slice(0, 100).map(async row => {
     const recipient = row.owner?.user?.accountId;
     const user = recipient && await db.collections.users.findOneAsync(recipient, { fields: { profile: 1 } });
-    return { id: row._id, label: text(row.petname, "Unlabeled link"), role: roleKey(row),
+    return { id: row._id, recipientPictureUrl: rustUserPicture(user), label: text(row.petname, "Unlabeled link"), role: roleKey(row),
       kind: sharingLink(row) ? "link" : recipient ? "person" : "grain",
       recipient: recipient ? text(user?.profile?.name, "Unknown user") : row.owner?.grain ? "Connected grain" : "Anyone with the link",
       editable: editable(row, handle.accountId), inherited: !!row.parentToken,

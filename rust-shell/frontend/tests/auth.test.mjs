@@ -32,14 +32,15 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let failCreation = false;
   let holdOpen = false;
   let releaseOpen;
-  const users = { alice: { name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
+  const fixtureAvatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+  const users = { alice: { pictureUrl:fixtureAvatar, name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
     bob: { name: 'Bob', hash: 'bob-login', expires: Date.now() + 3600000 } };
   const rows = new Map();
   const observers = new Set();
   let observationStarts = 0;
   const changed = () => { for (const notify of observers) notify(); };
   const add = (key, user, title) => { rows.set(key, { user, key, title, body: 'Shared notification',
-    unread: true, ongoing: false, href: '', senderName: '<script>window.senderInjected = true</script>', timestamp: new Date().toISOString() }); changed(); };
+    unread: true, ongoing: false, href: '', senderPictureUrl:fixtureAvatar, senderName: '<script>window.senderInjected = true</script>', timestamp: new Date().toISOString() }); changed(); };
   add('alice-real-id', 'alice', 'Alice notification');
   add('bob-real-id', 'bob', 'Bob notification');
   let activeMainAccount = 'alice';
@@ -101,7 +102,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       close: async (handle) => { liveGrains.delete(handle); },
       rename: async (_handle, title, beforeWrite) => { await beforeWrite(); grainTitles.alice = title; changed(); return { title, ownerTitle: title }; },
       sharing: async () => ({roles:[{key:'0',title:'Viewer',description:'Read only'},{key:'1',title:'Editor',description:'Can edit'}],defaultRole:'0',private:true,owner:true,
-        grants:[...sharingGrants,{id:'downstream',kind:'person',recipient:'Bob',label:'Via project link',role:'0',editable:false,inherited:true,created:''}],limited:false}),
+        grants:[...sharingGrants,{id:'downstream',kind:'person',recipient:'Bob',recipientPictureUrl:fixtureAvatar,label:'Via project link',role:'0',editable:false,inherited:true,created:''}],limited:false}),
       createShare: async (_handle, input, beforeWrite) => {
         await beforeWrite(); ++shareCreations;
         sharingGrants.push({id:'share-'+shareCreations,kind:'link',label:input.label,role:input.role,editable:true,inherited:false,created:'',recipient:'Anyone with the link'});
@@ -127,13 +128,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
       if (operation === 'setStats') { await beforeWrite(); rows.delete(key); changed(); return {kind:'stats',enabled,sample:'',sampleLimited:false}; }
       const kind = rows.get(key).nativeAction;
       if (kind === 'stats') return {kind,enabled:null,sample:'{}',sampleLimited:false};
-      if (kind === 'referrals') return {kind,enabled:true,pending:['Pending person'],completed:['Completed person'],limited:false};
+      if (kind === 'referrals') return {kind,enabled:true,pending:[{name:'Pending person',pictureUrl:fixtureAvatar}],completed:[{name:'Completed person',pictureUrl:fixtureAvatar}],limited:false};
       return {kind};
     },
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
+      return { accountPictureUrl:profiles[id].pictureUrl || '', profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', appId: 'test-app', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
@@ -277,6 +278,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
+    await expect(page.locator('.notification-item .avatar img')).toHaveAttribute('src',fixtureAvatar);
     rows.get('alice-real-id').nativePath = '/grain/alice-grain/folder?mode=read#comment';
     add('alice-update','alice','App updates available');
     rows.get('alice-update').nativePath = '/install';
@@ -297,6 +299,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(rows.get('identity').unread,true,'Opening a notice must not read other notices');
     assert.equal(rows.get('bob-real-id').unread,true,'Opening a notice must not read another account’s notices');
     await page.getByText('Pending person',{exact:true}).waitFor();
+    await expect(page.getByRole('dialog').locator('li .avatar img')).toHaveCount(2);
     await page.getByRole('button',{name:'Close',exact:true}).click();
     await page.getByRole('button',{name:'Account identities have changed',exact:true}).click();
     await page.getByText(/No action is required for this notice/).waitFor();
@@ -369,6 +372,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await expect(page.locator('.picture [role=alert]')).toHaveCount(0);
     await expect(page.getByText('The profile was updated by someone else.',{exact:true})).toHaveCount(0);
     await expect(page.getByRole('img',{name:'Current avatar'})).toHaveAttribute('src',profiles.alice.pictureUrl);
+    await expect(page.locator('.trigger .avatar img')).toHaveAttribute('src',profiles.alice.pictureUrl);
     assert.equal(profiles.bob.pictureUrl,undefined);
     await page.getByLabel('Display name', {exact:true}).fill('Alice renamed');
     await page.getByLabel('Handle', {exact:true}).fill('alice_renamed');
@@ -439,6 +443,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const signedShare = await context.newPage();
     await signedShare.goto(proxy.origin+'/shared/valid-share');
     await signedShare.getByRole('button',{name:'Open as Alice',exact:true}).waitFor();
+    await expect(signedShare.getByRole('button',{name:'Open as Alice',exact:true}).locator('.avatar img')).toHaveAttribute('src',fixtureAvatar);
     assert.equal(await signedShare.locator('iframe').count(),0,'signed-in identity must not be revealed automatically');
     await signedShare.getByRole('button',{name:'Open anonymously',exact:true}).click();
     await signedShare.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
@@ -752,6 +757,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.keyboard.press('ArrowRight');
     await expect(sharingDialog.getByRole('tab', {name:'Who has access',exact:true})).toHaveAttribute('aria-selected','true');
     await expect(sharingDialog.getByRole('table', {name:'Current access'})).toBeVisible();
+    await expect(sharingDialog.locator('.recipient .avatar img')).toHaveAttribute('src',fixtureAvatar);
     await sharingDialog.getByText('Bob',{exact:true}).waitFor();
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-access.png'});
     await sharingDialog.getByRole('button', {name:'Edit',exact:true}).click();

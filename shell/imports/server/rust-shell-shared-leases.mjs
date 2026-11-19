@@ -31,7 +31,7 @@ export function createSharedLeases({ inspect, open, keep, close, account, now = 
     async inspect(input) {
       const info = await information(input.webkey);
       const user = await identity(input.accountToken);
-      return { ...info, accountName: user?.name || '', signedIn: !!user };
+      return { ...info, accountName: user?.name || '', accountPictureUrl: user?.pictureUrl || '', signedIn: !!user };
     },
     async open(input, signal) {
       if (!validScope(input.scope) || !validWebkey(input.webkey) || typeof input.revealIdentity !== 'boolean') throw fail(400, 'Invalid shared session request.');

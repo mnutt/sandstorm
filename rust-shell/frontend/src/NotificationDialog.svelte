@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from './components/ui/Avatar.svelte';
   import { onMount } from 'svelte';
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
@@ -39,9 +40,9 @@
   {:else if details?.kind === 'referrals'}
     <p>{details.enabled ? 'Share a grain with someone new to Sandstorm. A referral completes when they share a grain and someone else opens it.' : 'The referral program is not enabled on this server.'}</p>
     <h3>Completed referrals</h3>
-    {#if details.completed.length}<ul>{#each details.completed as name}<li>{name}</li>{/each}</ul>{:else}<p>No completed referrals.</p>{/if}
+    {#if details.completed.length}<ul>{#each details.completed as person}<li><Avatar name={person.name} src={person.pictureUrl} /><span>{person.name}</span></li>{/each}</ul>{:else}<p>No completed referrals.</p>{/if}
     <h3>Pending referrals</h3>
-    {#if details.pending.length}<ul>{#each details.pending as name}<li>{name}</li>{/each}</ul>{:else}<p>No pending referrals.</p>{/if}
+    {#if details.pending.length}<ul>{#each details.pending as person}<li><Avatar name={person.name} src={person.pictureUrl} /><span>{person.name}</span></li>{/each}</ul>{:else}<p>No pending referrals.</p>{/if}
     {#if details.limited}<p>Showing up to 100 referrals in each list.</p>{/if}
   {:else if details?.kind === 'identity'}
     <p>Sandstorm updated how login credentials link to accounts. Your account can have multiple sign-in credentials while keeping a consistent identity in your apps.</p>
@@ -50,6 +51,8 @@
   <div class="actions"><Button variant="secondary" disabled={busy} onclick={() => open = false}>Close</Button></div>
 </Modal>
 <style>
+  li { display:flex; align-items:center; gap:.5rem; margin-block:.5rem; }
+  ul { list-style:none; padding:0; }
   p, li { overflow-wrap: anywhere; }
   h3 { font-size: 1rem; margin-bottom: .5rem; }
   pre { overflow: auto; max-height: 16rem; font-size: .75rem; }

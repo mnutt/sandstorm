@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from './components/ui/Avatar.svelte';
   import { onDestroy } from 'svelte';
   import Button from './components/ui/Button.svelte';
   import { previewProfilePicture } from './lib/profile-picture';
@@ -50,6 +51,7 @@
     <figure><img src={selection.url} alt="New avatar preview" width="96" height="96" /><figcaption>Preview</figcaption></figure>
   {:else if profile.value?.pictureUrl}
     <img src={profile.value.pictureUrl} alt="Current avatar" width="64" height="64" referrerpolicy="no-referrer" />
+  {:else}<Avatar name={profile.value?.name} size={64} />
   {/if}
   <div>
     <label for="profile-picture">Choose an image</label>
@@ -73,7 +75,7 @@
   h3 { flex-basis: 100%; font-size: var(--ss-text-small); margin: 0; }
   figure { margin: 0; flex: none; }
   figcaption { text-align: center; color: var(--ss-muted); font-size: .75rem; }
-  img { object-fit: cover; border-radius: var(--ss-radius-control); }
+  img { object-fit: cover; border-radius: 2px; }
   label { display: block; margin-bottom: .5rem; font-weight: 600; font-size: var(--ss-text-small); }
   input { max-width: 100%; }
   p { overflow-wrap: anywhere; }

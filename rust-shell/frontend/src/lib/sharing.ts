@@ -3,6 +3,7 @@ import { shareData } from './protocol';
 
 export interface ShareGrant {
   id: string; label: string; role: string; kind: 'link' | 'person' | 'grain';
+  recipientPictureUrl?: string;
   recipient: string; editable: boolean; inherited: boolean; created: string;
 }
 export interface SharingState {

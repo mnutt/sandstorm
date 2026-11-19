@@ -44,7 +44,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
   const leases = createGrainLeases({ ...grains, validate: session, now });
   const sharedLeases = createSharedLeases({ ...shared, now, account: async token => {
     const value = await session(token);
-    return {id:value.record.accountId, name:value.account.name};
+    return {id:value.record.accountId, name:value.account.name, pictureUrl:value.account.pictureUrl || ""};
   } });
   return {
     sweepGrains: () => Promise.all([leases.sweep(), sharedLeases.sweep()]),
@@ -83,7 +83,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
           const linked = { accountId: record.accountId, loginHash: record.loginHash,
             expires: Math.min(account.expires, now() + 12 * 60 * 60 * 1000) };
           await sessions.put(hash(token), linked);
-          return { token, account: { name: account.name, key: hash(record.accountId) }, expires: linked.expires };
+          return { token, account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: linked.expires };
         });
         exchanging = exchange.catch(() => {});
         return exchange;
@@ -215,7 +215,7 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       if (["getSharing", "createShare", "updateShare"].includes(action)) return leases.sharing(input.token, input, signal, action);
       if (action === "renameGrain") return leases.rename(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
-      if (action === "session") return { account: { name: account.name, key: hash(record.accountId) }, expires: record.expires };
+      if (action === "session") return { account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: record.expires };
       if (action === "snapshot") {
         const result = await snapshot(record.accountId);
         await session(input.token); // Do not return data after revocation during DB reads.

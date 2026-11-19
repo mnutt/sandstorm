@@ -18,6 +18,7 @@ struct Projection {
     grains: Vec<crate::bridge::Grain>,
     grains_limited: bool,
     profile_version: String,
+    account_picture_url: String,
 }
 
 #[derive(Clone)]
@@ -66,6 +67,10 @@ impl Shell {
                 .as_ref()
                 .map(|s| s.profile_version.clone())
                 .unwrap_or_default(),
+            account_picture_url: initial
+                .as_ref()
+                .map(|s| s.account_picture_url.clone())
+                .unwrap_or_default(),
             revision: 0,
             next_id: 2,
             entries,
@@ -112,7 +117,8 @@ impl Shell {
                         real: Some(real),
                     })
                     .collect();
-                if state.profile_version == snapshot.profile_version
+                if state.account_picture_url == snapshot.account_picture_url
+                    && state.profile_version == snapshot.profile_version
                     && state.entries == entries
                     && state.total == snapshot.total
                     && state.grains == snapshot.grains
@@ -120,6 +126,7 @@ impl Shell {
                 {
                     return false;
                 }
+                state.account_picture_url = snapshot.account_picture_url;
                 state.profile_version = snapshot.profile_version;
                 state.grains = snapshot.grains;
                 state.grains_limited = snapshot.grains_limited;
@@ -481,6 +488,7 @@ impl shell::Server for Shell {
                 let mut request = observer.replace_request();
                 {
                     let mut out = request.get().init_snapshot();
+                    out.set_account_picture_url(&snapshot.account_picture_url);
                     out.set_profile_version(&snapshot.profile_version);
                     out.set_revision(snapshot.revision);
                     out.set_total(snapshot.total);
@@ -512,6 +520,7 @@ impl shell::Server for Shell {
                             out.set_ongoing(real.ongoing);
                             out.set_href(&real.href);
                             out.set_timestamp(&real.timestamp);
+                            out.set_sender_picture_url(&real.sender_picture_url);
                             out.set_sender_name(&real.sender_name);
                             out.set_native_path(&real.native_path);
                             out.set_native_action(&real.native_action);

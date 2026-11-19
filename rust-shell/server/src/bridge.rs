@@ -137,6 +137,8 @@ impl Session {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Entry {
+    #[serde(default, rename = "senderPictureUrl")]
+    pub sender_picture_url: String,
     #[serde(default, rename = "nativeAction")]
     pub native_action: String,
     #[serde(default, rename = "nativePath")]
@@ -172,6 +174,8 @@ pub struct Grain {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
+    #[serde(default, rename = "accountPictureUrl")]
+    pub account_picture_url: String,
     #[serde(default, rename = "profileVersion")]
     pub profile_version: String,
     #[serde(default)]

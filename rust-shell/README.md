@@ -139,7 +139,12 @@ are excluded. Sender names are fetched only for accounts referenced by the
 recipient's own notifications. Title changes, token changes, and referenced sender
 renames wake the projection. Anonymous activity has an explicit label. Ongoing
 notifications preserve the app-provided message and confirm cancellation before stopping activity.
-Avatars, app icons, and localized notification copy remain to be ported.
+User avatars appear in the account menu, notification senders, sharing recipients,
+referral lists, and shared-link identity choices. URLs come only from users already
+visible to each account-scoped projection. The topbar and notification sender
+pictures update through Mongo observation; anonymous senders expose no picture.
+A shared avatar component supplies initials or a generic user icon when an image
+is absent or fails to load. App icons and localized notification copy remain to be ported.
 There is no test-notification button in this mode. Standalone runs without
 `RUST_SHELL_BRIDGE_SOCKET` retain the isolated fixture UI.
 

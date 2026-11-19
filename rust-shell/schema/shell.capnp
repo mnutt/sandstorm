@@ -15,6 +15,7 @@ struct Notification {
   senderName @8 :Text;
   nativePath @9 :Text;
   nativeAction @10 :Text;
+  senderPictureUrl @11 :Text;
   # Only supported, validated Rust-shell destinations; empty uses legacy href.
 }
 
@@ -37,6 +38,7 @@ struct Snapshot {
   grains @3 :List(Grain);
   grainsLimited @4 :Bool;
   profileVersion @5 :Text;
+  accountPictureUrl @6 :Text;
   # Each callback replaces the entire projection. First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }
@@ -124,6 +126,7 @@ struct SharedInfo {
   guestsAllowed @1 :Bool;
   signedIn @2 :Bool;
   accountName @3 :Text;
+  accountPictureUrl @4 :Text;
 }
 interface SharedSession {
   close @0 () -> ();

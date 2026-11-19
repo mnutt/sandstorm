@@ -1,3 +1,4 @@
+import { rustUserPicture } from "/imports/server/rust-shell-users";
 import { Meteor } from "meteor/meteor";
 import { globalDb as db } from "/imports/db-deprecated";
 import { checkAuthAsync } from "/imports/server/auth";
@@ -32,11 +33,11 @@ export async function rustNotificationAction(accountId, key, operation, enabled,
     const ids = [...new Set(user?.referredAccountIds || [])];
     const [pending,completed] = await Promise.all([
       Meteor.users.find({referredBy:accountId,referredByComplete:{$exists:false},type:"account","profile.name":{$exists:true}},
-        {fields:{"profile.name":1},sort:{"profile.name":1,_id:1},limit:101}).fetchAsync(),
-      Meteor.users.find({_id:{$in:ids.slice(0,100)}},{fields:{"profile.name":1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
+        {fields:{profile:1},sort:{"profile.name":1,_id:1},limit:101}).fetchAsync(),
+      Meteor.users.find({_id:{$in:ids.slice(0,100)}},{fields:{profile:1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
     ]);
-    const name = row => String(row.profile?.name || "Unnamed account").slice(0,160);
-    return {kind,enabled:!!db.isReferralEnabled(),pending:pending.slice(0,100).map(name),completed:completed.map(name),
+    const person = row => ({name:String(row.profile?.name || "Unnamed account").slice(0,160),pictureUrl:rustUserPicture(row)});
+    return {kind,enabled:!!db.isReferralEnabled(),pending:pending.slice(0,100).map(person),completed:completed.map(person),
       limited:pending.length > 100 || ids.length > 100};
   }
   if (kind === "identity") return {kind};

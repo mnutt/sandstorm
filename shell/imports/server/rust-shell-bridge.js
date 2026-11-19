@@ -1,3 +1,4 @@
+import { rustUserPicture } from "/imports/server/rust-shell-users";
 import { createHash } from "node:crypto";
 import { rustNotificationAction } from "/imports/server/rust-shell-notification-actions";
 import { nativeNotificationPath, nativeNotificationAction } from "./rust-shell-notification-targets.mjs";
@@ -16,7 +17,6 @@ import { inspectRustSharedGrain, createRustSharedGrainSession, keepRustSharedGra
 import { grainMenu, rustGrainTitles } from "/imports/server/rust-shell-grains";
 import { rustAppActions, createRustGrain } from "/imports/server/rust-shell-apps";
 import { renameGrainForUser } from "/imports/server/grain-server";
-import { SandstormDb } from "/imports/sandstorm-db/db";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
@@ -37,16 +37,16 @@ export async function authorizeRustShellAccount(accountId, loginHash) {
   const token = user.services.resume.loginTokens.find((item) => item.hashedToken === loginHash);
   if (!token?.when) return null;
   const expires = Math.min(+Accounts._tokenExpiration(token.when), user.expires ? +user.expires : Infinity);
-  return { name: text(user.profile?.name || "Sandstorm account", 160), expires };
+  return { name: text(user.profile?.name || "Sandstorm account", 160), pictureUrl: rustUserPicture(user), expires };
 }
 
 async function accountProfile(accountId) {
   const user = await Meteor.users.findOneAsync(accountId, { fields: { profile: 1 } });
   if (!user) throw new Meteor.Error(403, "Account unavailable");
   user.profile ||= {};
-  SandstormDb.fillInPictureUrl(user);
-  const version = createHash("sha256").update(JSON.stringify([user.profile.name,user.profile.handle,user.profile.pronoun,user.profile.pictureUrl])).digest("hex");
-  return { version, pictureUrl: user.profile.pictureUrl || "", name: user.profile?.name || "", handle: user.profile?.handle || "",
+  const pictureUrl = rustUserPicture(user);
+  const version = createHash("sha256").update(JSON.stringify([user.profile.name,user.profile.handle,user.profile.pronoun,pictureUrl])).digest("hex");
+  return { version, pictureUrl, name: user.profile?.name || "", handle: user.profile?.handle || "",
     pronoun: user.profile?.pronoun || "neutral",
     mainHref: new URL("/account", process.env.ROOT_URL).href };
 }
@@ -121,11 +121,13 @@ export const rustShellBridge = createRustShellBridge({
       let body = row.text?.defaultText || "";
       let path = "/";
       let senderName = "";
+      let senderPictureUrl = "";
       // Match notificationGrains: only a sender referenced by this account's
       // own notification may contribute profile information.
       if (row.initiatingAccount) {
         const sender = await Meteor.users.findOneAsync({ _id: row.initiatingAccount },
-            { fields: { "profile.name": 1 } });
+            { fields: { profile: 1 } });
+        senderPictureUrl = rustUserPicture(sender);
         senderName = sender?.profile?.name || "";
       } else if (row.initiatorAnonymous) {
         senderName = "Anonymous user";
@@ -165,10 +167,11 @@ export const rustShellBridge = createRustShellBridge({
       const main = new URL(process.env.ROOT_URL);
       const target = new URL(path, main);
       const href = target.origin === main.origin && Buffer.byteLength(target.href) <= 1024 ? target.href : main.origin;
-      return { key: row._id, nativePath: nativeNotificationPath(row), nativeAction: nativeNotificationAction(row), senderName: text(senderName, 160), title: text(title, 160), body: text(body, 512), href,
+      return { key: row._id, senderPictureUrl, nativePath: nativeNotificationPath(row), nativeAction: nativeNotificationAction(row), senderName: text(senderName, 160), title: text(title, 160), body: text(body, 512), href,
         unread: !!row.isUnread, ongoing: !!row.ongoing, timestamp: row.timestamp?.toISOString() || "" };
     }));
-    return { profileVersion: (await accountProfile(accountId)).version, entries, total: await globalDb.collections.notifications.find(query).countAsync(),
+    const ownProfile = await accountProfile(accountId);
+    return { accountPictureUrl: ownProfile.pictureUrl, profileVersion: ownProfile.version, entries, total: await globalDb.collections.notifications.find(query).countAsync(),
       ...await grainMenu(globalDb, accountId, process.env.ROOT_URL) };
   },
   async observe(accountId, changed) {
@@ -198,7 +201,7 @@ export const rustShellBridge = createRustShellBridge({
           { sort: { timestamp: -1, _id: 1 }, limit: 100, fields: { initiatingAccount: 1 } }).fetchAsync();
       const senders = [...new Set(notifications.map((row) => row.initiatingAccount).filter(Boolean))];
       if (senders.length) {
-        handles.push(await Meteor.users.find({ _id: { $in: senders } }, { fields: { "profile.name": 1 } })
+        handles.push(await Meteor.users.find({ _id: { $in: senders } }, { fields: { profile: 1 } })
             .observeChangesAsync(callbacks));
       }
       // Invalidate promptly on source-login revocation, suspension, or account deletion.

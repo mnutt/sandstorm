@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from './components/ui/Avatar.svelte';
   import NotificationDialog from './NotificationDialog.svelte';
   import Button from './components/ui/Button.svelte';
   import Panel from './components/ui/Panel.svelte';
@@ -42,7 +43,7 @@
                 {:else}<span title={entry.title}>{entry.title}</span>{/if}
                 {#if entry.unread}<small aria-label="Unread" title="Unread">●</small>{/if}
               </h3>
-              <p title={`${entry.senderName ? 'From ' + entry.senderName + ': ' : ''}${entry.body}`}>{#if entry.senderName}<span>From {entry.senderName}</span> · {/if}{entry.body}</p>
+              <p title={`${entry.senderName ? 'From ' + entry.senderName + ': ' : ''}${entry.body}`}>{#if entry.senderName}<span><Avatar name={entry.senderName} src={entry.senderPictureUrl} size={16} /> <span>From {entry.senderName}</span></span> · {/if}{entry.body}</p>
             </div>
             <time datetime={entry.timestamp || undefined} title={entry.timestamp ? new Date(entry.timestamp).toLocaleString() : ''}>{#if entry.timestamp}{new Date(entry.timestamp).toLocaleDateString()}<br />{new Date(entry.timestamp).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}{/if}</time>
             <Button variant="secondary" disabled={model.pending} aria-label={`${entry.ongoing ? 'Cancel activity for' : 'Dismiss'} ${entry.title}`}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from './components/ui/Avatar.svelte';
   import { onMount, untrack } from 'svelte';
   import { Tabs } from 'bits-ui';
   import Modal from './components/ui/Modal.svelte';
@@ -113,7 +114,7 @@
             <tbody>
               {#each snapshot.grants as grant (grant.id)}
                 <tr>
-                  <td><strong title={grant.kind === 'link' ? grant.label || 'Unlabeled link' : grant.recipient}>{grant.kind === 'link' ? grant.label || 'Unlabeled link' : grant.recipient}</strong>
+                  <td><div class="recipient">{#if grant.kind === 'person'}<Avatar name={grant.recipient} src={grant.recipientPictureUrl} />{/if}<strong title={grant.kind === 'link' ? grant.label || 'Unlabeled link' : grant.recipient}>{grant.kind === 'link' ? grant.label || 'Unlabeled link' : grant.recipient}</strong></div>
                     <span class="detail">{grant.kind === 'link' ? 'Sharing link' : grant.kind === 'grain' ? 'Connected app' : grant.inherited ? 'Via sharing link' : 'Direct share'}{grant.kind !== 'link' && grant.label ? ' · ' + grant.label : ''}</span>
                   </td>
                   <td><span class="permission">{roleTitle(grant.role)}</span></td>
@@ -140,7 +141,7 @@
                   </form>
                 </td></tr>{/if}
                 {#if revoking?.id === grant.id}<tr class="expanded"><td colspan="3">
-                  <p>Revoke “{grant.label || grant.recipient}”? Everyone relying on this grant, including downstream recipients, will lose that access. Other independent grants still work.</p>
+                  <p>{#if grant.kind === 'person'}<Avatar name={grant.recipient} src={grant.recipientPictureUrl} /> {/if}Revoke “{grant.label || grant.recipient}”? Everyone relying on this grant, including downstream recipients, will lose that access. Other independent grants still work.</p>
                   <div class="actions"><Button variant="danger" disabled={busy || loading} onclick={() => update(grant, true)}>Confirm revoke</Button><Button variant="secondary" disabled={busy} onclick={() => { revoking = undefined; }}>Cancel</Button></div>
                 </td></tr>{/if}
               {:else}<tr><td colspan="3" class="empty">No shared access to show.</td></tr>{/each}
@@ -157,6 +158,7 @@
 </Modal>
 
 <style>
+  .recipient { display:flex; align-items:center; gap:.5rem; min-width:0; }
   .sharing { --ss-control-height: 2.125rem; }
   .tabs { margin-bottom: var(--ss-space-4); border-bottom: 1px solid var(--ss-border); }
   .tabs :global([role=tablist]) { display: flex; gap: var(--ss-space-5); }

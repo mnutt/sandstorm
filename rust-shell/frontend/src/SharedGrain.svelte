@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Avatar from './components/ui/Avatar.svelte';
   import { onMount, untrack } from 'svelte';
   import { Conn } from 'capnp-es';
   import { SharedShell, type SharedShell$Client, type SharedSession$Client } from './generated/shell';
@@ -14,7 +15,7 @@
     {webkey:string;path:string;active:boolean;toolbarTarget:HTMLElement;accountKey:string|null;
       pathChanged:(path:string)=>void;metadataChanged:(title:string,iconSrc:string)=>void} = $props();
   let phase = $state<'loading'|'choice'|'opening'|'open'|'error'>('loading');
-  let info = $state({title:'Shared grain',signedIn:false,guestsAllowed:false,accountName:''});
+  let info = $state({title:'Shared grain',signedIn:false,guestsAllowed:false,accountName:'',accountPictureUrl:''});
   let grain = $state<ActiveGrain|null>(null);
   let error = $state('');
   let connection: Conn | undefined;
@@ -59,7 +60,7 @@
       client = connection.bootstrap(SharedShell);
       const result = await runOperation(client.inspect(params => {params.webkey=webkey;}).promise(), 'Check sharing link', {signal:lifetime.signal});
       if (current !== generation) return;
-      info = {title:result.info.title,signedIn:result.info.signedIn,guestsAllowed:result.info.guestsAllowed,accountName:result.info.accountName};
+      info = {title:result.info.title,signedIn:result.info.signedIn,guestsAllowed:result.info.guestsAllowed,accountName:result.info.accountName,accountPictureUrl:result.info.accountPictureUrl};
       metadataChanged(info.title, '');
       phase = 'choice';
       if (!info.signedIn && info.guestsAllowed) await open(false);
@@ -98,7 +99,7 @@
       {:else}
         {#if info.signedIn}
           <p>Choose whether this app can see your Sandstorm identity. Access remains limited to this sharing link.</p>
-          <div class="choices"><Button onclick={() => open(true)}>Open as {info.accountName}</Button>
+          <div class="choices"><Button onclick={() => open(true)}><Avatar name={info.accountName} src={info.accountPictureUrl} /> Open as {info.accountName}</Button>
             {#if info.guestsAllowed}<Button variant="secondary" onclick={() => open(false)}>Open anonymously</Button>{/if}</div>
         {:else}<p>This server requires you to sign in before viewing shared grains.</p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a>{/if}
       {/if}

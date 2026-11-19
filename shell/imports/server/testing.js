@@ -1449,6 +1449,7 @@ if(isTesting) {
         require(asset.mimeType === 'image/png' && asset.content.equals(png),"Picture bytes were not stored canonically");
         const refreshed = await rustShellBridge.handle('getProfile',{token});
         require(refreshed.pictureUrl.endsWith('/'+uploadedUser.profile.picture),"Picture URL not projected");
+        require((await rustShellBridge.handle('snapshot',{token})).accountPictureUrl === refreshed.pictureUrl,"Topbar picture did not update");
         let reused=false;
         try { await httpCallAsync('POST',validUpload.uploadUrl,{content:png,timeout:5000}); }
         catch (error) { reused=error.response?.statusCode === 404; }
@@ -2152,7 +2153,7 @@ if(isTesting) {
         require(!view.entries[0].unread, "Mark-read must update the observed record");
         await observeWrite(() => call("dismiss", { id: notificationId }));
         require(view.total === 0, "Dismiss must remove the shared record");
-        await Meteor.users.insertAsync({ _id: senderId, profile: { name: "Sender name" } });
+        await Meteor.users.insertAsync({ _id: senderId, profile: { name: "Sender name", picture: "sender-avatar" } });
         await globalDb.collections.grains.insertAsync({ _id: sharedGrainId, userId: senderId, title: "Private owner title" });
         // Another recipient's token must not reveal its title to this account.
         await globalDb.collections.apiTokens.insertAsync({ _id: tokenId, grainId: sharedGrainId, created: new Date(),
@@ -2164,6 +2165,7 @@ if(isTesting) {
         require(view.entries[0].title === "Grain activity", "Must not expose another owner's grain or token title");
         require(!view.grains.some((grain) => grain.key === sharedGrainId), "Another recipient's grain must not appear");
         require(view.entries[0].senderName === "Sender name", "Referenced sender name must be projected");
+        require(view.entries[0].senderPictureUrl.endsWith('/sender-avatar'),"Referenced sender avatar missing");
         await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
             { $set: { "owner.user.accountId": userId, "owner.user.title": "Saved title", "owner.user.upstreamTitle": "Shared title", "owner.user.denormalizedGrainMetadata.appTitle": { defaultText: "Shared spreadsheet" } } }));
         require(view.entries[0].title === "Shared title", "Shared grain must use the recipient's upstream title");
@@ -2189,12 +2191,15 @@ if(isTesting) {
         require(view.entries[0].title === "My title", "Recipient rename must take precedence");
         await observeWrite(() => Meteor.users.updateAsync(senderId, { $set: { "profile.name": "Renamed sender" } }));
         require(view.entries[0].senderName === "Renamed sender", "Sender rename must wake observation");
+        await observeWrite(() => Meteor.users.updateAsync(senderId,{$set:{'profile.picture':'updated-avatar'}}));
+        require(view.entries[0].senderPictureUrl.endsWith('/updated-avatar'),"Sender picture update must wake observation");
         await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $set: { revoked: true } }));
         require(view.entries[0].title === "Grain activity", "Revoked recipient metadata must disappear");
         require(!view.grains.some((grain) => grain.key === sharedGrainId), "Revoked share must disappear from the menu");
         await observeWrite(() => globalDb.collections.notifications.updateAsync(notificationId,
             { $unset: { initiatingAccount: 1 }, $set: { initiatorAnonymous: true } }));
         require(view.entries[0].senderName === "Anonymous user", "Anonymous activity must have a clear sender label");
+        require(view.entries[0].senderPictureUrl === '',"Anonymous notification exposed a sender picture");
         const pending = call("watch", { after: view.version }).then(
             () => { throw new Meteor.Error("rust-observation-regression", "Revoked watch returned data"); },
             (error) => { require(error.status === 401, "Revoked watch must be unauthorized"); });
