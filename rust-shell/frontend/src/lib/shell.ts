@@ -1,3 +1,4 @@
+import { InstallService } from './install';
 import { clearStoredTemplateOffers } from './template';
 import { ProfileService, type Profile } from './profile';
 import type { Shell$Client, Snapshot } from '../generated/shell';
@@ -15,6 +16,7 @@ export class ShellService {
   private connection: ShellConnection;
   private grains: GrainWorkspace;
   private apps: AppService;
+  readonly installation: InstallService;
   private profile: ProfileService;
   private accountKey: string | null = null;
   private notificationOperation = 0;
@@ -45,6 +47,7 @@ export class ShellService {
       }),
       snapshot: snapshot => this.snapshot(snapshot),
     });
+    this.installation = new InstallService(this.connection);
     this.grains = new GrainWorkspace(this.connection, state => this.update(state));
     this.profile = new ProfileService(this.connection, profile => this.update({ profile }), account => this.update({ account }));
     this.apps = new AppService(this.connection, creation => this.update({ creation }));

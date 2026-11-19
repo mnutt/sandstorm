@@ -318,3 +318,37 @@ test('profile operations use linked identity, bound input, and recheck authority
   release();
   await assert.rejects(reading,{status:401});
 });
+
+test('installation binds account, validates operations and fences writes after revocation', async () => {
+  let release, entered;
+  let calls = 0, writes = 0;
+  const bridge = createRustShellBridge({
+    authorize: async () => ({name:'Alice',expires:Date.now()+100000}),
+    install: async (account, operation, data, beforeWrite) => {
+      ++calls; assert.equal(account,'alice');
+      if (operation === 'confirm') {
+        entered?.(); await new Promise(resolve => { release = resolve; });
+        await beforeWrite(); ++writes;
+      }
+      return {status:'ready'};
+    },
+  });
+  const nonce = 'a'.repeat(64);
+  const code = await bridge.issue('alice','hash',nonce);
+  const {token} = await bridge.handle('exchange',{code,state:nonce});
+  const call = (operation, data = {}) => bridge.handle('install',{token,accountId:'bob',operation,data});
+  assert.deepEqual(await call('status',{packageId:'a'.repeat(32)}),{status:'ready'});
+  for (const [operation,data] of [['unknown',{}],['confirm',{accountId:'bob'}],['status',{url:'x'.repeat(2049)}],['upload',null]]) {
+    await assert.rejects(call(operation,data),{status:400});
+  }
+  assert.equal(calls,1);
+  const started = new Promise(resolve => { entered = resolve; });
+  const pending = call('confirm',{packageId:'a'.repeat(32)});
+  await started;
+  await assert.rejects(call('upload'),{status:409});
+  await bridge.handle('logout',{token});
+  release();
+  await assert.rejects(pending,{status:401});
+  assert.equal(writes,0);
+  await assert.rejects(call('status'),{status:401});
+});

@@ -23,6 +23,7 @@ export interface Grain {
   appTitle: string;
 }
 export interface AppAction {
+  grainCount: number;
   shortDescription: string;
   appId: string;
   iconSrc: string;

@@ -33,17 +33,17 @@
   let search = $state('');
   let createForm = $state<HTMLFormElement>();
   const apps = $derived.by(() => {
-    const grouped = new Map<string, { id: string; title: string; description: string; iconSrc: string; lastUsed: string; actions: AppAction[] }>();
+    const grouped = new Map<string, { id: string; title: string; description: string; iconSrc: string; grainCount: number; actions: AppAction[] }>();
     for (const action of actions) {
       const id = action.appId || action.key;
       const app = grouped.get(id);
       if (app) app.actions.push(action);
-      else grouped.set(id, { id, title: action.appTitle, description: action.shortDescription, iconSrc: action.iconSrc, lastUsed: action.lastUsed, actions: [action] });
+      else grouped.set(id, { id, title: action.appTitle, description: action.shortDescription, iconSrc: action.iconSrc, grainCount: action.grainCount, actions: [action] });
     }
     return [...grouped.values()].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
   });
   const visibleApps = $derived(apps.filter(app => app.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
-  const recentApps = $derived(visibleApps.filter(app => app.lastUsed).sort((a, b) => b.lastUsed.localeCompare(a.lastUsed) || a.title.localeCompare(b.title)).slice(0, 6));
+  const mostUsedApps = $derived(apps.filter(app => app.grainCount > 0).sort((a, b) => b.grainCount - a.grainCount || a.title.localeCompare(b.title)).slice(0, 6));
   const selectedApp = $derived(apps.find(app => app.id === appId));
   function choose(app: typeof apps[number]) {
     if (creation.status !== 'idle') return;
@@ -85,13 +85,16 @@
   {:else if status !== 'ready'}<LoadingStatus label="Connecting to Sandstorm…" />
   {:else if fixture}<p>App creation requires an installed Sandstorm server.</p>
   {:else}
-    {#if !appId}<div class="app-controls"><div class="search"><label class="sr-only" for="app-search">Search apps</label><TextInput id="app-search" type="search" bind:value={search} placeholder="Search installed apps" /></div>
-      <Button variant="secondary" disabled={creating || loading} onclick={() => { if (!uncertain) error = ''; void load(); }}>Refresh apps</Button></div>{/if}
     {#if loading}<LoadingStatus label="Loading apps…" />
-    {:else if !actions.length}<p>No installed app actions to show. Install apps in the main shell.</p>
     {:else}
-      {#snippet tiles(items: typeof apps)}
+      {#snippet tiles(items: typeof apps, install = false)}
         <div class="app-grid">
+          {#if install}
+            <a class="app-tile" href="/install" aria-label="Install from App Market" onclick={event => { if (isPlainNavigation(event)) { event.preventDefault(); navigate('/install'); } }}>
+              <span class="install-icon"><svg aria-hidden="true" width="112" height="112" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 5v14M5 12h14" /></svg></span>
+              <span class="app-name">Install</span><span class="app-hint">from App Market</span>
+            </a>
+          {/if}
           {#each items as app (app.id)}
             <a class="app-tile" href={appRoute(app.id)} aria-label={`Open ${app.title}`} onclick={event => openApp(event, app.id)}>
               <AppIcon src={app.iconSrc} /><span class="app-name" title={app.title}>{app.title}</span>
@@ -101,9 +104,11 @@
         </div>
       {/snippet}
       {#if !appId}
-      {#if recentApps.length}<section aria-labelledby="recent-apps-title"><h2 id="recent-apps-title">Recently used</h2>{@render tiles(recentApps)}</section>{/if}
-      <section aria-labelledby="installed-apps-title"><h2 id="installed-apps-title">Installed apps <span class="count">{apps.length}</span></h2>
-        {#if visibleApps.length}{@render tiles(visibleApps)}{:else}<p>No apps match your search.</p>{/if}
+      {#if mostUsedApps.length}<section aria-labelledby="most-used-apps-title"><h2 id="most-used-apps-title">Most used</h2>{@render tiles(mostUsedApps)}</section>{/if}
+      <section aria-labelledby="installed-apps-title">
+        <div class="app-controls"><h2 id="installed-apps-title">All apps <span class="count">{apps.length}</span></h2><div class="search"><label class="sr-only" for="app-search">Search apps</label><TextInput id="app-search" type="search" bind:value={search} placeholder="Search installed apps" /></div></div>
+        {@render tiles(visibleApps, true)}
+        {#if !visibleApps.length && search.trim()}<p>No apps match your search.</p>{/if}
       </section>
       {:else if selectedApp}
         <div class="app-detail-heading">
@@ -140,12 +145,15 @@
   p { overflow-wrap: anywhere; }
   [role=alert] { color: var(--ss-danger); }
   .app-controls { display: flex; gap: var(--ss-space-3); align-items: center; margin-bottom: var(--ss-space-4); --ss-control-height: 2.375rem; font-size: var(--ss-text-small); }
-  .search { flex: 1; max-width: 32rem; }
+  .app-controls h2 { margin: 0; flex: none; }
+  .search { flex: 1; max-width: 32rem; margin-left: auto; min-width: 0; }
   section + section { border-top: 1px solid var(--ss-border); padding-top: var(--ss-space-3); margin-top: var(--ss-space-3); }
   .count { font-weight: 400; margin-left: .35rem; font-variant-numeric: tabular-nums; }
   .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--ss-space-2); }
   .app-tile { display: flex; flex-direction: column; align-items: center; gap: var(--ss-space-1); padding: var(--ss-space-1); min-width: 0; border: 1px solid transparent; border-radius: var(--ss-radius-panel); background: transparent; color: var(--ss-text); font: inherit; text-decoration: none; cursor: pointer; }
   .app-tile:hover { background: var(--ss-brand-subtle); border-color: var(--ss-border); }
+  .install-icon { display: grid; place-items: center; width: 128px; max-width: 100%; height: 128px; flex: none; color: var(--ss-brand); }
+  .install-icon svg { max-width: 100%; }
   .app-name { font-size: var(--ss-text-small); font-weight: 600; }
   .app-hint { font-size: .75rem; color: var(--ss-muted); min-height: 1.5em; }
   .app-name, .app-hint { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }

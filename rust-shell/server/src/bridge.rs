@@ -8,6 +8,8 @@ pub type Error = (StatusCode, String);
 
 #[derive(Deserialize)]
 pub struct AppAction {
+    #[serde(default, rename = "grainCount")]
+    pub grain_count: u32,
     #[serde(default, rename = "shortDescription")]
     pub short_description: String,
     pub key: String,

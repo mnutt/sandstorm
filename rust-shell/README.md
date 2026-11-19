@@ -726,3 +726,35 @@ Next useful slices:
 This preview establishes the executable stack and bounded three-language
 interoperability evidence. It does not establish generic membrane behavior,
 production Backend compatibility or production feature parity.
+
+### Native app installation and updates
+
+Choose **Apps → Install** to browse the configured app market, review updates
+from the server's app index, or upload an `.spk`. Market links use the Rust origin
+as their return host; `/install/:packageId?url=...` survives reload and sign-in.
+Download is explicit, and installing the verified package requires confirmation.
+Installing updates the account's app actions; **Upgrade existing grains** is a
+separate action that restarts only that account's eligible grains. Newer grain
+versions are never downgraded, and the native UI rejects downgrading installed
+app actions.
+
+The bounded `Shell.install` operations revalidate the linked account and serialize
+mutations per account. They reuse the canonical download, verification, upload
+credential, action installation and grain upgrade paths. Upload bytes stream to
+the main shell's existing `/upload/:token` endpoint with no login cookies. The
+shell CSP permits that configured upload path only, in addition to same-origin
+connections. The upload credential is kept in memory and never saved in a route
+or browser storage. Leaving the page or losing the connection aborts the upload;
+mutations are never automatically replayed. Package status is polled while the
+installation page is open (every 1.5 seconds), including after reconnect.
+
+Update discovery reflects the server's existing app index, which may be disabled
+or out of date; the Rust shell does not independently refresh the external index.
+The initial update projection uses at most 101 installed actions and 100 index entries. The main shell
+still owns package verification and account eligibility policy.
+
+The app gallery's **Most used** section ranks up to six installed apps by their
+number of owned and shared grains, with alphabetical ties. Multiple shared links
+to the same grain count once; self-shares, trashed grains and suspended grains do
+not add to the count. **All apps** has its own search field and starts with the
+**Install / from App Market** tile, including when no apps are installed.

@@ -10,9 +10,10 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, listApps, createGrain, getProfile, updateProfile, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, install, listApps, createGrain, getProfile, updateProfile, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
   const creating = new Set();
+  const installing = new Set();
   const updatingProfiles = new Set();
   const grants = new Map();
   const sessions = sessionStore;
@@ -96,6 +97,30 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       // Cleanup remains possible after expiration; scope ownership is still checked.
       if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
+      if (action === "install") {
+        const {operation, data} = input;
+        if (!install || !["catalog", "status", "download", "retry", "confirm", "upgrade", "upload"].includes(operation) ||
+            !data || typeof data !== "object" || Array.isArray(data) ||
+            Object.keys(data).some(key => !["packageId", "url"].includes(key)) ||
+            Object.values(data).some(value => typeof value !== "string" || value.length > 2048)) {
+          throw Object.assign(new Error("Invalid installation request."), {status:400});
+        }
+        const mutating = !["catalog", "status"].includes(operation);
+        if (mutating && (installing.has(record.accountId) || installing.size >= 8)) {
+          throw Object.assign(new Error("An installation operation is in progress."), {status:409});
+        }
+        if (mutating) installing.add(record.accountId);
+        try {
+          const beforeWrite = async () => {
+            await session(input.token);
+            if (signal.aborted) throw Object.assign(new Error("Installation request disconnected."), {status:409});
+          };
+          await beforeWrite();
+          const result = await install(record.accountId, operation, data, beforeWrite);
+          await session(input.token);
+          return result;
+        } finally { if (mutating) installing.delete(record.accountId); }
+      }
       if (action === "getProfile" || action === "updateProfile") {
         if (!getProfile) throw Object.assign(new Error("Profile unavailable."), { status: 503 });
         if (action === "updateProfile") {
@@ -231,7 +256,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|install)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

@@ -1706,6 +1706,60 @@ if(isTesting) {
       }
     },
 
+    async testRustInstall(grainId) {
+      const source = await globalDb.collections.grains.findOneAsync({_id:grainId,userId:this.userId});
+      if (!source || !this.userId) throw new Meteor.Error(403,"Owned test grain required");
+      const pkg = await globalDb.collections.packages.findOneAsync(source.packageId);
+      const version = pkg.manifest.appVersion;
+      const foreign = "rust-install-foreign-" + Random.id();
+      const newer = "rust-install-newer-" + Random.id();
+      const oldPackage = "f".repeat(32);
+      let token, uploadToken;
+      const require = (ok,message) => { if (!ok) throw new Error(message); };
+      try {
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
+        ({token} = await rustShellBridge.handle("exchange",{code,state}));
+        const call = (operation,data={packageId:pkg._id}) => rustShellBridge.handle("install",{token,operation,data,accountId:"must-not-own"});
+        const initial = await call("status");
+        require(initial.status === "ready" && initial.installed && initial.iconSrc,"Missing installation projection");
+        const catalog = await call("catalog",{});
+        require(/^https?:/.test(catalog.marketUrl),"Missing market URL");
+        for (const [operation,data] of [["confirm",{packageId:"0".repeat(32)}],["download",{packageId:pkg._id,url:"file:///etc/passwd"}],["upgrade",{packageId:"0".repeat(32)}]]) {
+          let denied = false; try { await call(operation,data); } catch (_) { denied = true; }
+          require(denied,"Invalid installation request accepted");
+        }
+        const upload = await call("upload",{});
+        uploadToken = new URL(upload.uploadUrl).pathname.split("/").pop();
+        require(await globalDb.collections.spkTokens.findOneAsync(uploadToken),"Upload credential was not issued by canonical installer");
+        await call("download",{packageId:pkg._id,url:""});
+        await call("confirm");
+        require(await globalDb.collections.userActions.findOneAsync({userId:this.userId,packageId:pkg._id}),"Confirmation did not install actions");
+        require(!await globalDb.collections.userActions.findOneAsync({userId:"must-not-own",packageId:pkg._id}),"Confirmation crossed account boundary");
+        await globalDb.collections.grains.insertAsync({...source,_id:foreign,userId:"another-account",packageId:oldPackage});
+        await globalDb.collections.grains.insertAsync({...source,_id:newer,appVersion:version+1,packageId:oldPackage});
+        await globalDb.collections.grains.updateAsync(grainId,{$set:{packageId:oldPackage,appVersion:version}});
+        require((await call("status")).olderGrains >= 1,"Older grains not projected");
+        await call("upgrade");
+        require((await globalDb.collections.grains.findOneAsync(grainId)).packageId === pkg._id,"Owned grain not upgraded");
+        require((await globalDb.collections.grains.findOneAsync(foreign)).packageId === oldPackage,"Another account's grain was upgraded");
+        require((await globalDb.collections.grains.findOneAsync(newer)).packageId === oldPackage,"Newer grain was downgraded");
+        await globalDb.collections.userActions.updateAsync({userId:this.userId,packageId:pkg._id},{$set:{appVersion:version+1}},{multi:true});
+        let denied = false; try { await call("confirm"); } catch (_) { denied = true; }
+        require(denied,"Newer installed app was downgraded");
+        await rustShellBridge.handle("logout",{token});
+        denied = false; try { await call("confirm"); } catch (_) { denied = true; }
+        require(denied,"Revoked session installed app");
+        return true;
+      } finally {
+        if (token) await rustShellBridge.handle("logout",{token});
+        if (uploadToken) await globalDb.collections.spkTokens.removeAsync(uploadToken);
+        await globalDb.collections.grains.removeAsync({_id:{$in:[foreign,newer]}});
+        await globalDb.collections.grains.updateAsync(grainId,{$set:{packageId:source.packageId,appVersion:source.appVersion}});
+        await globalDb.collections.userActions.updateAsync({userId:this.userId,packageId:pkg._id},{$set:{appVersion:version}},{multi:true});
+      }
+    },
+
     async testRustCreateGrain(grainId) {
       check(grainId, String);
       const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
@@ -1725,6 +1779,24 @@ if(isTesting) {
           throw new Error("Installed actions leaked or omitted account data");
         }
         const projected = list.actions.find(row => row.key === action._id);
+        const sharedGrain = "rust-app-count-" + Random.id();
+        const countTokens = [Random.id(),Random.id(),Random.id()];
+        try {
+          await globalDb.collections.grains.insertAsync({...source,_id:sharedGrain,userId:"other-account"});
+          for (let i=0;i<countTokens.length;i++) await globalDb.collections.apiTokens.insertAsync({
+            _id:countTokens[i],grainId:i===2 ? grainId : sharedGrain,
+            owner:{user:{accountId:this.userId,denormalizedGrainMetadata:{appId:source.appId}}},
+          });
+          const counted = (await call("listApps")).actions.find(row => row.key === action._id);
+          if (counted.grainCount !== projected.grainCount + 1) throw new Error("App grain count duplicated shared links or self-shares");
+          await globalDb.collections.grains.updateAsync(sharedGrain,{$set:{trashed:new Date()}});
+          const trashed = (await call("listApps")).actions.find(row => row.key === action._id);
+          if (trashed.grainCount !== projected.grainCount) throw new Error("App count included trashed shared grains");
+        } finally {
+          await globalDb.collections.apiTokens.removeAsync({_id:{$in:countTokens}});
+          await globalDb.collections.grains.removeAsync(sharedGrain);
+        }
+
         if (projected.appId !== source.appId || !projected.iconSrc ||
             !projected.lastUsed || !Number.isFinite(Date.parse(projected.lastUsed))) {
           throw new Error("App gallery metadata is missing its icon or usage timestamp");

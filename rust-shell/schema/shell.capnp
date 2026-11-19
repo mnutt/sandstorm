@@ -81,6 +81,7 @@ struct AppAction {
   iconSrc @4 :Text;
   lastUsed @5 :Text;
   shortDescription @6 :Text;
+  grainCount @7 :UInt32;
 }
 struct AccountProfile {
   name @0 :Text;
@@ -89,6 +90,8 @@ struct AccountProfile {
   mainHref @3 :Text;
 }
 interface Shell {
+  install @11 (operation :Text, input :Text) -> (state :Text);
+  # Fixed installation operations; package and account authority stays server-side.
   watch @0 (observer :Observer) -> (subscription :Subscription);
   dismiss @1 (id :UInt32) -> ();
   addFixture @2 () -> ();

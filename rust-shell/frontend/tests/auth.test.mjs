@@ -49,11 +49,25 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let shareCreations = 0;
   let providerComplete = false;
   const nativeProviders = new Set();
+  const installId = 'a'.repeat(32);
+  const installState = {packageId:installId,status:'missing',appId:'test-app',title:'Install test app',description:'A verified package',version:'2.0',iconSrc:'',fingerprint:'test-key',progress:0,installed:false,newerInstalled:false,olderGrains:2};
+  const installCalls = [];
   const bridgeOptions = {
+    install: async (id,operation,data,beforeWrite) => {
+      assert.equal(id,'alice'); installCalls.push(operation);
+      if (operation === 'catalog') return {marketUrl:'https://apps.example.test/',updates:[{packageId:installId,title:'Install test app',version:'2.0',url:'https://packages.example.test/test.spk'}]};
+      if (operation === 'upload') return {uploadUrl:mainOrigin+'/upload/test-token'};
+      assert.equal(data.packageId,installId);
+      await beforeWrite();
+      if (operation === 'download') { installState.status = 'download'; setTimeout(() => { installState.status = 'ready'; },200); }
+      if (operation === 'confirm') installState.installed = true;
+      if (operation === 'upgrade') installState.olderGrains = 0;
+      return {...installState};
+    },
     getProfile: async id => ({...profiles[id],mainHref:mainOrigin+'/account'}),
     updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = profile; users[id].name = profile.name; },
     sessionStore,
-    listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
+    listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
     createGrain: async (id, action, title, beforeCreate) => {
       assert.equal(action,id+'-action');
       assert.equal(title,'Created in Rust');
@@ -259,12 +273,39 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', {name:'Save profile',exact:true}).click();
     await page.getByText('Profile saved.', {exact:true}).waitFor();
     await page.getByRole('link', {name:'Apps',exact:true}).click();
-    await page.getByRole('heading', {name:'Installed apps'}).waitFor();
+    await page.getByRole('heading', {name:'All apps'}).waitFor();
     assert.equal(new URL(page.url()).pathname,'/apps');
     await expect(page).toHaveTitle('Apps · Sandstorm');
     await expect(page.locator('.route-content')).toBeFocused();
     await expect(page.getByRole('link', {name:'Apps',exact:true})).toHaveAttribute('aria-current','page');
+    await expect(page.getByRole('heading',{name:'Most used',exact:true})).toBeVisible();
+    await expect(page.locator('[aria-labelledby=installed-apps-title] .app-tile').first()).toHaveAttribute('aria-label','Install from App Market');
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-apps.png',fullPage:true});
+    await page.getByRole('link',{name:'Install from App Market',exact:true}).click();
+    await expect(page).toHaveTitle('Install app · Sandstorm');
+    const market = new URL(await page.getByRole('link',{name:'Browse app market'}).getAttribute('href'));
+    assert.equal(market.searchParams.get('host'),new URL(page.url()).origin);
+    await page.getByRole('button',{name:'Review update'}).click();
+    await page.reload();
+    await page.getByRole('button',{name:'Download app',exact:true}).click();
+    await page.getByRole('button',{name:'Install app',exact:true}).waitFor();
+    assert.equal(installState.installed,false,'download does not install without confirmation');
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-install.png',fullPage:true});
+    await page.getByRole('button',{name:'Install app',exact:true}).click();
+    await page.getByText('Installed for your account.',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Upgrade 2 existing grains',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Upgrade 2 existing grains',exact:true})).toHaveCount(0);
+    await page.reload();
+    await page.getByText('Installed for your account.',{exact:true}).waitFor();
+    assert.equal(installCalls.filter(op=>op==='confirm').length,1);
+    assert.equal(installCalls.filter(op=>op==='upgrade').length,1);
+    await page.getByRole('button',{name:'Back to app installation'}).click();
+    await page.route('**/upload/test-token',route => route.fulfill({status:200,body:installId,headers:{'Access-Control-Allow-Origin':'*'}}));
+    await page.getByLabel('Upload an SPK').setInputFiles({name:'test.spk',mimeType:'application/octet-stream',buffer:Buffer.from('test package')});
+    await page.getByText('Installed for your account.',{exact:true}).waitFor();
+    assert.equal(installCalls.filter(op=>op==='upload').length,1);
+    await page.getByRole('link', {name:'Apps',exact:true}).click();
+
     await page.reload();
     await page.getByRole('link', {name:'Open Test app',exact:true}).first().click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/apps/test-app');

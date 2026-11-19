@@ -12,6 +12,7 @@
   import SharedGrain from './SharedGrain.svelte';
   import GrainFrame from './GrainFrame.svelte';
   import Apps from './Apps.svelte';
+  import Install from './Install.svelte';
   import Account from './Account.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import Grains from './Grains.svelte';
@@ -62,7 +63,7 @@
   });
   let route = $state(navigation.route);
   const view = $derived(route.page === 'grain' ? 'grains' : route.page);
-  const pageTitle = $derived(model.activeGrain?.title || ({notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
+  const pageTitle = $derived(model.activeGrain?.title || ({install:'Install app', notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
   $effect(() => { route; navigation.sync(model); });
   const navigate = (path: string) => navigation.navigate(path);
   onMount(() => {
@@ -89,7 +90,7 @@
   <div class="brand-group">
     <a class="brand" href="/grains" onclick={event => navigation.link(event, '/grains')}><img src="/sandstorm-logo.svg" width="28" height="30" alt="" /><span>Sandstorm</span></a>
   </div>
-  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'apps' || route.page === 'grains'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
+  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'apps' || route.page === 'grains' || route.page === 'install'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
   <div class="topbar-actions">
     <a class="notifications" href="/notifications" aria-label="Notifications" title="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
@@ -102,7 +103,7 @@
 <main class="shell-layout" class:collapsed={sidebarCollapsed}>
   <aside id="shell-sidebar" aria-label="Shell navigation">
     <nav aria-label="Shell pages">
-      <a href="/apps" aria-label="Apps" title={sidebarCollapsed ? 'Apps' : undefined} aria-current={view === 'apps' ? 'page' : undefined} onclick={event => navigation.link(event, '/apps')}><ShellIcon name="apps" /><span>Apps</span></a>
+      <a href="/apps" aria-label="Apps" title={sidebarCollapsed ? 'Apps' : undefined} aria-current={view === 'apps' || view === 'install' ? 'page' : undefined} onclick={event => navigation.link(event, '/apps')}><ShellIcon name="apps" /><span>Apps</span></a>
       <a href="/grains" aria-label="Grains" title={sidebarCollapsed ? 'Grains' : undefined} aria-current={route.page === 'grains' ? 'page' : undefined} onclick={event => navigation.link(event, '/grains')}><ShellIcon name="grains" /><span>Grains</span></a>
       <ul class="open-grains" aria-label="Open grains">
         {#each model.openGrains as grain (grain.url)}
@@ -147,6 +148,8 @@
   {#if !model.activeGrain}
   {#if route.page === 'missing'}
     <Panel><h2>Page not found</h2><Button onclick={() => navigate('/grains')}>Go to grains</Button></Panel>
+  {:else if route.page === 'install'}
+    {#key (route.packageId || '') + route.url + model.accountKey}<Install {service} {model} {navigate} packageId={route.packageId} url={route.url} />{/key}
   {:else if route.page === 'shared'}
     {@const webkey = route.webkey}
     {#if !sharedTabs.some(tab=>tab.webkey===webkey)}<Panel>{#if sharedTabs.length>=8}<p>Close a shared grain before opening another.</p>{:else}<LoadingStatus label="Connecting…" />{/if}</Panel>{/if}

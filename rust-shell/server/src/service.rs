@@ -194,6 +194,38 @@ impl subscription::Server for Subscription {
 }
 
 impl shell::Server for Shell {
+    async fn install(
+        self: Rc<Self>,
+        params: shell::InstallParams,
+        mut results: shell::InstallResults,
+    ) -> capnp::Result<()> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            capnp::Error::failed("Installation requires a signed-in account".into())
+        })?;
+        let input = params.get()?;
+        let operation = input.get_operation()?.to_str()?;
+        let data = input.get_input()?.to_str()?;
+        if ![
+            "catalog", "status", "download", "retry", "confirm", "upgrade", "upload",
+        ]
+        .contains(&operation)
+            || data.len() > 3072
+        {
+            return Err(capnp::Error::failed("Invalid installation request".into()));
+        }
+        let data: serde_json::Value = serde_json::from_str(data)
+            .map_err(|_| capnp::Error::failed("Invalid installation input".into()))?;
+        let value = session
+            .call(
+                "install",
+                serde_json::json!({"operation":operation,"data":data}),
+            )
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        results.get().set_state(value.to_string());
+        Ok(())
+    }
+
     async fn get_profile(
         self: Rc<Self>,
         _: shell::GetProfileParams,
@@ -271,6 +303,7 @@ impl shell::Server for Shell {
             out.set_app_id(&action.app_id);
             out.set_icon_src(&action.icon_src);
             out.set_last_used(&action.last_used);
+            out.set_grain_count(action.grain_count);
         }
         Ok(())
     }

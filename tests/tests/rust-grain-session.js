@@ -240,6 +240,12 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
     browser.assert.equal(result.value.ok, true, 'revoked recipients cannot rename');
   });
   browser.frame(null).executeAsync(function (done) {
+    Meteor.call('testRustInstall', location.pathname.split('/')[2], (error,ok) => done({error:error?.message,ok}));
+  }, [], result => {
+    browser.assert.equal(result.value.error, null, 'native installation and account-scoped upgrade completed');
+    browser.assert.equal(result.value.ok, true, 'native installation rejects invalid packages, downgrade and revoked login');
+  });
+  browser.frame(null).executeAsync(function (done) {
     Meteor.call('testRustCreateGrain', location.pathname.split('/')[2], (error, grainId) => {
       if (!error) Router.go('/grain/' + grainId);
       done({error:error?.message,grainId});

@@ -193,10 +193,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         permits: Arc::new(Semaphore::new(16)),
         shared_permits: Arc::new(Semaphore::new(8)),
     };
+    // Permit streaming SPK uploads only to the configured main shell's upload
+    // endpoint. All other shell connections remain same-origin.
+    let shell_policy = HeaderValue::from_str(&format!(
+        "default-src 'self'; img-src 'self' data: https:; connect-src 'self' {}/upload/; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'",
+        state.auth.main_origin
+    ))?;
     let index = ServeFile::new(assets.join("index.html"));
     let app = Router::new()
         .route_service("/notifications", index.clone())
         .route_service("/grains", index.clone())
+        .route_service("/install", index.clone())
+        .route_service("/install/{id}", index.clone())
+        .route_service("/install/{id}/", index.clone())
         .route_service("/apps", index.clone())
         .route_service("/apps/{id}", index.clone())
         .route_service("/apps/{id}/", index.clone())
@@ -229,14 +238,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(DefaultBodyLimit::max(4096))
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
         .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
-        .layer(axum::middleware::from_fn(|request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
+        .layer(axum::middleware::from_fn_with_state(shell_policy, |State(shell_policy): State<HeaderValue>, request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
             let policy = if request.uri().path() == "/offer-template.html" {
-                "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src https:; frame-ancestors https:"
+                HeaderValue::from_static("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src https:; frame-ancestors https:")
             } else {
-                "default-src 'self'; img-src 'self' data: https:; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'"
+                shell_policy
             };
             let mut response = next.run(request).await;
-            response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(policy));
+            response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, policy);
             response
         }))
         .layer(SetResponseHeaderLayer::overriding(

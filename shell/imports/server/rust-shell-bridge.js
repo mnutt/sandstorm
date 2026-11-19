@@ -1,3 +1,4 @@
+import { rustInstall } from "/imports/server/rust-shell-install";
 import { rustPowerbox } from "/imports/server/rust-shell-powerbox";
 import { rustSharingState, createRustShare, updateRustShare } from "/imports/server/rust-shell-sharing";
 import { updateProfileForUser } from "/imports/server/accounts/accounts-ui-methods";
@@ -47,6 +48,7 @@ export const rustShellBridge = createRustShellBridge({
   getProfile: accountProfile,
   updateProfile: updateProfileForUser,
   listApps: rustAppActions,
+  install: rustInstall,
   createGrain: createRustGrain,
   sessionStore: rustShellSessionStore,
   shared: {

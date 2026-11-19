@@ -61,6 +61,69 @@ const localizedTextPattern = {
 // Not all users are allowed to upload apps. We need to manually implement authorization
 // because Meteor.userId() is not available in server-side routes.
 
+export async function newUploadTokenForUser(db, accountId, beforeWrite = async () => {}) {
+  const account = await Meteor.users.findOneAsync({ _id: accountId });
+  if (!await db.isAccountSignedUpAsync(account)) {
+    throw new Meteor.Error(403, "Unauthorized", "Only invited users can upload apps.");
+  }
+
+  if (Meteor.settings.public.allowUninvited &&
+      account && !account.expires && (!account.plan || account.plan === "free")) {
+    throw new Meteor.Error(403, "Unauthorized", "Only paid users can upload apps.");
+  }
+
+  await beforeWrite();
+  const token = Random.id(22);
+  await globalDb.collections.spkTokens.insertAsync({ _id: token, timestamp: new Date() });
+
+  return token;
+}
+
+export async function ensureInstalledForUser(db, accountId, packageId, url, isRetry, beforeWrite = async () => {}) {
+  check(packageId, String);
+  check(url, Match.OneOf(String, undefined, null));
+  check(isRetry, Boolean);
+
+  if (!packageId.match(/^[a-zA-Z0-9]*$/)) {
+    throw new Meteor.Error(400, "The package ID contains illegal characters.");
+  }
+
+  const account = accountId ? await Meteor.users.findOneAsync({ _id: accountId }) : null;
+
+  if (!accountId) {
+    if (allowDemo && isSafeDemoAppUrl(url)) {
+      // continue on
+    } else { // jscs:ignore disallowEmptyBlocks
+      throw new Meteor.Error(403, "You must be logged in to install packages.");
+    }
+  } else {
+    if (!await db.isAccountSignedUpOrDemoAsync(account)) {
+      throw new Meteor.Error(403,
+          "This Sandstorm server requires you to get an invite before installing apps.");
+    }
+  }
+
+  const pkg = await globalDb.collections.packages.findOneAsync(packageId);
+
+  if (!pkg || pkg.status !== "ready") {
+    if (!accountId ||
+        (account && account.expires) ||
+        (Meteor.settings.public.allowUninvited &&
+         account && !account.expires && (!account.plan || account.plan === "free"))) {
+      if (!isSafeDemoAppUrl(url)) {
+        // TODO(someday): Billing prompt on client side.
+        throw new Meteor.Error(403, "Sorry, demo and free users cannot upload custom apps; " +
+            "they may only install apps from apps.sandstorm.io.");
+      }
+    }
+  }
+
+  if (!pkg || isRetry) {
+    await beforeWrite();
+    await globalDb.startInstall(packageId, url, isRetry);
+  }
+}
+
 Meteor.methods({
   cancelDownload: function (packageId) {
     check(packageId, String);
@@ -70,20 +133,7 @@ Meteor.methods({
   },
 
   newUploadToken: async function () {
-    const account = await Meteor.users.findOneAsync({ _id: this.userId });
-    if (!await this.connection.sandstormDb.isAccountSignedUpAsync(account)) {
-      throw new Meteor.Error(403, "Unauthorized", "Only invited users can upload apps.");
-    }
-
-    if (Meteor.settings.public.allowUninvited &&
-        account && !account.expires && (!account.plan || account.plan === "free")) {
-      throw new Meteor.Error(403, "Unauthorized", "Only paid users can upload apps.");
-    }
-
-    const token = Random.id(22);
-    await globalDb.collections.spkTokens.insertAsync({ _id: token, timestamp: new Date() });
-
-    return token;
+    return newUploadTokenForUser(this.connection.sandstormDb, this.userId);
   },
 
   upgradeGrains: async function (appId, version, packageId) {
@@ -92,47 +142,7 @@ Meteor.methods({
   },
 
   ensureInstalled: async function (packageId, url, isRetry) {
-    check(packageId, String);
-    check(url, Match.OneOf(String, undefined, null));
-    check(isRetry, Boolean);
-
-    if (!packageId.match(/^[a-zA-Z0-9]*$/)) {
-      throw new Meteor.Error(400, "The package ID contains illegal characters.");
-    }
-
-    const account = this.userId ? await Meteor.users.findOneAsync({ _id: this.userId }) : null;
-
-    if (!this.userId) {
-      if (allowDemo && isSafeDemoAppUrl(url)) {
-        // continue on
-      } else { // jscs:ignore disallowEmptyBlocks
-        throw new Meteor.Error(403, "You must be logged in to install packages.");
-      }
-    } else {
-      if (!await this.connection.sandstormDb.isAccountSignedUpOrDemoAsync(account)) {
-        throw new Meteor.Error(403,
-            "This Sandstorm server requires you to get an invite before installing apps.");
-      }
-    }
-
-    const pkg = await globalDb.collections.packages.findOneAsync(packageId);
-
-    if (!pkg || pkg.status !== "ready") {
-      if (!this.userId ||
-          (account && account.expires) ||
-          (Meteor.settings.public.allowUninvited &&
-           account && !account.expires && (!account.plan || account.plan === "free"))) {
-        if (!isSafeDemoAppUrl(url)) {
-          // TODO(someday): Billing prompt on client side.
-          throw new Meteor.Error(403, "Sorry, demo and free users cannot upload custom apps; " +
-              "they may only install apps from apps.sandstorm.io.");
-        }
-      }
-    }
-
-    if (!pkg || isRetry) {
-      await globalDb.startInstall(packageId, url, isRetry);
-    }
+    return ensureInstalledForUser(this.connection.sandstormDb, this.userId, packageId, url, isRetry);
   },
 });
 
