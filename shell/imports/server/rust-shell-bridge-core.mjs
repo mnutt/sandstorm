@@ -9,9 +9,10 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, listApps, createGrain, grains = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, listApps, createGrain, getProfile, updateProfile, grains = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
   const creating = new Set();
+  const updatingProfiles = new Set();
   const grants = new Map();
   const sessions = sessionStore;
   // One authoritative bridge process admits exchanges serially, including DB
@@ -86,6 +87,34 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       // Cleanup remains possible after expiration; scope ownership is still checked.
       if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
+      if (action === "getProfile" || action === "updateProfile") {
+        if (!getProfile) throw Object.assign(new Error("Profile unavailable."), { status: 503 });
+        if (action === "updateProfile") {
+          const profile = input.profile;
+          if (!updateProfile || !profile || typeof profile !== "object" || Array.isArray(profile) ||
+              Object.keys(profile).some(key => !["name", "handle", "pronoun"].includes(key)) ||
+              typeof profile.name !== "string" || !profile.name.trim() || profile.name.length > 160 ||
+              typeof profile.handle !== "string" || profile.handle.length > 64 || !/^[a-z_][a-z0-9_]*$/.test(profile.handle) ||
+              !["male", "female", "neutral", "robot"].includes(profile.pronoun)) {
+            throw Object.assign(new Error("Invalid profile."), { status: 400 });
+          }
+          if (updatingProfiles.has(record.accountId) || updatingProfiles.size >= 8) {
+            throw Object.assign(new Error("A profile update is already in progress."), { status: 409 });
+          }
+          updatingProfiles.add(record.accountId);
+          try {
+            const beforeWrite = async () => {
+              await session(input.token);
+              if (signal.aborted) throw Object.assign(new Error("Profile request disconnected."), { status: 409 });
+            };
+            await beforeWrite();
+            await updateProfile(record.accountId, profile, beforeWrite);
+          } finally { updatingProfiles.delete(record.accountId); }
+        }
+        const result = await getProfile(record.accountId);
+        await session(input.token);
+        return result;
+      }
       if (action === "listApps") {
         if (!listApps) throw Object.assign(new Error("Apps unavailable."), { status: 503 });
         const result = await listApps(record.accountId);
@@ -191,7 +220,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|renameGrain|listApps|createGrain)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|renameGrain|listApps|createGrain|getProfile|updateProfile)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

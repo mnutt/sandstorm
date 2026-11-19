@@ -10,7 +10,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
 const { runOperation, OperationTimeout, AppService, GrainService, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
-  SharingWindow, ShellService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+  SharingWindow, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -243,4 +243,29 @@ test('disconnect during rename retains uncertainty without leaking a late error 
   pending.reject(new Error('old account failure'));
   await assert.rejects(rename);
   assert.equal(state.grainError, '');
+});
+
+
+test('profile outcomes survive route changes; late reads and writes cannot overwrite new account state', async () => {
+  const reading = deferred();
+  const saving = deferred();
+  let state;
+  let renamed;
+  const profile = new ProfileService({run:promise=>promise,shell:{
+    getProfile:()=>({promise:()=>reading.promise}),
+    updateProfile:()=>({promise:()=>saving.promise}),
+  }}, value=>{state=value;}, value=>{renamed=value;});
+  const load = profile.load();
+  const save = profile.save({name:'New',handle:'alice',pronoun:'neutral'});
+  reading.resolve({profile:{name:'Stale',handle:'alice',pronoun:'neutral',mainHref:''}});
+  await load;
+  assert.equal(state.value,null);
+  profile.reset();
+  assert.match(state.error,/Could not confirm/);
+  profile.reset(true);
+  saving.resolve({profile:{name:'Old account',handle:'alice',pronoun:'neutral',mainHref:''}});
+  await save;
+  assert.equal(state.value,null);
+  assert.equal(state.error,'');
+  assert.equal(renamed,undefined);
 });

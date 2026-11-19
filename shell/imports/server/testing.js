@@ -1394,6 +1394,44 @@ if(isTesting) {
       }
     },
 
+    async testRustProfile() {
+      const accountId = "rust-profile-" + Random.id();
+      const hash = Crypto.randomBytes(32).toString("hex");
+      let token;
+      const require = (condition, message) => { if (!condition) throw new Error(message); };
+      try {
+        await Meteor.users.insertAsync({ _id: accountId, type: "account", loginCredentials: [], nonloginCredentials: [],
+          profile: { name: "Before", handle: "before", pronoun: "neutral", picture: "preserved-picture" },
+          services: { resume: { loginTokens: [{ hashedToken: hash, when: new Date() }] } } });
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(accountId, hash, state);
+        ({ token } = await rustShellBridge.handle("exchange", { code, state }));
+        const profile = { name: "Rust profile", handle: "rust_profile", pronoun: "robot" };
+        const saved = await rustShellBridge.handle("updateProfile", { token, accountId: this.userId, profile });
+        require(saved.name === profile.name && saved.handle === profile.handle && saved.pronoun === profile.pronoun, "Profile save returned incorrect fields");
+        const user = await Meteor.users.findOneAsync(accountId);
+        require(user.hasCompletedSignup, "Profile update did not preserve signup completion");
+        require(user.profile.picture === "preserved-picture", "Profile update changed picture");
+        require(user.services.resume.loginTokens[0].hashedToken === hash, "Profile update changed login token");
+        const legacy = { name: "Legacy profile", handle: "legacy_profile", pronoun: "female" };
+        await getMethodHandler("updateProfile").call({ userId: accountId }, null, legacy);
+        require((await rustShellBridge.handle("getProfile", { token })).name === legacy.name, "Rust profile did not read legacy edit");
+        let invalid = false;
+        try { await getMethodHandler("updateProfile").call({ userId: accountId }, null, { ...legacy, handle: "INVALID" }); }
+        catch (_) { invalid = true; }
+        require(invalid, "Legacy validation changed");
+        await rustShellBridge.handle("logout", { token });
+        let revoked = false;
+        try { await rustShellBridge.handle("updateProfile", { token, profile }); }
+        catch (error) { revoked = error.status === 401; }
+        require(revoked, "Revoked login updated profile");
+        return true;
+      } finally {
+        if (token) await rustShellBridge.handle("logout", { token });
+        await Meteor.users.removeAsync(accountId);
+      }
+    },
+
     async testRustRenameGrain(grainId) {
       check(grainId, String);
       const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });

@@ -276,3 +276,45 @@ test('grain creation is account-scoped, bounded and revalidates before committin
   assert.equal((await success).grainId,'created-grain');
   assert.equal(commits,1);
 });
+
+test('profile operations use linked identity, bound input, and recheck authority before writes and reads', async () => {
+  let authorized = true;
+  let writes = 0;
+  let blockWrite, blockRead;
+  const profile = {name:'Alice',handle:'alice',pronoun:'neutral',mainHref:'https://main.test/account'};
+  const bridge = createRustShellBridge({
+    authorize: async () => authorized ? {name:'Alice',expires:Date.now()+60000} : null,
+    getProfile: async id => { assert.equal(id,'alice'); if (blockRead) await blockRead; return profile; },
+    updateProfile: async (id, value, beforeWrite) => {
+      assert.equal(id,'alice');
+      if (blockWrite) await blockWrite;
+      await beforeWrite();
+      ++writes;
+      Object.assign(profile,value);
+    },
+  });
+  const state = 'a'.repeat(64);
+  const code = await bridge.issue('alice','login',state);
+  const {token} = await bridge.handle('exchange',{code,state});
+  const input = {token,accountId:'bob',profile:{name:'Updated',handle:'alice',pronoun:'neutral'}};
+  assert.equal((await bridge.handle('updateProfile',input)).name,'Updated');
+  for (const patch of [{handle:'INVALID'},{pronoun:'invalid'},{name:'a'.repeat(161)},{isAdmin:true}]) {
+    await assert.rejects(bridge.handle('updateProfile',{...input,profile:{...input.profile,...patch}}),{status:400});
+  }
+  let release;
+  blockWrite = new Promise(resolve => {release=resolve;});
+  const controller = new AbortController();
+  const pending = bridge.handle('updateProfile',input,controller.signal);
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(bridge.handle('updateProfile',input),{status:409});
+  controller.abort();
+  release();
+  await assert.rejects(pending,{status:409});
+  assert.equal(writes,1);
+  blockRead = new Promise(resolve => {release=resolve;});
+  const reading = bridge.handle('getProfile',{token});
+  await new Promise(resolve => setImmediate(resolve));
+  authorized = false;
+  release();
+  await assert.rejects(reading,{status:401});
+});

@@ -5,3 +5,4 @@ export * from '../src/lib/navigation';
 export * from '../src/lib/protocol';
 export * from '../src/lib/sharing';
 export * from '../src/lib/shell';
+export * from '../src/lib/profile';

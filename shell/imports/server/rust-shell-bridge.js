@@ -1,3 +1,4 @@
+import { updateProfileForUser } from "/imports/server/accounts/accounts-ui-methods";
 import { Meteor } from "meteor/meteor";
 import { Mongo } from "meteor/mongo";
 import { Accounts } from "meteor/accounts-base";
@@ -32,7 +33,17 @@ export async function authorizeRustShellAccount(accountId, loginHash) {
   return { name: text(user.profile?.name || "Sandstorm account", 160), expires };
 }
 
+async function accountProfile(accountId) {
+  const user = await Meteor.users.findOneAsync(accountId, { fields: { profile: 1 } });
+  if (!user) throw new Meteor.Error(403, "Account unavailable");
+  return { name: user.profile?.name || "", handle: user.profile?.handle || "",
+    pronoun: user.profile?.pronoun || "neutral",
+    mainHref: new URL("/account", process.env.ROOT_URL).href };
+}
+
 export const rustShellBridge = createRustShellBridge({
+  getProfile: accountProfile,
+  updateProfile: updateProfileForUser,
   listApps: rustAppActions,
   createGrain: createRustGrain,
   sessionStore: rustShellSessionStore,

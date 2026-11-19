@@ -1,3 +1,4 @@
+import { ProfileService, type Profile } from './profile';
 import type { Shell$Client, Snapshot } from '../generated/shell';
 import { ShellConnection } from './connection';
 import { GrainService } from './grains';
@@ -13,6 +14,7 @@ export class ShellService {
   private connection: ShellConnection;
   private grains: GrainService;
   private apps: AppService;
+  private profile: ProfileService;
   private accountKey: string | null = null;
   private notificationOperation = 0;
 
@@ -20,6 +22,7 @@ export class ShellService {
     this.connection = new ShellConnection({
       reset: () => {
         this.grains.reset();
+        this.profile.reset();
         this.apps.interrupt();
         if (this.state.pending) this.update({ pending: false, notificationError: 'Connection changed. The action was not retried; its outcome may be unknown.' });
         ++this.notificationOperation;
@@ -28,6 +31,7 @@ export class ShellService {
         const key = session.account?.key ?? null;
         if (key !== this.accountKey) {
           this.accountKey = key;
+          this.profile.reset(true);
           this.update({ notificationError: '', grainError: '' });
         }
         this.apps.selectAccount(key);
@@ -39,6 +43,7 @@ export class ShellService {
       snapshot: snapshot => this.snapshot(snapshot),
     });
     this.grains = new GrainService(this.connection, state => this.update(state));
+    this.profile = new ProfileService(this.connection, profile => this.update({ profile }), account => this.update({ account }));
     this.apps = new AppService(this.connection, creation => this.update({ creation }));
   }
   private update(patch: Partial<ShellState>) {
@@ -70,6 +75,8 @@ export class ShellService {
   }
   renameGrain(title: string) { return this.grains.rename(title); }
   renderTemplate(input: unknown) { return this.grains.renderTemplate(input); }
+  loadProfile() { return this.profile.load(); }
+  saveProfile(profile: Pick<Profile, 'name' | 'handle' | 'pronoun'>) { return this.profile.save(profile); }
   listApps() { return this.apps.list(); }
   createGrain(action: string, title: string) { return this.apps.create(action, title); }
   acknowledgeCreation() { this.apps.acknowledge(); }

@@ -134,3 +134,21 @@ pub struct Snapshot {
     pub entries: Vec<Entry>,
     pub total: u32,
 }
+
+#[derive(Deserialize)]
+pub struct AccountProfile {
+    pub name: String,
+    pub handle: String,
+    pub pronoun: String,
+    #[serde(rename = "mainHref")]
+    pub main_href: String,
+}
+
+impl AccountProfile {
+    pub fn write(&self, mut out: crate::shell_capnp::account_profile::Builder<'_>) {
+        out.set_name(&self.name);
+        out.set_handle(&self.handle);
+        out.set_pronoun(&self.pronoun);
+        out.set_main_href(&self.main_href);
+    }
+}

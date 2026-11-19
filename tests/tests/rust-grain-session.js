@@ -159,6 +159,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
   operation(browser, 'close');
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
+  utils.callMeteorTestMethod(browser, "testRustProfile");
   browser.frame(null).executeAsync(function (done) {
     Meteor.call('testRustRenameGrain', location.pathname.split('/')[2], (error, ok) => done({error:error?.message,ok}));
   }, [], result => {

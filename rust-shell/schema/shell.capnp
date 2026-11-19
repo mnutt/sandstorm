@@ -68,6 +68,12 @@ struct AppAction {
   title @1 :Text;
   appTitle @2 :Text;
 }
+struct AccountProfile {
+  name @0 :Text;
+  handle @1 :Text;
+  pronoun @2 :Text;
+  mainHref @3 :Text;
+}
 interface Shell {
   watch @0 (observer :Observer) -> (subscription :Subscription);
   dismiss @1 (id :UInt32) -> ();
@@ -81,5 +87,8 @@ interface Shell {
   openGrain @6 (grainId :Text) -> (view :GrainView, session :GrainSession);
   listApps @7 () -> (actions :List(AppAction), limited :Bool);
   createGrain @8 (actionId :Text, title :Text) -> (grainId :Text);
+  getProfile @9 () -> (profile :AccountProfile);
+  updateProfile @10 (name :Text, handle :Text, pronoun :Text) -> (profile :AccountProfile);
+  # Profile authority remains in Meteor; updates are never automatically replayed.
   # Never replay creation after a transport failure. The outcome may be unknown.
 }

@@ -28,45 +28,52 @@ const ValidHandle = Match.Where(function (handle) {
   return !!handle.match(/^[a-z_][a-z0-9_]*$/);
 });
 
+// Shared by the legacy method and the authenticated Rust-shell adapter.
+export async function updateProfileForUser(userId, profile, beforeWrite = async () => {}) {
+  check(profile, {
+    name: String,
+    handle: ValidHandle,
+    pronoun: Match.OneOf("male", "female", "neutral", "robot"),
+    unverifiedEmail: Match.Optional(String),
+  });
+
+  if (!userId) {
+    throw new Meteor.Error(403, "not logged in");
+  }
+
+  const userToUpdate = Meteor.isServer
+      ? await Meteor.users.findOneAsync({ _id: userId })
+      : Meteor.user();
+
+  const newValues = {
+    "profile.name": profile.name,
+    "profile.handle": profile.handle,
+    "profile.pronoun": profile.pronoun,
+  };
+
+  await beforeWrite();
+  if (Meteor.isServer) {
+    await Meteor.users.updateAsync({ _id: userToUpdate._id }, { $set: newValues });
+  } else {
+    Meteor.users.update({ _id: userToUpdate._id }, { $set: newValues });
+  }
+
+  const currentUser = Meteor.isServer
+      ? await Meteor.users.findOneAsync({ _id: userId })
+      : Meteor.user();
+  if (!currentUser.hasCompletedSignup) {
+    await beforeWrite();
+    if (Meteor.isServer) {
+      await Meteor.users.updateAsync({ _id: userId }, { $set: { hasCompletedSignup: true } });
+    } else {
+      Meteor.users.update({ _id: userId }, { $set: { hasCompletedSignup: true } });
+    }
+  }
+}
+
 Meteor.methods({
   updateProfile: async function (obsolete, profile) {
-    check(profile, {
-      name: String,
-      handle: ValidHandle,
-      pronoun: Match.OneOf("male", "female", "neutral", "robot"),
-      unverifiedEmail: Match.Optional(String),
-    });
-
-    if (!this.userId) {
-      throw new Meteor.Error(403, "not logged in");
-    }
-
-    const userToUpdate = Meteor.isServer
-        ? await Meteor.users.findOneAsync({ _id: this.userId })
-        : Meteor.user();
-
-    const newValues = {
-      "profile.name": profile.name,
-      "profile.handle": profile.handle,
-      "profile.pronoun": profile.pronoun,
-    };
-
-    if (Meteor.isServer) {
-      await Meteor.users.updateAsync({ _id: userToUpdate._id }, { $set: newValues });
-    } else {
-      Meteor.users.update({ _id: userToUpdate._id }, { $set: newValues });
-    }
-
-    const currentUser = Meteor.isServer
-        ? await Meteor.users.findOneAsync({ _id: this.userId })
-        : Meteor.user();
-    if (!currentUser.hasCompletedSignup) {
-      if (Meteor.isServer) {
-        await Meteor.users.updateAsync({ _id: this.userId }, { $set: { hasCompletedSignup: true } });
-      } else {
-        Meteor.users.update({ _id: this.userId }, { $set: { hasCompletedSignup: true } });
-      }
-    }
+    return updateProfileForUser(this.userId, profile);
   },
 
   testFirstSignup: async function (profile) {
