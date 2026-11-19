@@ -2887,6 +2887,11 @@ private:
       KJ_SYSCALL(setenv("RUST_SHELL_ORIGIN", origin.cStr(), true));
       KJ_SYSCALL(setenv("RUST_SHELL_ASSETS", "/rust-shell/dist", true));
       KJ_SYSCALL(setenv("RUST_SHELL_MAIN_URL", config.rootUrl.cStr(), true));
+      if (config.wildcardHost != nullptr) {
+        KJ_SYSCALL(setenv("RUST_SHELL_WILDCARD_HOST", config.wildcardHost.cStr(), true));
+      } else {
+        KJ_SYSCALL(unsetenv("RUST_SHELL_WILDCARD_HOST"));
+      }
       KJ_SYSCALL(setenv("RUST_SHELL_BRIDGE_SOCKET", "/var/sandstorm/socket/rust-shell-bridge", true));
       KJ_SYSCALL(unsetenv("RUST_SHELL_FIXTURE_SOCKET"));
       KJ_SYSCALL(execl("/bin/sandstorm-rust-shell", "/bin/sandstorm-rust-shell", EXEC_END_ARGS));

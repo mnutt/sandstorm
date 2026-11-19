@@ -1398,7 +1398,7 @@ if(isTesting) {
     },
 
     async testRustProfile() {
-      const accountId = "rust-profile-" + Random.id();
+      const accountId = "rust_profile_" + Random.id();
       const hash = Crypto.randomBytes(32).toString("hex");
       let token;
       const require = (condition, message) => { if (!condition) throw new Error(message); };
@@ -1416,21 +1416,58 @@ if(isTesting) {
         require(user.hasCompletedSignup, "Profile update did not preserve signup completion");
         require(user.profile.picture === "preserved-picture", "Profile update changed picture");
         require(user.services.resume.loginTokens[0].hashedToken === hash, "Profile update changed login token");
+        const beforeProfileEdit = await rustShellBridge.handle("snapshot",{token});
         const legacy = { name: "Legacy profile", handle: "legacy_profile", pronoun: "female" };
         await getMethodHandler("updateProfile").call({ userId: accountId }, null, legacy);
         require((await rustShellBridge.handle("getProfile", { token })).name === legacy.name, "Rust profile did not read legacy edit");
+        const afterProfileEdit = await rustShellBridge.handle("watch",{token,after:beforeProfileEdit.version});
+        require(afterProfileEdit.profileVersion !== beforeProfileEdit.profileVersion,"Profile change did not invalidate live snapshot");
+        require(afterProfileEdit.profileVersion === (await rustShellBridge.handle("getProfile",{token})).version,"Live profile version differs from read");
         let invalid = false;
         try { await getMethodHandler("updateProfile").call({ userId: accountId }, null, { ...legacy, handle: "INVALID" }); }
         catch (_) { invalid = true; }
         require(invalid, "Legacy validation changed");
+        const upload = () => rustShellBridge.handle("uploadPicture",{token,accountId:this.userId});
+        const first = await upload();
+        const firstKey = new URL(first.uploadUrl).pathname.slice(1);
+        const second = await upload();
+        require(!await globalDb.collections.assetUploadTokens.findOneAsync(firstKey),"Superseded picture upload remained valid");
+        const secondKey = new URL(second.uploadUrl).pathname.slice(1);
+        const uploadRecord = await globalDb.collections.assetUploadTokens.findOneAsync(secondKey);
+        require(uploadRecord.purpose.profilePicture.userId === accountId,"Picture upload crossed account boundary");
+        let rejected=false;
+        try { await httpCallAsync('POST',second.uploadUrl,{content:'<svg/>',headers:{'Content-Type':'image/png'},timeout:5000}); }
+        catch (error) { rejected=error.response?.statusCode === 400; }
+        require(rejected,"Image validation trusted the supplied MIME type");
+        require(!await globalDb.collections.assetUploadTokens.findOneAsync(secondKey),"Rejected upload token was reusable");
+        await Meteor.users.updateAsync(accountId,{$unset:{'profile.picture':1}});
+        const validUpload = await upload();
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+        require((await httpCallAsync('POST',validUpload.uploadUrl,{content:png,headers:{'Content-Type':'image/png'},timeout:5000})).statusCode === 204,"Picture upload failed");
+        const uploadedUser = await Meteor.users.findOneAsync(accountId);
+        const asset = await globalDb.getStaticAsset(uploadedUser.profile.picture);
+        require(asset.mimeType === 'image/png' && asset.content.equals(png),"Picture bytes were not stored canonically");
+        const refreshed = await rustShellBridge.handle('getProfile',{token});
+        require(refreshed.pictureUrl.endsWith('/'+uploadedUser.profile.picture),"Picture URL not projected");
+        let reused=false;
+        try { await httpCallAsync('POST',validUpload.uploadUrl,{content:png,timeout:5000}); }
+        catch (error) { reused=error.response?.statusCode === 404; }
+        require(reused,"Consumed picture upload token was reusable");
+
         await rustShellBridge.handle("logout", { token });
         let revoked = false;
         try { await rustShellBridge.handle("updateProfile", { token, profile }); }
         catch (error) { revoked = error.status === 401; }
         require(revoked, "Revoked login updated profile");
+        revoked=false;
+        try { await upload(); } catch (error) { revoked=error.status === 401; }
+        require(revoked,"Revoked login issued picture upload token");
         return true;
       } finally {
         if (token) await rustShellBridge.handle("logout", { token });
+        const uploadedUser = await Meteor.users.findOneAsync(accountId);
+        if (uploadedUser?.profile?.picture && uploadedUser.profile.picture !== 'preserved-picture') await globalDb.unrefStaticAsset(uploadedUser.profile.picture);
+        await globalDb.collections.assetUploadTokens.removeAsync({rustShellAccount:accountId});
         await Meteor.users.removeAsync(accountId);
       }
     },
@@ -1715,12 +1752,57 @@ if(isTesting) {
       const newer = "rust-install-newer-" + Random.id();
       const oldPackage = "f".repeat(32);
       let token, uploadToken;
+      const originalReportSetting = await globalDb.collections.settings.findOneAsync('reportStats');
+      const originalReportNotices = await globalDb.collections.notifications.find({'admin.type':'reportStats'}).fetchAsync();
+      const originalUser = await Meteor.users.findOneAsync(this.userId);
+      const notificationIds = Array.from({length:7}, () => "rust-notification-" + Random.id());
       const require = (ok,message) => { if (!ok) throw new Error(message); };
       try {
         const state = Crypto.randomBytes(32).toString("hex");
         const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
         ({token} = await rustShellBridge.handle("exchange",{code,state}));
         const call = (operation,data={packageId:pkg._id}) => rustShellBridge.handle("install",{token,operation,data,accountId:"must-not-own"});
+        const notifications = [
+          {grainId,path:"folder/document?mode=read#comment"},
+          {appUpdates:{[pkg.appId]:{name:"Test update",packageId:pkg._id}}},
+          {admin:{action:"/admin"}},
+          {grainId,userId:"another-account"},
+          {admin:{action:'/admin/stats',type:'reportStats'}},
+          {referral:true},
+          {identityChanges:true},
+        ];
+        for (let i=0;i<notifications.length;i++) await globalDb.collections.notifications.insertAsync({
+          _id:notificationIds[i],userId:this.userId,timestamp:new Date(),isUnread:true,...notifications[i],
+        });
+        const snapshot = await rustShellBridge.handle("snapshot",{token});
+        const notification = index => snapshot.entries.find(row => row.key === notificationIds[index]);
+        require(notification(0)?.nativePath === "/grain/"+grainId+"/folder/document?mode=read#comment","Grain notification path lost");
+        require(notification(1)?.nativePath === "/install","Update notification did not target native installer");
+        require(notification(2)?.nativePath === "" && notification(2).href.endsWith("/admin"),"Unsupported notification lost its legacy destination");
+        require(!notification(3),"Another account's notification leaked");
+        const noticeCall = (index,operation='details',enabled=false) => rustShellBridge.handle('notification',{token,key:notificationIds[index],operation,enabled,accountId:'another-account'});
+        require(notification(4)?.nativeAction === 'stats' && notification(5)?.nativeAction === 'referrals' && notification(6)?.nativeAction === 'identity','Native notice actions missing');
+        require((await noticeCall(6)).kind === 'identity','Identity notice missing');
+        require((await noticeCall(5)).kind === 'referrals','Referral details missing');
+        for (const [index,operation] of [[3,'details'],[5,'setStats'],[6,'setStats']]) {
+          let denied=false; try { await noticeCall(index,operation); } catch (_) { denied=true; }
+          require(denied,'Notification ownership or action boundary bypassed');
+        }
+        await Meteor.users.updateAsync(this.userId,{$set:{isAdmin:false}});
+        for (const operation of ['details','setStats']) {
+          let denied=false; try { await noticeCall(4,operation); } catch (_) { denied=true; }
+          require(denied,'Non-admin accessed statistics preferences');
+        }
+        await Meteor.users.updateAsync(this.userId,{$set:{isAdmin:true}});
+        require((await noticeCall(4)).kind === 'stats','Admin could not view statistics');
+        require((await noticeCall(4,'setStats',false)).enabled === false,'Statistics setting did not update');
+        require((await globalDb.collections.settings.findOneAsync('reportStats')).value === false,'Canonical reportStats setting unchanged');
+        require(!await globalDb.collections.notifications.findOneAsync(notificationIds[4]),'Stats notice not dismissed');
+        await rustShellBridge.handle('read',{token,key:notificationIds[6]});
+        require((await globalDb.collections.notifications.findOneAsync(notificationIds[6])).isUnread === false,'Individual notification not marked read');
+        require((await globalDb.collections.notifications.findOneAsync(notificationIds[5])).isUnread === true,'Other notification marked read');
+        await rustShellBridge.handle('read',{token,key:notificationIds[3]});
+        require((await globalDb.collections.notifications.findOneAsync(notificationIds[3])).isUnread === true,'Another account notification marked read');
         const initial = await call("status");
         require(initial.status === "ready" && initial.installed && initial.iconSrc,"Missing installation projection");
         const catalog = await call("catalog",{});
@@ -1752,6 +1834,11 @@ if(isTesting) {
         require(denied,"Revoked session installed app");
         return true;
       } finally {
+        await Meteor.users.updateAsync(this.userId, originalUser.isAdmin === undefined ? {$unset:{isAdmin:1}} : {$set:{isAdmin:originalUser.isAdmin}});
+        if (originalReportSetting) await globalDb.collections.settings.upsertAsync('reportStats',originalReportSetting);
+        else await globalDb.collections.settings.removeAsync('reportStats');
+        for (const notice of originalReportNotices) await globalDb.collections.notifications.upsertAsync(notice._id,notice);
+        await globalDb.collections.notifications.removeAsync({_id:{$in:notificationIds}});
         if (token) await rustShellBridge.handle("logout",{token});
         if (uploadToken) await globalDb.collections.spkTokens.removeAsync(uploadToken);
         await globalDb.collections.grains.removeAsync({_id:{$in:[foreign,newer]}});

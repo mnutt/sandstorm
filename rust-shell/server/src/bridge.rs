@@ -137,6 +137,10 @@ impl Session {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Entry {
+    #[serde(default, rename = "nativeAction")]
+    pub native_action: String,
+    #[serde(default, rename = "nativePath")]
+    pub native_path: String,
     pub key: String,
     pub title: String,
     pub body: String,
@@ -168,6 +172,8 @@ pub struct Grain {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
+    #[serde(default, rename = "profileVersion")]
+    pub profile_version: String,
     #[serde(default)]
     pub grains: Vec<Grain>,
     #[serde(default, rename = "grainsLimited")]
@@ -179,6 +185,10 @@ pub struct Snapshot {
 
 #[derive(Deserialize)]
 pub struct AccountProfile {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default, rename = "pictureUrl")]
+    pub picture_url: String,
     pub name: String,
     pub handle: String,
     pub pronoun: String,
@@ -188,6 +198,8 @@ pub struct AccountProfile {
 
 impl AccountProfile {
     pub fn write(&self, mut out: crate::shell_capnp::account_profile::Builder<'_>) {
+        out.set_version(&self.version);
+        out.set_picture_url(&self.picture_url);
         out.set_name(&self.name);
         out.set_handle(&self.handle);
         out.set_pronoun(&self.pronoun);

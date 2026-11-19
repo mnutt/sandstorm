@@ -10,10 +10,11 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, install, listApps, createGrain, getProfile, updateProfile, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, notification, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
   const creating = new Set();
   const installing = new Set();
+  const notificationWrites = new Set();
   const updatingProfiles = new Set();
   const grants = new Map();
   const sessions = sessionStore;
@@ -97,6 +98,26 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       // Cleanup remains possible after expiration; scope ownership is still checked.
       if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
+      if (action === "notification") {
+        if (!notification || typeof input.key !== "string" || !input.key || input.key.length > 128 ||
+            !["details", "setStats"].includes(input.operation) ||
+            (input.operation === "setStats" && typeof input.enabled !== "boolean")) {
+          throw Object.assign(new Error("Invalid notification operation."), {status:400});
+        }
+        const writing = input.operation === "setStats";
+        if (writing && notificationWrites.size) throw Object.assign(new Error("A reporting preference is being saved."), {status:409});
+        if (writing) notificationWrites.add(record.accountId);
+        try {
+          const beforeWrite = async () => {
+            await session(input.token);
+            if (signal.aborted) throw Object.assign(new Error("Notification request disconnected."), {status:409});
+          };
+          await beforeWrite();
+          const result = await notification(record.accountId,input.key,input.operation,input.enabled,beforeWrite);
+          await session(input.token);
+          return result;
+        } finally { if (writing) notificationWrites.delete(record.accountId); }
+      }
       if (action === "install") {
         const {operation, data} = input;
         if (!install || !["catalog", "status", "download", "retry", "confirm", "upgrade", "upload"].includes(operation) ||
@@ -120,6 +141,20 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
           await session(input.token);
           return result;
         } finally { if (mutating) installing.delete(record.accountId); }
+      }
+      if (action === "uploadPicture") {
+        if (!uploadPicture) throw Object.assign(new Error("Picture upload unavailable."), {status:503});
+        if (updatingProfiles.has(record.accountId) || updatingProfiles.size >= 8) throw Object.assign(new Error("A profile update is already in progress."), {status:409});
+        updatingProfiles.add(record.accountId);
+        try {
+          const beforeWrite = async () => {
+            await session(input.token);
+            if (signal.aborted) throw Object.assign(new Error("Picture upload request disconnected."), {status:409});
+          };
+          const result = await uploadPicture(record.accountId,beforeWrite);
+          await beforeWrite();
+          return result;
+        } finally { updatingProfiles.delete(record.accountId); }
       }
       if (action === "getProfile" || action === "updateProfile") {
         if (!getProfile) throw Object.assign(new Error("Profile unavailable."), { status: 503 });
@@ -241,7 +276,13 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
         await dismiss(record.accountId, input.id);
         return {};
       }
-      if (action === "read") { await markRead(record.accountId); return {}; }
+      if (action === "read") {
+        if (input.key !== undefined && (typeof input.key !== "string" || !input.key || input.key.length > 256)) {
+          throw Object.assign(new Error("Invalid notification ID."), {status:400});
+        }
+        await markRead(record.accountId, input.key);
+        return {};
+      }
       throw Object.assign(new Error("Unknown bridge operation."), { status: 404 });
     },
   };
@@ -256,7 +297,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|install)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|uploadPicture|install|notification)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

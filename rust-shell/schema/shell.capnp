@@ -13,6 +13,9 @@ struct Notification {
   href @6 :Text;
   timestamp @7 :Text;
   senderName @8 :Text;
+  nativePath @9 :Text;
+  nativeAction @10 :Text;
+  # Only supported, validated Rust-shell destinations; empty uses legacy href.
 }
 
 struct Grain {
@@ -33,6 +36,7 @@ struct Snapshot {
   total @2 :UInt32;
   grains @3 :List(Grain);
   grainsLimited @4 :Bool;
+  profileVersion @5 :Text;
   # Each callback replaces the entire projection. First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }
@@ -88,9 +92,13 @@ struct AccountProfile {
   handle @1 :Text;
   pronoun @2 :Text;
   mainHref @3 :Text;
+  pictureUrl @4 :Text;
+  version @5 :Text;
 }
 interface Shell {
+  uploadPicture @13 () -> (uploadUrl :Text);
   install @11 (operation :Text, input :Text) -> (state :Text);
+  notification @12 (key :Text, operation :Text, enabled :Bool) -> (state :Text);
   # Fixed installation operations; package and account authority stays server-side.
   watch @0 (observer :Observer) -> (subscription :Subscription);
   dismiss @1 (id :UInt32) -> ();
@@ -100,7 +108,7 @@ interface Shell {
   # Available only when the operator sets RUST_SHELL_FIXTURE_SOCKET.
   # The browser never chooses a socket or receives Sandstorm Backend authority.
   dismissReal @4 (key :Text) -> ();
-  markRead @5 () -> ();
+  markRead @5 (key :Text) -> ();
   openGrain @6 (grainId :Text) -> (view :GrainView, session :GrainSession);
   listApps @7 () -> (actions :List(AppAction), limited :Bool);
   createGrain @8 (actionId :Text, title :Text) -> (grainId :Text);

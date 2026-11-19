@@ -193,11 +193,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         permits: Arc::new(Semaphore::new(16)),
         shared_permits: Arc::new(Semaphore::new(8)),
     };
-    // Permit streaming SPK uploads only to the configured main shell's upload
+    let static_origin = match std::env::var("RUST_SHELL_WILDCARD_HOST") {
+        Ok(host) if !host.is_empty() => {
+            let url = reqwest::Url::parse(&format!(
+                "{}://{}",
+                reqwest::Url::parse(&main_url)?.scheme(),
+                host.replace('*', "static")
+            ))?;
+            url.origin().ascii_serialization()
+        }
+        _ => String::new(),
+    };
+    // Permit picture uploads to the configured static host, and streaming SPK uploads only to the configured main shell's upload
     // endpoint. All other shell connections remain same-origin.
     let shell_policy = HeaderValue::from_str(&format!(
-        "default-src 'self'; img-src 'self' data: https:; connect-src 'self' {}/upload/; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'",
-        state.auth.main_origin
+        "default-src 'self'; img-src 'self' data: https:; connect-src 'self' {}/upload/ {}; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'",
+        state.auth.main_origin, static_origin
     ))?;
     let index = ServeFile::new(assets.join("index.html"));
     let app = Router::new()

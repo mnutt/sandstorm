@@ -352,14 +352,15 @@ export async function dismissNotificationForUser(db, userId, notificationId) {
   }
 }
 
-export async function readNotificationsForUser(db, userId) {
-  // Marks all notifications as read for the current user.
+export async function readNotificationsForUser(db, userId, notificationId) {
+  // Omit the ID to mark all notifications; individual reads retain account scoping.
   if (!userId) {
     throw new Meteor.Error(403, "User not logged in.");
   }
 
+  if (notificationId !== undefined) check(notificationId, String);
   await db.collections.notifications.updateAsync(
-    { userId },
+    notificationId === undefined ? { userId } : { userId, _id: notificationId },
     { $set: { isUnread: false } },
     { multi: true });
 }

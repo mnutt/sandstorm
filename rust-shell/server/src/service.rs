@@ -17,6 +17,7 @@ struct Projection {
     total: u32,
     grains: Vec<crate::bridge::Grain>,
     grains_limited: bool,
+    profile_version: String,
 }
 
 #[derive(Clone)]
@@ -61,6 +62,10 @@ impl Shell {
             .map(|snapshot| snapshot.version.clone())
             .unwrap_or_default();
         let (state, _) = watch::channel(Projection {
+            profile_version: initial
+                .as_ref()
+                .map(|s| s.profile_version.clone())
+                .unwrap_or_default(),
             revision: 0,
             next_id: 2,
             entries,
@@ -107,13 +112,15 @@ impl Shell {
                         real: Some(real),
                     })
                     .collect();
-                if state.entries == entries
+                if state.profile_version == snapshot.profile_version
+                    && state.entries == entries
                     && state.total == snapshot.total
                     && state.grains == snapshot.grains
                     && state.grains_limited == snapshot.grains_limited
                 {
                     return false;
                 }
+                state.profile_version = snapshot.profile_version;
                 state.grains = snapshot.grains;
                 state.grains_limited = snapshot.grains_limited;
                 state.entries = entries;
@@ -194,6 +201,55 @@ impl subscription::Server for Subscription {
 }
 
 impl shell::Server for Shell {
+    async fn upload_picture(
+        self: Rc<Self>,
+        _: shell::UploadPictureParams,
+        mut results: shell::UploadPictureResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| capnp::Error::failed("Sign in to upload a picture".into()))?;
+        let value = session
+            .call("uploadPicture", serde_json::json!({}))
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        let url = value
+            .get("uploadUrl")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| capnp::Error::failed("Invalid upload URL".into()))?;
+        results.get().set_upload_url(url);
+        Ok(())
+    }
+
+    async fn notification(
+        self: Rc<Self>,
+        params: shell::NotificationParams,
+        mut results: shell::NotificationResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| capnp::Error::failed("Sign in to view notification details".into()))?;
+        let input = params.get()?;
+        let key = input.get_key()?.to_str()?;
+        let operation = input.get_operation()?.to_str()?;
+        if key.is_empty() || key.len() > 128 || !["details", "setStats"].contains(&operation) {
+            return Err(capnp::Error::failed(
+                "Invalid notification operation".into(),
+            ));
+        }
+        let value = session
+            .call(
+                "notification",
+                serde_json::json!({"key":key,"operation":operation,"enabled":input.get_enabled()}),
+            )
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        results.get().set_state(value.to_string());
+        Ok(())
+    }
+
     async fn install(
         self: Rc<Self>,
         params: shell::InstallParams,
@@ -383,10 +439,17 @@ impl shell::Server for Shell {
 
     async fn mark_read(
         self: Rc<Self>,
-        _: shell::MarkReadParams,
+        params: shell::MarkReadParams,
         _: shell::MarkReadResults,
     ) -> capnp::Result<()> {
-        self.mutate_real("read", serde_json::json!({})).await
+        let input = params.get()?;
+        let key = input.get_key()?.to_str()?;
+        let payload = if key.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::json!({"key":key})
+        };
+        self.mutate_real("read", payload).await
     }
 
     async fn interop(
@@ -418,6 +481,7 @@ impl shell::Server for Shell {
                 let mut request = observer.replace_request();
                 {
                     let mut out = request.get().init_snapshot();
+                    out.set_profile_version(&snapshot.profile_version);
                     out.set_revision(snapshot.revision);
                     out.set_total(snapshot.total);
                     out.set_grains_limited(snapshot.grains_limited);
@@ -449,6 +513,8 @@ impl shell::Server for Shell {
                             out.set_href(&real.href);
                             out.set_timestamp(&real.timestamp);
                             out.set_sender_name(&real.sender_name);
+                            out.set_native_path(&real.native_path);
+                            out.set_native_action(&real.native_action);
                         }
                     }
                 }
