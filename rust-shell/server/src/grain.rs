@@ -193,9 +193,9 @@ impl grain_session::Server for Lease {
         _: grain_session::CloseParams,
         _: grain_session::CloseResults,
     ) -> capnp::Result<()> {
-        if !self.closed.get() {
+        if !self.closed.replace(true) {
+            // Mark before awaiting: repeated close calls must not amplify bridge IO.
             self.scope.close(&self.lease).await?;
-            self.closed.set(true);
         }
         Ok(())
     }

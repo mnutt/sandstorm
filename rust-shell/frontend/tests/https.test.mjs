@@ -74,6 +74,8 @@ test('HTTPS origin and WSS through a private Unix socket', { timeout: 30000 }, a
       ws.onopen = () => { ws.close(); resolve(false); }; ws.onerror = () => resolve(true);
     }));
     assert.equal(rejected, true, 'wrong Host must be rejected even over TLS');
+    const wrongHost = await page.request.get(`${origin}/auth/start`, { headers: {Host:'foreign.example'}, ignoreHTTPSErrors:true });
+    assert.equal(wrongHost.status(),403,'ordinary auth endpoints reject a foreign Host too');
     const redirect = await page.request.get(`${origin}/main-shell`, { maxRedirects: 0, ignoreHTTPSErrors: true });
     assert.equal(redirect.headers().location, 'https://main.example.test');
     assert.deepEqual(errors, []);

@@ -2,7 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use capnp::message::ReaderOptions;
 use capnp_rpc::{rpc_twoparty_capnp, twoparty, RpcSystem};
 use futures::{SinkExt, StreamExt};
-use std::{path::PathBuf, rc::Rc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use tokio::io::AsyncWriteExt;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -27,6 +27,14 @@ fn validate_frame(bytes: &[u8]) -> capnp::Result<()> {
         return Err(capnp::Error::failed("expected exactly one message".into()));
     }
     Ok(())
+}
+
+fn admit_frame(bytes: &[u8], budget: &mut crate::rpc_budget::Budget) -> capnp::Result<()> {
+    validate_frame(bytes)?;
+    // WebSocket Bytes may be unaligned; inspect aligned storage. Validate the
+    // segment table against the frame first, before allocating that storage.
+    let message = capnp::serialize::read_message(std::io::Cursor::new(bytes), options())?;
+    budget.incoming(message.get_root()?)
 }
 
 pub async fn serve(
@@ -98,13 +106,24 @@ async fn serve_rpc(
         options(),
     );
     let rpc = RpcSystem::new(Box::new(network), Some(bootstrap));
+    let budget = RefCell::new(crate::rpc_budget::Budget::new());
     let incoming = async {
         while let Some(Ok(message)) = ws_in.next().await {
+            let size = match &message {
+                Message::Binary(bytes) | Message::Ping(bytes) | Message::Pong(bytes) => bytes.len(),
+                Message::Text(text) => text.len(),
+                Message::Close(_) => 0,
+            };
+            if budget.borrow_mut().frame(size).is_err() {
+                break;
+            }
             match message {
                 Message::Binary(bytes) => {
-                    if validate_frame(&bytes).is_err()
-                        || bridge_write.write_all(&bytes).await.is_err()
-                    {
+                    let accepted = admit_frame(&bytes, &mut budget.borrow_mut());
+                    if accepted.is_err() {
+                        break;
+                    }
+                    if bridge_write.write_all(&bytes).await.is_err() {
                         break;
                     }
                 }
@@ -117,6 +136,12 @@ async fn serve_rpc(
         let mut input = bridge_read.compat();
         while let Ok(message) = capnp_futures::serialize::read_message(&mut input, options()).await
         {
+            let accepted = message
+                .get_root()
+                .and_then(|root| budget.borrow_mut().outgoing(root));
+            if accepted.is_err() {
+                break;
+            }
             let bytes = capnp::serialize::write_message_segments_to_words(message.get_segments());
             if bytes.len() > MAX_MESSAGE
                 || ws_out.send(Message::Binary(bytes.into())).await.is_err()
@@ -139,6 +164,18 @@ async fn serve_rpc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unaligned_websocket_envelopes_are_validated_safely() {
+        let mut message = capnp::message::Builder::new_default();
+        message
+            .init_root::<capnp_rpc::rpc_capnp::message::Builder>()
+            .init_bootstrap();
+        let bytes = capnp::serialize::write_message_to_words(&message);
+        let mut unaligned = vec![0];
+        unaligned.extend_from_slice(&bytes);
+        assert!(admit_frame(&unaligned[1..], &mut crate::rpc_budget::Budget::new()).is_ok());
+    }
 
     #[test]
     fn frame_boundaries_and_limits() {

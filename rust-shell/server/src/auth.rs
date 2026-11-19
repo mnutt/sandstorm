@@ -154,3 +154,37 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     set_cookie(&mut response, SESSION, "", 0);
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookies_reject_ambiguous_or_malformed_credentials() {
+        let token = "a".repeat(64);
+        let mut headers = HeaderMap::new();
+        headers.append(
+            header::COOKIE,
+            format!("{SESSION}={token}").parse().unwrap(),
+        );
+        assert_eq!(cookie(&headers, SESSION), Some(token.clone()));
+        headers.append(
+            header::COOKIE,
+            format!("{SESSION}={token}").parse().unwrap(),
+        );
+        assert_eq!(cookie(&headers, SESSION), None);
+        for value in [
+            format!("{token}; {SESSION}={token}"),
+            "a".repeat(63),
+            "A".repeat(64),
+            "g".repeat(64),
+        ] {
+            headers.clear();
+            headers.insert(
+                header::COOKIE,
+                format!("{SESSION}={value}").parse().unwrap(),
+            );
+            assert_eq!(cookie(&headers, SESSION), None);
+        }
+    }
+}

@@ -14,6 +14,7 @@ pub struct SharedShell {
     busy: Rc<Cell<bool>>,
     active: Rc<Cell<bool>>,
     opened: Rc<Cell<bool>>,
+    closed: Rc<Cell<bool>>,
     signed_in: Rc<Cell<bool>>,
 }
 struct Busy<'a>(&'a Cell<bool>);
@@ -34,6 +35,7 @@ impl SharedShell {
             busy: Rc::new(Cell::new(false)),
             active: Rc::new(Cell::new(false)),
             opened: Rc::new(Cell::new(false)),
+            closed: Rc::new(Cell::new(false)),
             signed_in: Rc::new(Cell::new(false)),
         })
     }
@@ -49,6 +51,10 @@ impl SharedShell {
     }
     pub async fn close(&self) {
         self.active.set(false);
+        // Repeated close/drop and never-opened public connections need no bridge IO.
+        if self.closed.replace(true) || !self.opened.get() {
+            return;
+        }
         let _ = self.call("closeSharedGrain", json!({})).await;
     }
     pub async fn maintain(&self) {
@@ -101,7 +107,7 @@ impl shared_shell::Server for SharedShell {
             return Err(capnp::Error::failed("Request already pending".into()));
         }
         let _busy = Busy(&self.busy);
-        if self.opened.replace(true) {
+        if self.closed.get() || self.opened.replace(true) {
             return Err(capnp::Error::failed("Shared grain already open".into()));
         }
         let input = params.get()?;

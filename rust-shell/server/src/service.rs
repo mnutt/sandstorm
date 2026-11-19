@@ -311,7 +311,11 @@ impl shell::Server for Shell {
             .grain
             .as_ref()
             .ok_or_else(|| capnp::Error::failed("Grains require a signed-in account".into()))?;
-        let grain_id = params.get()?.get_grain_id()?.to_str()?.to_owned();
+        let grain_id = params.get()?.get_grain_id()?.to_str()?;
+        if grain_id.len() > 128 {
+            return Err(capnp::Error::failed("Invalid grain ID".into()));
+        }
+        let grain_id = grain_id.to_owned();
         let (view, session) = scope.open(grain_id).await?;
         let mut out = results.get();
         out.set_session(session);
@@ -331,7 +335,11 @@ impl shell::Server for Shell {
         params: shell::DismissRealParams,
         _: shell::DismissRealResults,
     ) -> capnp::Result<()> {
-        let key = params.get()?.get_key()?.to_str()?.to_owned();
+        let key = params.get()?.get_key()?.to_str()?;
+        if key.len() > 1024 {
+            return Err(capnp::Error::failed("Invalid notification ID".into()));
+        }
+        let key = key.to_owned();
         self.mutate_real("dismiss", serde_json::json!({ "id": key }))
             .await
     }

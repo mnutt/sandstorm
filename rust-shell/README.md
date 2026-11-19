@@ -535,10 +535,51 @@ fixture notifications. Browser queues are bounded. Observer delivery has one
 call in flight and a ten-second deadline; timeout/error drops the observer task.
 Connections expire after an hour and reconnect with revalidated authority.
 
-These limits bound the fixture and adapter, not all possible internal RPC
-allocations under hostile pipelining. Aggregate admission, call budgets, heartbeat,
-and load testing remain necessary before exposure
-outside a local experiment. Origin checking is not account authentication.
+The Rust transport also enforces per-connection lifetime budgets: 8 MiB inbound,
+8,192 frames, 1,024 calls/bootstrap requests, and 1,024 capability descriptors
+(maximum 32 descriptors/message). A token bucket allows 128 frames/second with a
+512-frame burst, including ping/pong. There are at most 64 unanswered outbound
+questions; unsolicited/duplicate returns are rejected before reaching capnp-rpc.
+Budget exhaustion closes the connection; clients must revalidate on reconnect,
+and mutations are never replayed automatically.
+
+Bridge IO admits 32 ordinary requests and a separate 32 maintenance requests
+(watches, lease renewal, cleanup, logout), failing immediately when full. Failed
+account authentication does not occupy a WebSocket slot. Host checks apply to
+ordinary HTTP/auth endpoints as well as upgrades. Repeated lease-close calls are
+idempotent before awaiting bridge IO.
+
+### Rust server security review (2026-11-18)
+
+Reviewed all handwritten Rust server modules, the generated-schema entry points,
+private bridge boundary, session/lease cancellation, and supervisor launch/TLS
+configuration. No account-authentication or shared-webkey permission bypass was
+found in this review. The Rust process runs as the Sandstorm service user behind
+the existing TLS gateway, with a mode-0600 Unix listener, bounded bridge bodies
+and deadlines, no general URL fetch interface, and no handwritten unsafe blocks.
+That service UID is a broad trust boundary, not a separate privilege sandbox.
+
+Fixed availability weaknesses: unbounded aggregate bridge work and RPC lifetime
+state; pre-authentication acquisition of account WebSocket slots; repeated close
+amplification; and an unchecked question-ID indexing path in capnp-rpc 0.25.1
+(rejected at our transport boundary). The latter could panic a connection task,
+not a confirmed whole-process crash or memory-corruption exploit. Added tests for
+unauthenticated malformed replies/floods, aligned envelope parsing, cookie
+ambiguity, and admission under actual concurrent Unix-socket requests. Existing
+session/revocation and C++ capability-forwarding tests remain required.
+
+The locked dependency audit scanned 137 crates against 1,533 RustSec advisories.
+Updated transitive rand 0.9.2 to 0.9.3 for RUSTSEC-2026-0097 (custom-logger
+reentrancy; that trigger is not configured here). The updated lockfile reports
+no vulnerabilities or informational warnings in that database snapshot.
+
+This is not a formal security certification or a full gateway/Meteor audit.
+Per-source abuse controls at the gateway, sustained adversarial load testing,
+protocol fuzzing, and explicit OS memory/CPU isolation remain outstanding. A
+public visitor can still occupy the eight shared-view slots: admission bounds
+resource use but does not guarantee fair availability. Origin checking is not
+account authentication. Lifetime budgets bound input work, not a formal upper
+bound on every internal RPC allocation.
 
 ## Validation
 

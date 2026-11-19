@@ -2,6 +2,7 @@ mod auth;
 mod bridge;
 mod grain;
 mod interop;
+mod rpc_budget;
 mod service;
 mod shared;
 mod transport;
@@ -80,9 +81,6 @@ async fn upgrade(
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Ok(permit) = state.permits.try_acquire_owned() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     let session = if state.auth.bridge.is_some() {
         let Some(session) = auth::session(&state.auth, &headers) else {
             return StatusCode::UNAUTHORIZED.into_response();
@@ -93,6 +91,10 @@ async fn upgrade(
         Some(session)
     } else {
         None
+    };
+    // Failed sign-in attempts must not occupy the slots reserved for real sessions.
+    let Ok(permit) = state.permits.try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     ws.max_message_size(transport::MAX_MESSAGE)
         .max_frame_size(transport::MAX_MESSAGE)
@@ -215,6 +217,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/rpc", get(upgrade))
         .route("/shared-rpc", get(upgrade_shared))
         .fallback_service(ServeDir::new(assets))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), |State(state): State<AppState>, request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
+            if request.headers().get(header::HOST).and_then(|v| v.to_str().ok()) != Some(state.host.as_str()) {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            next.run(request).await
+        }))
         .with_state(state)
         .layer(DefaultBodyLimit::max(4096))
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))

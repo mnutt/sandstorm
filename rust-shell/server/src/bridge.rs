@@ -1,7 +1,8 @@
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Semaphore;
 
 pub type Error = (StatusCode, String);
 
@@ -19,21 +20,48 @@ pub struct AppList {
 }
 
 #[derive(Clone)]
-pub struct Bridge(reqwest::Client);
+pub struct Bridge {
+    client: reqwest::Client,
+    requests: Arc<Semaphore>,
+    maintenance: Arc<Semaphore>,
+}
 
 impl Bridge {
     pub fn new(socket: PathBuf) -> Result<Self, reqwest::Error> {
-        Ok(Self(
-            reqwest::Client::builder()
+        Ok(Self {
+            client: reqwest::Client::builder()
                 .unix_socket(socket)
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(5))
                 .build()?,
-        ))
+            requests: Arc::new(Semaphore::new(32)),
+            // Keep heartbeat/revocation/cleanup independent of public request pressure.
+            maintenance: Arc::new(Semaphore::new(32)),
+        })
     }
 
     pub async fn call(&self, action: &str, input: Value) -> Result<Value, Error> {
+        let maintenance = matches!(
+            action,
+            "watch"
+                | "keepGrain"
+                | "closeGrain"
+                | "keepSharedGrain"
+                | "closeSharedGrain"
+                | "logout"
+        );
+        let pool = if maintenance {
+            &self.maintenance
+        } else {
+            &self.requests
+        };
+        let _permit = pool.try_acquire().map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many pending shell requests.".into(),
+            )
+        })?;
         let unavailable = || {
             (
                 StatusCode::BAD_GATEWAY,
@@ -41,7 +69,7 @@ impl Bridge {
             )
         };
         let mut response = self
-            .0
+            .client
             .post(format!("http://bridge/{action}"))
             .timeout(Duration::from_secs(if action == "watch" { 30 } else { 5 }))
             .json(&input)
@@ -152,5 +180,68 @@ impl AccountProfile {
         out.set_handle(&self.handle);
         out.set_pronoun(&self.pronoun);
         out.set_main_href(&self.main_href);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{routing::post, Json, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn request_pressure_is_bounded_without_blocking_cleanup() {
+        let path =
+            std::env::temp_dir().join(format!("rust-bridge-audit-{}.sock", std::process::id()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let entered = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let app = Router::new()
+            .route(
+                "/getProfile",
+                post({
+                    let entered = entered.clone();
+                    let release = release.clone();
+                    move || {
+                        let entered = entered.clone();
+                        let release = release.clone();
+                        async move {
+                            entered.fetch_add(1, Ordering::SeqCst);
+                            release.acquire().await.unwrap().forget();
+                            Json(json!({}))
+                        }
+                    }
+                }),
+            )
+            .route("/closeGrain", post(|| async { Json(json!({})) }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let bridge = Bridge::new(path.clone()).unwrap();
+        let mut calls = tokio::task::JoinSet::new();
+        for _ in 0..32 {
+            let bridge = bridge.clone();
+            calls.spawn(async move { bridge.call("getProfile", json!({})).await });
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while entered.load(Ordering::SeqCst) < 32 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            bridge.call("getProfile", json!({})).await.unwrap_err().0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(bridge.call("closeGrain", json!({})).await.is_ok());
+        release.add_permits(33);
+        while let Some(result) = calls.join_next().await {
+            assert!(result.unwrap().is_ok());
+        }
+        assert!(bridge.call("getProfile", json!({})).await.is_ok());
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_file(path).unwrap();
     }
 }

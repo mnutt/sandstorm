@@ -178,6 +178,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await guest.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
     await serveProbe(guest, './shared-probe.ts', 'shared-probe.js');
     assert.equal(await guest.evaluate(async ()=>(await import('/shared-probe.js')).probe()),true,'public shared bootstrap cannot be cast to account Shell');
+    for (const kind of ['reply', 'flood']) {
+      assert.equal(await guest.evaluate(async kind => (await import('/shared-probe.js')).attack(kind), kind), true,
+        `unauthenticated ${kind} attack is disconnected`);
+    }
+    assert.equal(await guest.evaluate(async () => (await fetch('/healthz')).status), 200, 'server survives malformed RPC and flooding');
     assert.equal(sharedOpens.at(-1).accountId,null);
     assert.equal(new URL(await guest.locator('iframe').getAttribute('src')).searchParams.get('path'),'/folder?view=guest#document');
     assert.equal(await guest.getByRole('button',{name:'Rename grain',exact:true}).count(),0);
