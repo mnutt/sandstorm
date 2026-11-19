@@ -60,10 +60,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     now: () => Date.now() + leaseClockOffset,
     grains: {
       open: async (id, grainId) => {
-        if (![`${id}-grain`, `${id}-hidden`, `${id}-created`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
+        if (![`${id}-grain`, `${id}-hidden`, `${id}-created`, `${id}-extra`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
         const handle = ++serial; liveGrains.add(handle);
-        return { handle, view: { grainId, title: grainId.endsWith('-hidden') ? 'Hidden grain' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
+        return { handle, view: { grainId, iconSrc: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect width="24" height="24" fill="orange"/%3E%3C/svg%3E', title: grainId.endsWith('-hidden') ? 'Hidden grain' : grainId.endsWith('-extra') ? 'Zebra shared' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
@@ -261,11 +261,55 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(page.url().includes('sessionid'), false);
     await page.goBack();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
-    await expect.poll(() => liveGrains.size).toBe(0);
+    await expect.poll(() => liveGrains.size).toBe(1);
     await page.goForward();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     const app = page.frames().find((frame) => frame.url().startsWith(grainOrigin));
     await app.evaluate(() => { window.renameFrameMarker = 'still here'; });
+    await app.getByLabel('App state').fill('background draft');
+    const firstSession = await page.locator('iframe').getAttribute('src');
+    await page.getByRole('link', {name:'Grains',exact:true}).click();
+    await page.getByRole('button', {name:'Open Zebra shared here',exact:true}).click();
+    await expect(page.locator('iframe')).toHaveCount(2);
+    await expect.poll(() => liveGrains.size).toBe(2);
+    await expect(page.locator('iframe:visible')).toHaveAttribute('title','Zebra shared');
+    const secondSession = await page.locator('iframe:visible').getAttribute('src');
+    await page.frameLocator('iframe:visible').getByLabel('App state').fill('second draft');
+    await app.evaluate(() => parent.postMessage({setPath:'/background-path'}, '*'));
+    await expect(page.getByRole('link',{name:'Switch to Alice grain'})).toHaveAttribute('href','/grain/alice-grain/background-path');
+    assert.equal(new URL(page.url()).pathname, '/grain/alice-extra');
+    await page.getByRole('link',{name:'Switch to Alice grain'}).click();
+    await expect(page.locator('iframe:visible')).toHaveAttribute('src',firstSession);
+    assert.equal(await app.getByLabel('App state').inputValue(),'background draft');
+    await page.getByRole('link',{name:'Switch to Zebra shared'}).click();
+    await expect(page.locator('iframe:visible')).toHaveAttribute('src',secondSession);
+    await expect(page.frameLocator('iframe:visible').getByLabel('App state')).toHaveValue('second draft');
+    await expect.poll(() => page.getByRole('link',{name:'Switch to Zebra shared'}).locator('img').evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+    const frameBox = await page.locator('iframe:visible').boundingBox();
+    const headerBox = await page.locator('header').boundingBox();
+    const sideBox = await page.getByRole('complementary').boundingBox();
+    assert.equal(frameBox.x,sideBox.width);
+    assert.equal(frameBox.y,headerBox.height);
+    assert.equal(frameBox.width,page.viewportSize().width-sideBox.width);
+    assert.equal(frameBox.height,page.viewportSize().height-headerBox.height);
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-workspace.png'});
+    await page.setViewportSize({width:390,height:844});
+    await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();
+    const toggleBox = await page.getByRole('button',{name:'Expand sidebar',exact:true}).boundingBox();
+    assert.ok(toggleBox.x >= 0 && toggleBox.x+toggleBox.width <= 56, 'Collapsed toggle stays fully visible');
+    const mobileFrame = await page.locator('iframe:visible').boundingBox();
+    assert.equal(mobileFrame.x,56);
+    assert.equal(mobileFrame.y,(await page.locator('header').boundingBox()).height);
+    assert.equal(mobileFrame.y+mobileFrame.height,844);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-workspace-mobile.png'});
+    await page.setViewportSize({width:1280,height:720});
+    await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();
+    await page.getByRole('button',{name:'Close grain',exact:true}).click();
+    await expect.poll(() => liveGrains.size).toBe(1);
+    await expect(page.locator('iframe')).toHaveCount(1);
+    await page.getByRole('link',{name:'Switch to Alice grain'}).click();
+    assert.equal(await app.evaluate(() => window.renameFrameMarker),'still here');
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-grain.png',fullPage:true});
     await page.getByRole('button', {name:'Rename grain',exact:true}).click();
     const dialog = page.getByRole('dialog', {name:'Rename grain',exact:true});
@@ -430,7 +474,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await popup.waitForURL(mainOrigin + '/rust-shell-powerbox');
     await popup.waitForLoadState('domcontentloaded');
     await expect.poll(() => popup.evaluate(() => !!window.request)).toBe(true);
-    assert.equal(await popup.evaluate(() => window.request.sessionId), String(serial));
+    assert.equal(await popup.evaluate(() => window.request.sessionId), new URL(firstSession).searchParams.get('sessionid'));
     assert.equal(new URL(popup.url()).search, '');
     await page.evaluate(origin => window.dispatchEvent(new MessageEvent('message', {
       origin, source: window, data: { type: 'rust-powerbox-result', result: {rpcId:'powerbox', token:'forged'} },
@@ -506,7 +550,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
     await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
-    await expect.poll(() => liveGrains.size).toBe(0);
+    await expect.poll(() => liveGrains.size).toBe(1);
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);

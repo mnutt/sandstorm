@@ -1,7 +1,7 @@
 import { ProfileService, type Profile } from './profile';
 import type { Shell$Client, Snapshot } from '../generated/shell';
 import { ShellConnection } from './connection';
-import { GrainService } from './grains';
+import { GrainWorkspace } from './workspace';
 import { AppService } from './apps';
 import { initialShellState, type ShellState, type Grain, type Notification } from './model';
 import { errorMessage } from './operations';
@@ -12,7 +12,7 @@ export type { ShellState, Grain, Notification, AppAction, ActiveGrain } from './
 export class ShellService {
   private state = initialShellState();
   private connection: ShellConnection;
-  private grains: GrainService;
+  private grains: GrainWorkspace;
   private apps: AppService;
   private profile: ProfileService;
   private accountKey: string | null = null;
@@ -42,7 +42,7 @@ export class ShellService {
       }),
       snapshot: snapshot => this.snapshot(snapshot),
     });
-    this.grains = new GrainService(this.connection, state => this.update(state));
+    this.grains = new GrainWorkspace(this.connection, state => this.update(state));
     this.profile = new ProfileService(this.connection, profile => this.update({ profile }), account => this.update({ account }));
     this.apps = new AppService(this.connection, creation => this.update({ creation }));
   }
@@ -60,7 +60,7 @@ export class ShellService {
     const grains: Grain[] = [];
     for (const grain of snapshot.grains) grains.push({
       key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
-      href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle,
+      href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle, iconSrc: grain.iconSrc,
     });
     this.update({ status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
       revision: snapshot.revision, total: snapshot.total, connectionError: '' });
@@ -69,12 +69,14 @@ export class ShellService {
   start() { this.connection.start(); }
   stop() { this.connection.stop(); }
   reconnect() { this.connection.reconnect(); }
-  closeGrain() { this.grains.close(); }
+  selectGrain(id: string | null) { this.grains.select(id); }
+  grainPathChanged(id: string, path: string) { this.grains.pathChanged(id, path); }
+  closeGrain(id?: string) { this.grains.close(id); }
   openGrain(requested: Grain | string, path = '/') {
     return this.grains.open(typeof requested === 'string' ? requested : requested.key, path, this.state.grains);
   }
-  renameGrain(title: string) { return this.grains.rename(title); }
-  renderTemplate(input: unknown) { return this.grains.renderTemplate(input); }
+  renameGrain(id: string, title: string) { return this.grains.rename(id, title); }
+  renderTemplate(id: string, input: unknown) { return this.grains.renderTemplate(id, input); }
   loadProfile() { return this.profile.load(); }
   saveProfile(profile: Pick<Profile, 'name' | 'handle' | 'pronoun'>) { return this.profile.save(profile); }
   listApps() { return this.apps.list(); }

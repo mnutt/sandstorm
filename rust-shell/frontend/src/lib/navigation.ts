@@ -30,6 +30,7 @@ export class NavigationController {
   }
   sync(model: ShellState) {
     const route = this.route;
+    if (route.page === 'grain' && model.activeGrain?.grainId === route.grainId) this.attempt = routeKey(route);
     if (route.page !== 'grain' || model.status !== 'ready' || model.activeGrain || model.openingGrain || this.attempt === routeKey(route)) return;
     this.attempt = routeKey(route);
     void this.hooks.open(route.grainId, route.path);

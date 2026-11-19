@@ -321,6 +321,7 @@ impl shell::Server for Shell {
         out.set_url(&view.url);
         out.set_title(&view.title);
         out.set_owner_title(&view.owner_title);
+        out.set_icon_src(&view.icon_src);
         out.set_main_href(&view.main_href);
         Ok(())
     }
@@ -386,6 +387,7 @@ impl shell::Server for Shell {
                             out.set_owned(grain.owned);
                             out.set_last_used(&grain.last_used);
                             out.set_app_title(&grain.app_title);
+                            out.set_icon_src(&grain.icon_src);
                         }
                     }
                     let mut entries = out.init_entries(snapshot.entries.len() as u32);

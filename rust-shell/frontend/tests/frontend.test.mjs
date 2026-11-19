@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { runOperation, OperationTimeout, AppService, GrainService, NavigationController,
+const { runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   SharingWindow, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const deferred = () => {
@@ -268,4 +268,45 @@ test('profile outcomes survive route changes; late reads and writes cannot overw
   assert.equal(state.value,null);
   assert.equal(state.error,'');
   assert.equal(renamed,undefined);
+});
+
+
+test('workspace isolates tab operations, preserves paths, and discards canceled opens', async t => {
+  browserGlobals(t);
+  let state = initialShellState();
+  const closed = [], renamed = [], pending = new Map();
+  const connection = { run: promise => promise, shell: { openGrain: fill => {
+    const params = {}; fill(params);
+    const request = deferred(); pending.set(params.grainId, request);
+    return { promise: () => request.promise };
+  } } };
+  const workspace = new GrainWorkspace(connection, patch => { state = {...state,...patch}; });
+  const result = id => ({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
+    close: () => ({promise:async () => { closed.push(id); }}), client:{close:()=>{}},
+    rename: fill => { const params = {}; fill(params); renamed.push([id,params.title]);
+      return {promise:async () => ({title:params.title})}; },
+  }});
+  const openingA = workspace.open('a','/',[]); await turn(); pending.get('a').resolve(result('a')); await openingA;
+  workspace.pathChanged('a','/draft');
+  workspace.select(null);
+  assert.equal(state.activeGrain,null);
+  assert.equal(state.openGrains.length,1);
+  const openingB = workspace.open('b','/',[]); await turn(); pending.get('b').resolve(result('b')); await openingB;
+  await workspace.rename('a','Background name');
+  assert.deepEqual(renamed,[['a','Background name']]);
+  assert.equal(state.activeGrain.grainId,'b');
+  assert.equal(state.openGrains[0].path,'/draft');
+  workspace.close('b'); await turn();
+  assert.deepEqual(closed,['b']);
+  workspace.select('a');
+  assert.equal(state.activeGrain.title,'Background name');
+  const canceled = workspace.open('c','/',[]); await turn();
+  workspace.select('a');
+  pending.get('c').resolve(result('c')); await canceled; await turn();
+  assert.deepEqual(closed,['b','c']);
+  assert.equal(state.activeGrain.grainId,'a');
+  assert.equal(state.openGrains.length,1);
+  workspace.reset();
+  assert.equal(state.openGrains.length,0);
+  assert.throws(() => workspace.rename('a','Not live'),/closed/);
 });

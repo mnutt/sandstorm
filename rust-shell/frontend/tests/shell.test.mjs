@@ -67,6 +67,7 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
       assert.equal(closed, true);
     }
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-mobile.png',fullPage:true});
     assert.ok((await page.locator('#notifications-title').boundingBox()).y < 200, 'Mobile content starts below the compact navigation');

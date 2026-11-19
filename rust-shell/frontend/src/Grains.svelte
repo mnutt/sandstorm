@@ -1,4 +1,5 @@
 <script lang="ts">
+  import GrainIcon from './components/ui/GrainIcon.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import NativeSelect from './components/ui/NativeSelect.svelte';
@@ -37,7 +38,7 @@
       <ul>
         {#each visibleGrains as grain (grain.key)}
           <li class="grain-item"><div>
-            <h3><a href={grain.href}>{grain.title}</a></h3>
+            <h3><GrainIcon src={grain.iconSrc} /><a href={grain.href}>{grain.title}</a></h3>
             <p><span>{grain.appTitle || 'Unknown app'}</span> · <span>{grain.owned ? 'Owned by you' : 'Shared with you'}</span></p>
             {#if grain.lastUsed}<time datetime={grain.lastUsed}>Last used {new Date(grain.lastUsed).toLocaleString()}</time>{/if}
           </div><Button disabled={model.openingGrain} onclick={() => navigate(grainRoute(grain.key))} aria-label={`Open ${grain.title} here`}>Open here</Button></li>
@@ -55,6 +56,9 @@
   }
 
   h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--ss-space-2);
     margin: 0;
     font-size: 1rem;
   }

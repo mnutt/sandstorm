@@ -234,7 +234,7 @@ created through the production adapter. Run it against the fast bundle with
 
 ### Embedded grain UI sessions
 
-**Open here** opens one grain per browser connection, using the signed-in account's
+**Open here** opens a persistent workspace tab, using the signed-in account's
 Sandstorm identity. Meteor checks `mayOpenGrainAsync` and uses the existing
 `createSession` path with the configured Rust HTTPS origin as `parentOrigin`.
 The normal gateway supplies the app iframe, performs full permissions checks,
@@ -244,7 +244,9 @@ history or storage. The shell CSP permits HTTPS frames; only Meteor's authorized
 session response supplies the frame URL.
 
 `openGrain()` returns a `GrainSession` capability. Explicit close, capability
-release, navigation away, and WebSocket disconnect close the UI session. Rust
+release and WebSocket disconnect close the UI session. Navigation hides established
+iframes without unloading them; their independent sessions and app state stay live.
+Each tab has its own Meteor scope, bounded to eight per connection and linked login. Rust
 renews its lease every 10 seconds; Meteor expires abandoned leases after 45
 seconds, checked every five seconds. Admission is limited to 32 leases globally
 and eight per linked login. Closing, logout, or cancellation while opening also
@@ -317,7 +319,8 @@ The user also confirmed the Powerbox handoff and Davros API templates on yertle.
 
 The shell has `/notifications`, `/grains`, `/apps`, and `/grain/<id>/<app-path>` routes.
 Sidebar navigation and opening/closing grains participate in browser history;
-Back/Forward closes the prior UI lease before opening the destination. Valid
+Back/Forward selects an existing tab or opens a new authorized session. Background
+`setPath` messages update that tab’s link without changing the selected route. Valid
 app `setPath` messages replace the current route, including query and fragment,
 without replacing the iframe. Origin and source-window checks still apply.
 
@@ -577,6 +580,9 @@ change's validation. This is separate from the main Meteor dependency tree.
 
 `App.svelte` composes route pages and layout. `Notifications.svelte`, `Grains.svelte`,
 `Apps.svelte`, and `GrainFrame.svelte` own their presentation and local form state.
+`workspace.ts` owns the mounted tabs and their independent `GrainService` instances;
+app callbacks address their own grain ID, never the currently selected tab.
+Tabs last for the current browser page; reload reopens only the routed grain.
 `styles.css` holds semantic `--ss-*` tokens and a minimal document reset.
 Shared controls live in `components/ui`; their styles are scoped to the component.
 Bits UI supplies button and dialog behavior, while simple input/select controls

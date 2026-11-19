@@ -116,6 +116,8 @@ pub struct Grain {
     pub title: String,
     #[serde(default, rename = "ownerTitle")]
     pub owner_title: String,
+    #[serde(default, rename = "iconSrc")]
+    pub icon_src: String,
     pub href: String,
     pub owned: bool,
     #[serde(rename = "lastUsed")]

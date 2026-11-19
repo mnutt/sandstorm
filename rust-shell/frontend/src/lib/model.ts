@@ -15,6 +15,7 @@ export interface Grain {
   key: string;
   title: string;
   ownerTitle: string;
+  iconSrc: string;
   href: string;
   owned: boolean;
   lastUsed: string;
@@ -32,11 +33,13 @@ export interface ActiveGrain {
   url: string;
   title: string;
   ownerTitle: string;
+  iconSrc: string;
   mainHref: string;
 }
 export type ConnectionStatus = 'waiting' | 'connecting' | 'ready' | 'reconnecting' | 'stopped' | 'signed-out';
 export interface ShellState {
   activeGrain: ActiveGrain | null;
+  openGrains: ActiveGrain[];
   openingGrain: boolean;
   grains: Grain[];
   grainsLimited: boolean;
@@ -56,7 +59,7 @@ export interface ShellState {
 export function initialShellState(): ShellState {
   return {
     profile: emptyProfile(), status: 'connecting', entries: [], grains: [], grainsLimited: false,
-    activeGrain: null, openingGrain: false, revision: 0,
+    activeGrain: null, openGrains: [], openingGrain: false, revision: 0,
     connectionError: '', notificationError: '', grainError: '', pending: false,
     fixture: true, account: null, total: 0, creation: { status: 'idle' },
   };

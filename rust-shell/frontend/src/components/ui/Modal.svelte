@@ -2,13 +2,13 @@
   import { Dialog } from 'bits-ui';
   import type { Snippet } from 'svelte';
   import Button from './Button.svelte';
-  let { open = $bindable(false), title, description, triggerLabel, onTrigger, busy = false, children }:
-    { open?: boolean; title: string; description: string; triggerLabel: string; onTrigger?: () => void; busy?: boolean; children: Snippet } = $props();
+  let { open = $bindable(false), title, description, triggerLabel, triggerVariant = 'secondary', onTrigger, busy = false, children }:
+    { open?: boolean; title: string; description: string; triggerLabel: string; triggerVariant?: 'secondary' | 'chrome'; onTrigger?: () => void; busy?: boolean; children: Snippet } = $props();
 </script>
 
 <Dialog.Root bind:open>
   <Dialog.Trigger onclick={onTrigger}>
-    {#snippet child({ props })}<Button {...props} variant="secondary">{triggerLabel}</Button>{/snippet}
+    {#snippet child({ props })}<Button {...props} variant={triggerVariant}>{triggerLabel}</Button>{/snippet}
   </Dialog.Trigger>
   <Dialog.Portal>
     <Dialog.Overlay>

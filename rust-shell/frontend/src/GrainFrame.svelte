@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { portal } from './lib/portal';
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
@@ -8,7 +9,7 @@
   import { SharingWindow, type SharingState } from './lib/sharing';
   import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, close, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; close: () => void; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
+  let { grain, active, toolbarTarget, close, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; close: () => void; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   let path = $state(untrack(() => grain.path));
@@ -17,6 +18,7 @@
     result => frame?.contentWindow?.postMessage(result, grain.origin));
   $effect(() => titles.update(grain.ownerTitle));
   let editing = $state(false);
+  $effect(() => { if (!active) editing = false; });
   let draftTitle = $state('');
   let renaming = $state(false);
   let renameError = $state('');
@@ -67,13 +69,13 @@
 </script>
 
 <svelte:window onmessage={message} />
-<section class="grain-view" aria-label="Open grain">
-  <div class="toolbar">
+<section class="grain-view" aria-label="Open grain" hidden={!active}>
+  <div class="toolbar" use:portal={toolbarTarget} hidden={!active}>
     <div class="grain-title"><h2>{frameTitle || grain.title}</h2>
       {#if frameTitle}<p>{grain.title}</p>{/if}
     </div>
     <div class="grain-actions">
-  <Modal bind:open={editing} title="Rename grain" triggerLabel="Rename grain"
+  <Modal bind:open={editing} title="Rename grain" triggerLabel="Rename grain" triggerVariant="chrome"
     description="For a shared grain, this changes only your copy’s name." busy={renaming}
     onTrigger={() => { draftTitle = grain.title; renameError = ''; }}>
     <form onsubmit={saveTitle}>
@@ -87,9 +89,9 @@
     {#if renameError}<p role="alert">{renameError}</p>{/if}
   </Modal>
   <a href={mainHref}>Main shell ↗</a>
-    <Button onclick={() => { sharing.request('share'); sharing.open(); }}>Share</Button>
-    <Button variant="secondary" onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</Button>
-    <Button variant="secondary" onclick={close}>Close grain</Button>
+    <Button variant="chrome" onclick={() => { sharing.request('share'); sharing.open(); }}>Share</Button>
+    <Button variant="chrome" onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</Button>
+    <Button variant="chrome" onclick={close}>Close grain</Button>
     </div>
   </div>
   {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
@@ -108,26 +110,26 @@
   .grain-view {
     display: flex;
     flex-direction: column;
-    height: var(--ss-workspace-height);
-    min-height: 24rem;
+    height: 100%;
+    min-height: 0;
   }
 
   .grain-title {
-    flex: 1 1 12rem;
+    flex: 1;
     min-width: 0;
   }
 
   .grain-title p {
     margin: 0;
-    color: var(--ss-muted);
+    color: var(--ss-chrome-muted);
     font-size: var(--ss-text-small);
   }
 
   .grain-actions {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: var(--ss-space-2);
+    gap: var(--ss-space-1);
   }
 
   .grain-actions a {
@@ -136,17 +138,17 @@
 
   h2 {
     margin: 0;
-    font-size: var(--ss-text-title);
+    font-size: 1rem;
     line-height: 1.3;
   }
 
   a {
-    color: var(--ss-brand);
+    color: var(--ss-chrome-text);
     text-underline-offset: .2em;
   }
 
   a:focus-visible {
-    outline: 3px solid var(--ss-focus);
+    outline: 3px solid var(--ss-chrome-focus);
     outline-offset: 3px;
   }
 
@@ -160,15 +162,20 @@
 
   .toolbar {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
     align-items: center;
     gap: var(--ss-space-3);
-    margin-bottom: var(--ss-space-2);
+    width: 100%;
+    min-width: 0;
+    color: var(--ss-chrome-text);
   }
-
-  h2 {
-    overflow-wrap: anywhere;
+  .toolbar[hidden], .grain-view[hidden] { display: none; }
+  h2, .grain-title p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grain-actions { overflow-x: auto; flex-shrink: 0; max-width: 75%; }
+  .grain-actions a { white-space: nowrap; padding: var(--ss-space-2); }
+  @media (max-width: 1000px) {
+    .toolbar { flex-wrap: wrap; gap: 0; }
+    .grain-title { flex-basis: 100%; }
+    .grain-actions { max-width: 100%; }
   }
 
   .dialog-actions {
@@ -187,9 +194,9 @@
   iframe {
     width: 100%;
     flex: 1;
-    min-height: 12rem;
-    border: 1px solid var(--ss-border);
-    border-radius: var(--ss-radius-control);
+    min-height: 0;
+    border: 0;
+    border-radius: 0;
     background: var(--ss-surface);
   }
 </style>

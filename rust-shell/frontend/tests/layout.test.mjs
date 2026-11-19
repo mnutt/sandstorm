@@ -53,12 +53,12 @@ test('sidebar preference survives reloads; navigation stays pinned while content
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
     }
     await page.getByRole('button', {name:'Collapse sidebar',exact:true}).click();
-    await expect(sidebar).toBeHidden();
+    assert.equal((await sidebar.boundingBox()).width,56);
     await page.reload();
     await ready();
-    await expect(sidebar).toBeHidden();
+    assert.equal((await sidebar.boundingBox()).width,56);
     await page.getByRole('button', {name:'Expand sidebar',exact:true}).click();
-    await expect(sidebar).toBeVisible();
+    assert.equal((await sidebar.boundingBox()).width,208);
     // Storage refusal must not break the shell or the in-memory toggle.
     const restricted = await browser.newPage();
     await restricted.addInitScript(() => {

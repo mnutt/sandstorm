@@ -34,7 +34,7 @@ export class GrainService {
       try { session.client.close(); } catch { /* transport already closed */ }
     });
   }
-  close() {
+  close(reconnectPending = true) {
     const session = this.session;
     const opening = this.opening;
     const cleanup = this.cleanup;
@@ -42,7 +42,7 @@ export class GrainService {
     this.cleanup = cleanup;
     // Navigating away is local and immediate. A subsequent open waits only for
     // bounded cleanup; cancelling an in-flight open discards that RPC scope.
-    if (opening) this.connection.reconnect();
+    if (opening && reconnectPending) this.connection.reconnect();
     else if (session) this.cleanup = this.release(session);
   }
   async open(grainId: string, path: string, menu: Grain[]) {
@@ -66,6 +66,7 @@ export class GrainService {
       const known = menu.find(grain => grain.key === grainId);
       this.session = result.session;
       this.active = {
+        iconSrc: result.view.iconSrc || known?.iconSrc || '',
         grainId, path, origin: result.view.origin, url: url.href,
         title: result.view.title || known?.title || 'Grain',
         ownerTitle: result.view.ownerTitle || known?.ownerTitle || '',
@@ -81,11 +82,14 @@ export class GrainService {
       }
     }
   }
+  pathChanged(path: string) {
+    if (this.active) { this.active = { ...this.active, path }; this.changed({activeGrain:this.active}); }
+  }
   applyMenu(grains: Grain[]) {
     const active = this.active;
     const updated = active && grains.find(grain => grain.key === active.grainId);
-    if (active && updated && (active.title !== updated.title || active.ownerTitle !== updated.ownerTitle)) {
-      this.active = { ...active, title: updated.title, ownerTitle: updated.ownerTitle };
+    if (active && updated && (active.title !== updated.title || active.ownerTitle !== updated.ownerTitle || active.iconSrc !== updated.iconSrc)) {
+      this.active = { ...active, title: updated.title, ownerTitle: updated.ownerTitle, iconSrc: updated.iconSrc };
       this.changed({ activeGrain: this.active });
     }
   }

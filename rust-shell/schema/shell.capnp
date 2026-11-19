@@ -23,6 +23,7 @@ struct Grain {
   lastUsed @4 :Text;
   appTitle @5 :Text;
   ownerTitle @6 :Text;
+  iconSrc @7 :Text;
 }
 
 struct Snapshot {
@@ -54,6 +55,7 @@ struct GrainView {
   title @3 :Text;
   mainHref @4 :Text;
   ownerTitle @5 :Text;
+  iconSrc @6 :Text;
 }
 interface GrainSession {
   close @0 () -> ();

@@ -57,7 +57,7 @@ export const rustShellBridge = createRustShellBridge({
       const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
       const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return { handle: { sessionId: session._id, accountId, grainId },
-        view: { grainId, origin, title, ownerTitle, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
+        view: { grainId, origin, title, ownerTitle, iconSrc: titles.iconSrc, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
     },
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
@@ -148,7 +148,7 @@ export const rustShellBridge = createRustShellBridge({
       const packageIds = [...new Set(owned.map((grain) => grain.packageId).filter(Boolean))];
       if (packageIds.length) {
         handles.push(await globalDb.collections.packages.find({ _id: { $in: packageIds } },
-            { fields: { "manifest.appTitle": 1, "manifest.actions": 1 } }).observeChangesAsync(callbacks));
+            { fields: { "manifest.appTitle": 1, "manifest.actions": 1, "manifest.metadata.icons": 1 } }).observeChangesAsync(callbacks));
       }
       // Notification observation is already active. A new referenced sender
       // changes the snapshot, causing the next watch to attach its profile observer.

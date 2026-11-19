@@ -18,11 +18,13 @@ pub struct View {
     pub title: String,
     #[serde(default, rename = "ownerTitle")]
     pub owner_title: String,
+    #[serde(default, rename = "iconSrc")]
+    pub icon_src: String,
     #[serde(default, rename = "mainHref")]
     pub main_href: String,
 }
 
-pub struct Scope {
+pub struct GrainScope {
     session: Session,
     key: String,
     active: RefCell<Option<String>>,
@@ -34,7 +36,7 @@ impl Drop for Opening<'_> {
         self.0.set(false);
     }
 }
-impl Scope {
+impl GrainScope {
     pub fn new(session: Session) -> capnp::Result<Rc<Self>> {
         let mut bytes = [0u8; 32];
         getrandom::fill(&mut bytes)
@@ -93,26 +95,24 @@ impl Scope {
             .await;
         *self.active.borrow_mut() = None;
     }
-    pub async fn maintain(&self) {
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            let lease = self.active.borrow().clone();
-            if let Some(lease) = lease {
-                if self
-                    .session
-                    .call("keepGrain", json!({ "scope": self.key, "lease": lease }))
-                    .await
-                    .is_err()
-                    && self.active.borrow().as_deref() == Some(lease.as_str())
-                {
-                    return;
-                }
+    async fn keep(&self) -> bool {
+        let lease = self.active.borrow().clone();
+        if let Some(lease) = lease {
+            if self
+                .session
+                .call("keepGrain", json!({ "scope": self.key, "lease": lease }))
+                .await
+                .is_err()
+                && self.active.borrow().as_deref() == Some(lease.as_str())
+            {
+                return false;
             }
         }
+        true
     }
 }
 struct Lease {
-    scope: Rc<Scope>,
+    scope: Rc<GrainScope>,
     lease: String,
     closed: Cell<bool>,
 }
@@ -207,6 +207,55 @@ impl Drop for Lease {
             tokio::task::spawn_local(async move {
                 let _ = scope.close(&lease).await;
             });
+        }
+    }
+}
+
+// One independently authorized Meteor scope per open grain. The browser connection
+// owns the group, including pending opens, so disconnect still closes everything.
+pub struct Scope {
+    session: Session,
+    grains: RefCell<Vec<Rc<GrainScope>>>,
+}
+impl Scope {
+    pub fn new(session: Session) -> capnp::Result<Rc<Self>> {
+        Ok(Rc::new(Self {
+            session,
+            grains: RefCell::new(Vec::new()),
+        }))
+    }
+    pub async fn open(
+        self: &Rc<Self>,
+        grain_id: String,
+    ) -> capnp::Result<(View, grain_session::Client)> {
+        let grain = GrainScope::new(self.session.clone())?;
+        {
+            let mut grains = self.grains.borrow_mut();
+            grains.retain(|grain| grain.busy.get() || grain.active.borrow().is_some());
+            if grains.len() >= 8 {
+                return Err(capnp::Error::failed(
+                    "Close a grain before opening another (8 open maximum)".into(),
+                ));
+            }
+            grains.push(grain.clone());
+        }
+        grain.open(grain_id).await
+    }
+    pub async fn close_all(&self) {
+        let grains = std::mem::take(&mut *self.grains.borrow_mut());
+        for grain in grains {
+            grain.close_all().await;
+        }
+    }
+    pub async fn maintain(&self) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            let grains = self.grains.borrow().clone();
+            for grain in grains {
+                if !grain.keep().await {
+                    return;
+                }
+            }
         }
     }
 }

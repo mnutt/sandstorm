@@ -42,16 +42,17 @@ Controls have a 44px minimum target height. Focus uses a visible 3px outline;
 selected navigation uses square, full-width rows with `aria-current`. The current
 foundation uses no motion; future transitions must honor reduced-motion settings.
 Preserve native links and browser modifiers for route navigation. Shell placement follows the main UI: Apps/Grains in the left rail, notifications
-and the account popover in the top bar, and grain actions immediately above the
-iframe. Explanatory preview copy stays out of the workspace. Panels use compact
+and the account popover in the top bar, and grain titles/actions in the top bar. Iframes fill the workspace without
+padding or borders. Open grains appear beneath Grains with their Sandstorm icons. Explanatory preview copy stays out of the workspace. Panels use compact
 padding; desktop grain rows align their metadata in columns. At narrow widths
-the rail becomes a short horizontal navigation row and actions wrap. Keep component content usable
+the collapsed icon rail stays available and expanding the drawer overlays the page.
+Top-bar grain actions wrap into a second row. Keep component content usable
 at zoom and allow long account/grain names to wrap.
 
-The 48px top bar stays sticky; the sidebar sticks below it and scrolls independently
-when necessary. Its top-bar toggle collapses to an icon rail on desktop and hides
-the navigation row on mobile. `lib/preferences.ts` persists this device-local choice
-in localStorage, with an in-memory fallback when storage is unavailable. Icon-only
+The top bar stays sticky; its measured height positions the sidebar and sizes the
+iframe workspace. The sidebar navigation scrolls independently while its bottom-right
+toggle remains available. Collapsing leaves an icon rail on desktop and mobile. `lib/preferences.ts` persists this device-local choice
+in localStorage (default collapsed on small screens), with an in-memory fallback when storage is unavailable. Icon-only
 links retain accessible names and native title hints. Use 2–3px corner radii for
 controls and panels; navigation rows stay square.
 

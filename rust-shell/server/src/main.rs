@@ -180,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let policy = if request.uri().path() == "/offer-template.html" {
                 "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src https:; frame-ancestors https:"
             } else {
-                "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'"
+                "default-src 'self'; img-src 'self' data: https:; connect-src 'self'; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'"
             };
             let mut response = next.run(request).await;
             response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(policy));
