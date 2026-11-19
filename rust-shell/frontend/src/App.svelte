@@ -1,5 +1,6 @@
 <script lang="ts">
   import { readSidebarCollapsed, saveSidebarCollapsed } from './lib/preferences';
+  import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import GrainIcon from './components/ui/GrainIcon.svelte';
   import ShellIcon from './components/ui/ShellIcon.svelte';
   import Button from './components/ui/Button.svelte';
@@ -148,15 +149,15 @@
     <Panel><h2>Page not found</h2><Button onclick={() => navigate('/grains')}>Go to grains</Button></Panel>
   {:else if route.page === 'shared'}
     {@const webkey = route.webkey}
-    {#if !sharedTabs.some(tab=>tab.webkey===webkey)}<Panel><p role="status">{sharedTabs.length>=8 ? 'Close a shared grain before opening another.' : 'Connecting…'}</p></Panel>{/if}
+    {#if !sharedTabs.some(tab=>tab.webkey===webkey)}<Panel>{#if sharedTabs.length>=8}<p>Close a shared grain before opening another.</p>{:else}<LoadingStatus label="Connecting…" />{/if}</Panel>{/if}
   {:else if route.page === 'grain'}
     <Panel aria-label="Grain route">
       <h2>Grain</h2>
       {#if model.status === 'signed-out'}
         <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to open this grain.</p>
       {:else if model.status === 'waiting'}
-        <p>Waiting for the main shell… Your login will be checked when it returns.</p>
-      {:else if model.status !== 'ready' || model.openingGrain}<p role="status">Opening grain…</p>
+        <LoadingStatus label="Waiting for Sandstorm…" detail="Your login will be checked when the server returns." />
+      {:else if model.status !== 'ready' || model.openingGrain}<LoadingStatus label="Opening grain…" detail="Starting the app and establishing its session." />
       {:else}<Button onclick={() => navigation.reopen()}>Reopen grain</Button>{/if}
       <Button variant="secondary" onclick={() => navigate('/grains')}>Back to grains</Button>
     </Panel>

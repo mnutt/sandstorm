@@ -6,6 +6,7 @@
   import { runOperation, errorMessage } from './lib/operations';
   import type { ActiveGrain } from './lib/model';
   import { rememberRoute } from './lib/router';
+  import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import GrainFrame from './GrainFrame.svelte';
   import Panel from './components/ui/Panel.svelte';
   import Button from './components/ui/Button.svelte';
@@ -92,7 +93,7 @@
   {:else}
     <div class="shared-message"><Panel>
       <h2>{info.title}</h2>
-      {#if phase === 'loading' || phase === 'opening'}<p role="status">{phase === 'loading' ? 'Checking sharing link…' : 'Opening shared grain…'}</p>
+      {#if phase === 'loading' || phase === 'opening'}<LoadingStatus label={phase === 'loading' ? 'Checking sharing link…' : 'Opening shared grain…'} />
       {:else if phase === 'error'}<p role="alert">{error}</p><Button onclick={start}>Reopen sharing link</Button>
       {:else}
         {#if info.signedIn}

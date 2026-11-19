@@ -11,11 +11,12 @@
   } = $props();
   let open = $state(false);
   let navigating = false;
-  const label = $derived(model.account || (model.fixture ? 'Fixture mode' : 'Account'));
+  const checking = $derived(!model.account && model.status !== 'ready' && model.status !== 'signed-out');
+  const label = $derived(checking ? 'Connecting…' : model.account || (model.fixture ? 'Fixture mode' : 'Account'));
 </script>
 
 <Popover.Root bind:open>
-  <Popover.Trigger aria-label={`Account: ${label}`}>
+  <Popover.Trigger disabled={checking} aria-label={`Account: ${label}`}>
     {#snippet child({ props })}
       <button {...props} class="trigger"><span>{label}</span><span aria-hidden="true">▾</span></button>
     {/snippet}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import Grains from './Grains.svelte';
   import { isPlainNavigation } from './lib/navigation';
   import AppIcon from './components/ui/AppIcon.svelte';
@@ -81,12 +82,12 @@
 </script>
 <Panel aria-label="Apps">
   {#if status === 'signed-out'}<p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your installed apps.</p>
-  {:else if status !== 'ready'}<p>Connecting to Sandstorm…</p>
+  {:else if status !== 'ready'}<LoadingStatus label="Connecting to Sandstorm…" />
   {:else if fixture}<p>App creation requires an installed Sandstorm server.</p>
   {:else}
     {#if !appId}<div class="app-controls"><div class="search"><label class="sr-only" for="app-search">Search apps</label><TextInput id="app-search" type="search" bind:value={search} placeholder="Search installed apps" /></div>
       <Button variant="secondary" disabled={creating || loading} onclick={() => { if (!uncertain) error = ''; void load(); }}>Refresh apps</Button></div>{/if}
-    {#if loading}<p role="status">Loading apps…</p>
+    {#if loading}<LoadingStatus label="Loading apps…" />
     {:else if !actions.length}<p>No installed app actions to show. Install apps in the main shell.</p>
     {:else}
       {#snippet tiles(items: typeof apps)}

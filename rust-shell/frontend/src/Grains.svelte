@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import GrainIcon from './components/ui/GrainIcon.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
@@ -27,8 +28,13 @@
     {#if model.status === 'signed-out'}
       <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your grains.</p>
     {:else if model.status !== 'ready'}
-      <p class="empty">{model.status === 'waiting' ? 'Waiting for the main shell… Your login will be checked when it returns.' : model.status === 'reconnecting' ? 'Connection lost. Reconnecting…' : 'Loading your grains…'}</p>
-      <Button variant="secondary" onclick={() => service.reconnect()}>Reconnect</Button>
+      {#if model.status === 'stopped'}<p>Disconnected from Sandstorm.</p>
+      {:else}
+        <LoadingStatus label={model.status === 'waiting' ? 'Waiting for Sandstorm…' : model.status === 'reconnecting' ? 'Reconnecting…' : 'Loading your grains…'}
+          detail={model.status === 'waiting' ? 'Your login and grain list will be checked when the server returns.' : ''} />
+        <div class="grain-skeleton" aria-hidden="true">{#each [0, 1, 2, 3, 4] as row}<div class="skeleton-row"><span class="skeleton-icon"></span><span class="skeleton-title" style:width={`${48 - row * 5}%`}></span><span class="skeleton-meta"></span></div>{/each}</div>
+      {/if}
+      {#if model.status !== 'connecting'}<Button variant="secondary" onclick={() => service.reconnect()}>Reconnect</Button>{/if}
     {:else if model.fixture}
       <p class="empty">Connect to an installed Sandstorm server to see real grains.</p>
     {:else}
@@ -65,6 +71,12 @@
     {#if model.openingGrain}<p role="status">Opening grain…</p>{/if}
   </Panel>
 <style>
+  .grain-skeleton { margin-bottom: var(--ss-space-4); }
+  .skeleton-row { display: flex; align-items: center; gap: var(--ss-space-3); height: 2.875rem; border-top: 1px solid var(--ss-canvas); }
+  .skeleton-row span { height: .65rem; background: var(--ss-canvas); border-radius: var(--ss-radius-control); }
+  .skeleton-row .skeleton-icon { width: 1.25rem; height: 1.25rem; }
+  .skeleton-meta { width: 18%; margin-left: auto; }
+
   a { color: var(--ss-brand); text-underline-offset: .2em; }
   a:focus-visible { outline: 3px solid var(--ss-focus); outline-offset: 3px; }
   .grain-controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--ss-space-3); margin: var(--ss-space-3); --ss-control-height: 2.375rem; font-size: var(--ss-text-small); }

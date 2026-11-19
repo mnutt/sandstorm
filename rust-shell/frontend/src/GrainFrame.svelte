@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import { portal } from './lib/portal';
   import GrainIcon from './components/ui/GrainIcon.svelte';
   import ShellIcon from './components/ui/ShellIcon.svelte';
@@ -14,6 +15,18 @@
   let { grain, active, toolbarTarget, canManage = true, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
+  const frameUrl = $derived(grain.url);
+  let frameLoaded = $state(false);
+  let slow = $state(false);
+  let showFrame = $state(false);
+  $effect(() => {
+    frameUrl;
+    frameLoaded = false;
+    slow = false;
+    showFrame = false;
+    const timer = setTimeout(() => { slow = true; }, 15000);
+    return () => clearTimeout(timer);
+  });
   let path = $state(untrack(() => grain.path));
   let sharingState: SharingState = $state({ status: 'idle' });
   const titles = new GrainTitleSubscriptions(untrack(() => grain.ownerTitle),
@@ -108,10 +121,21 @@
   {#if choosing}<div role="status"><p>This app wants you to choose a capability.</p>
     <Button onclick={() => chooser.open()}>Choose in Sandstorm</Button>
     <Button onclick={() => chooser.cancel()}>Cancel request</Button></div>{/if}
-  <iframe bind:this={frame} title={grain.title} src={grain.url} referrerpolicy="no-referrer"></iframe>
+  <div class="frame-stage">
+    <iframe bind:this={frame} title={grain.title} src={frameUrl} referrerpolicy="no-referrer" aria-busy={!frameLoaded} onload={() => { frameLoaded = true; }}></iframe>
+    {#if !frameLoaded && !showFrame}
+      <div class="frame-loading">
+        <LoadingStatus label={slow ? 'Still loading this app…' : 'Loading app…'} detail={slow ? 'The app is taking longer than usual. You can show its content while it finishes loading.' : grain.title} />
+        {#if slow}<Button variant="secondary" onclick={() => { showFrame = true; }}>Show app</Button>{/if}
+      </div>
+    {/if}
+  </div>
 </section>
 
 <style>
+  .frame-stage { position: relative; display: flex; flex: 1; min-height: 0; }
+  .frame-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: var(--ss-space-5); background: var(--ss-surface); }
+
   .grain-view {
     display: flex;
     flex-direction: column;
