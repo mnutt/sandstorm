@@ -337,8 +337,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.locator('.open-grains li.current button').click();
     failCreation = true;
     await page.getByRole('link', {name:'Apps',exact:true}).click();
-    await page.getByText('Grain created.', {exact:true}).waitFor();
-    await page.getByRole('button', {name:'Create another grain',exact:true}).click();
+    await expect(page.getByText('Grain created.', {exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button', {name:'Open created grain',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button', {name:'Create another grain',exact:true})).toHaveCount(0);
     await page.getByRole('link', {name:'Open Test app',exact:true}).first().click();
     await page.getByRole('button', {name:'New grain',exact:true}).click();
     await page.getByLabel('Installed app action').selectOption('alice-action');

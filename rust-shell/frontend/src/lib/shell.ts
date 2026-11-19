@@ -48,7 +48,12 @@ export class ShellService {
       snapshot: snapshot => this.snapshot(snapshot),
     });
     this.installation = new InstallService(this.connection);
-    this.grains = new GrainWorkspace(this.connection, state => this.update(state));
+    this.grains = new GrainWorkspace(this.connection, state => {
+      this.update(state);
+      // A resolved open call may also mean failure or cancellation. Only an
+      // established session acknowledges the matching account's creation.
+      for (const grain of state.openGrains ?? []) this.apps.opened(grain.grainId);
+    });
     this.profile = new ProfileService(this.connection, profile => this.update({ profile }), account => this.update({ account }));
     this.apps = new AppService(this.connection, creation => this.update({ creation }));
   }

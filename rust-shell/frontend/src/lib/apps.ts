@@ -33,6 +33,10 @@ export class AppService {
       this.set(this.account, { status: 'unknown', error: 'Connection changed before creation was confirmed.' });
     }
   }
+  opened(grainId: string) {
+    const state = this.state;
+    if (state.status === 'created' && state.grainId === grainId) this.acknowledge();
+  }
   acknowledge() {
     if (!this.account || this.state.status === 'pending') return;
     this.outcomes.delete(this.account);
