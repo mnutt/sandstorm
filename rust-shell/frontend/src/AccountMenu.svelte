@@ -52,11 +52,12 @@
     gap: var(--ss-space-2);
     min-height: var(--ss-control-height);
     max-width: 13rem;
-    padding: var(--ss-space-2) var(--ss-space-3);
+    padding: var(--ss-space-1) var(--ss-space-3);
     border: 0;
     background: transparent;
     color: inherit;
     font: inherit;
+    font-size: var(--ss-text-small);
     cursor: pointer;
   }
 

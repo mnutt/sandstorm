@@ -128,8 +128,8 @@
       </div>{/if}
     </div>
     {#if canManage}<div class="grain-actions">
-      <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { showSharing('share'); }}><ShellIcon name="share" /></Button>
-      <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { showSharing('access'); }}><ShellIcon name="users" /></Button>
+      <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { showSharing('share'); }}><ShellIcon name="share" toolbar /></Button>
+      <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { showSharing('access'); }}><ShellIcon name="users" toolbar /></Button>
     </div>{/if}
   </div>
   {#if sharing && sharingActions}<SharingDialog request={sharing} actions={sharingActions} title={grain.title} onclose={() => { sharing = undefined; }} />{/if}
@@ -171,7 +171,7 @@
   .grain-title p {
     margin: 0;
     color: var(--ss-chrome-muted);
-    font-size: var(--ss-text-small);
+    font-size: .75rem;
   }
 
   .grain-actions {
@@ -183,7 +183,7 @@
 
   h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: .875rem;
     line-height: 1.3;
   }
 

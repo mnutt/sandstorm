@@ -24,7 +24,7 @@
   let content: HTMLDivElement;
   let header: HTMLElement;
   let toolbarTarget = $state<HTMLDivElement>();
-  let headerHeight = $state(48);
+  let headerHeight = $state(44);
   let focusVersion = 0;
   let sharedTabs = $state<{webkey:string;path:string;title:string;iconSrc:string}[]>([]);
   $effect(() => {
@@ -62,6 +62,7 @@
     },
   });
   let route = $state(navigation.route);
+  const connecting = $derived(!model.activeGrain && !['shared', 'missing'].includes(route.page) && ['connecting', 'reconnecting', 'waiting'].includes(model.status));
   const view = $derived(route.page === 'grain' ? 'grains' : route.page);
   const pageTitle = $derived(model.activeGrain?.title || ({install:'Install app', notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
   $effect(() => { route; navigation.sync(model); });
@@ -94,7 +95,7 @@
   <div class="topbar-actions">
     <a class="notifications" href="/notifications" aria-label="Notifications" title="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
-      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+      <ShellIcon name="bell" toolbar />
       {#if model.entries.some(entry => entry.unread)}<span class="unread" aria-label="Unread notifications"></span>{/if}
     </a>
     <AccountMenu {model} navigate={(event, path) => navigation.link(event, path)} disconnect={() => service.logout()} />
@@ -126,7 +127,7 @@
     <div class="shell-links"><a href="/main-shell" aria-label="Main shell" title="Main shell"><ShellIcon name="external" /><span>Main shell</span></a><div class="sidebar-toggle"><Button variant="chrome" onclick={toggleSidebar} aria-controls="shell-sidebar" aria-expanded={!sidebarCollapsed}
       aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}><ShellIcon name="sidebar" /></Button></div></div>
   </aside>
-  <div class="route-content" class:workspace={!!model.activeGrain || route.page === 'shared'} bind:this={content} tabindex="-1">
+  <div class="route-content" class:connecting class:workspace={!!model.activeGrain || route.page === 'shared'} bind:this={content} tabindex="-1">
   <p class="sr-only" aria-live="polite" aria-atomic="true">{pageTitle}</p>
   {#if model.connectionError}<p class="error" role="alert">{model.connectionError}</p>{/if}
   {#if model.notificationError || model.grainError}
@@ -146,6 +147,12 @@
     {/each}
   {/if}
   {#if !model.activeGrain}
+  {#if connecting}
+    <div class="connection-loading"><LoadingStatus
+      label={model.status === 'waiting' ? 'Waiting for Sandstorm…' : model.status === 'reconnecting' ? 'Reconnecting to Sandstorm…' : 'Connecting to Sandstorm…'}
+      detail={model.status === 'waiting' ? 'Your login will be checked when the server returns.' : ''} /></div>
+  {/if}
+  <div class="route-page" hidden={connecting}>
   {#if route.page === 'missing'}
     <Panel><h2>Page not found</h2><Button onclick={() => navigate('/grains')}>Go to grains</Button></Panel>
   {:else if route.page === 'install'}
@@ -174,6 +181,7 @@
   {:else}
     <Notifications {model} {service} />
   {/if}
+  </div>
   {/if}
   </div>
 </main>
@@ -189,7 +197,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    min-height: 3rem;
+    min-height: 2.75rem;
+    --ss-control-height: 2.25rem;
     padding: 0 var(--ss-space-3);
     background: var(--ss-chrome-header);
     color: var(--ss-chrome-text);
@@ -208,7 +217,7 @@
     display: flex;
     align-items: center;
     gap: var(--ss-space-2);
-    font-size: 1.25rem;
+    font-size: 1.125rem;
     font-weight: 700;
     letter-spacing: -.03em;
     color: inherit;
@@ -223,21 +232,27 @@
   }
 
   .notifications {
-    display: flex;
+    position: relative;
+    display: inline-flex;
     align-items: center;
-    gap: var(--ss-space-2);
-    min-height: var(--ss-control-height);
-    padding: 0 var(--ss-space-3);
+    justify-content: center;
+    width: 2.125rem;
+    min-height: 2.125rem;
+    padding: var(--ss-space-1);
+    border: 1px solid transparent;
+    border-radius: var(--ss-radius-control);
     color: inherit;
     text-decoration: none;
-    font-size: var(--ss-text-small);
   }
 
   .notifications:hover, .notifications[aria-current=page] {
-    background: #ffffff18;
+    background: var(--ss-chrome-hover);
   }
 
   .unread {
+    position: absolute;
+    top: .2rem;
+    right: .2rem;
     width: .5rem;
     height: .5rem;
     border-radius: 50%;
@@ -246,7 +261,7 @@
 
   .shell-layout {
     display: grid;
-    grid-template-columns: 11rem minmax(0, 1fr);
+    grid-template-columns: 12rem minmax(0, 1fr);
     min-height: calc(100dvh - var(--ss-header-height));
 
   }
@@ -267,7 +282,7 @@
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--ss-chrome-border);
-    background: var(--ss-chrome);
+    background: linear-gradient(12deg, transparent 35%, #ffffff08) top / 100% 5rem no-repeat var(--ss-chrome);
     color: var(--ss-chrome-text);
     padding: var(--ss-space-2) 0;
   }
@@ -369,6 +384,11 @@
     padding: var(--ss-space-3);
   }
 
+  .route-content.connecting { display: flex; flex-direction: column; }
+  .connection-loading { flex: 1; display: grid; place-items: center; min-width: 0; }
+  .route-page { display: contents; }
+  .route-page[hidden] { display: none; }
+
   .route-content:focus {
     outline: none;
   }
@@ -382,13 +402,13 @@
   }
 
   .grain-toolbar { flex: 1; min-width: 0; padding: 0 var(--ss-space-3); }
-  .brand-group { flex: 0 0 10.25rem; }
+  .brand-group { flex: 0 0 11.25rem; }
   .workspace { padding: 0; height: calc(100dvh - var(--ss-header-height)); display: flex; flex-direction: column; }
   .workspace > :global(.grain-view:not([hidden])), .workspace > :global(.shared-view:not([hidden])) { flex: 1; min-height: 0; }
   .open-grains { list-style: none; padding: 0; margin: 0; }
   .open-grains li { display: flex; align-items: center; min-width: 0; position: relative; }
   .open-grains li.current { background: var(--ss-chrome-selected); }
-  .open-grains a { flex: 1; min-width: 0; font-weight: 400; font-size: var(--ss-text-small); padding-left: var(--ss-space-3); padding-right: 0; }
+  .open-grains a { flex: 1; min-width: 0; font-weight: 400; font-size: .8125rem; padding-left: var(--ss-space-3); padding-right: 0; }
   .close-grain { flex: none; opacity: 0; }
   .open-grains li:hover .close-grain, .open-grains li:focus-within .close-grain { opacity: 1; }
   .collapsed .open-grains li { flex-wrap: wrap; }
@@ -412,8 +432,7 @@
     .shell-layout:not(.collapsed) aside { position: fixed; width: 13rem; bottom: 0; }
     header { padding: 0 var(--ss-space-2); }
     .brand-group { flex-basis: auto; }
-    .brand { font-size: 1.125rem; }
-    .notifications { padding: 0 var(--ss-space-2); }
+    .brand { font-size: 1rem; }
     .route-content:not(.workspace) { padding: var(--ss-space-2); }
   }
 </style>

@@ -42,7 +42,7 @@ test('sidebar preference survives reloads; navigation stays pinned while content
     await page.evaluate(() => scrollTo(0,400));
     await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(100);
     assert.equal(Math.round((await page.locator('header').boundingBox()).y),0);
-    assert.equal(Math.round((await sidebar.boundingBox()).y),48);
+    assert.equal(Math.round((await sidebar.boundingBox()).y),Math.round((await page.locator('header').boundingBox()).height));
     const account = page.getByRole('button',{name:'Account: Fixture mode',exact:true});
     await account.click();
     const menu = page.locator('.account-menu');
@@ -60,7 +60,7 @@ test('sidebar preference survives reloads; navigation stays pinned while content
       await page.evaluate(() => scrollTo(0,300));
       await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(100);
       assert.equal(Math.round((await page.locator('header').boundingBox()).y),0);
-      assert.equal(Math.round((await sidebar.boundingBox()).y),48);
+      assert.equal(Math.round((await sidebar.boundingBox()).y),Math.round((await page.locator('header').boundingBox()).height));
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
     }
     await page.getByRole('button', {name:'Collapse sidebar',exact:true}).click();

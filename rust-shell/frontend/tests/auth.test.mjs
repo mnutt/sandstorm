@@ -360,7 +360,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const listGate = new Promise(resolve => { releaseList = resolve; });
     await page.route('**/auth/session', async route => { await listGate; await route.continue(); });
     await page.reload({waitUntil:'domcontentloaded'});
-    await page.getByRole('status').filter({hasText:'Loading your grains…'}).waitFor();
+    await page.getByRole('status').filter({hasText:'Connecting to Sandstorm…'}).waitFor();
     await expect(page.getByText('You have no grains to show.', {exact:true})).toHaveCount(0);
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-grains-loading.png'});
     releaseList();
@@ -787,7 +787,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const restartPopup = await restartPopupPromise;
     bridgeOffline = true;
     changed();
-    await page.getByText('Waiting for Sandstorm…', {exact:true}).waitFor();
+    await page.getByRole('status').filter({hasText:'Waiting for Sandstorm…'}).waitFor();
     assert.equal(await page.locator('iframe').count(), 0);
     await expect.poll(() => restartPopup.isClosed()).toBe(true);
     bridge = createRustShellBridge(bridgeOptions);

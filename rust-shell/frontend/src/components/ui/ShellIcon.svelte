@@ -1,7 +1,7 @@
 <script lang="ts">
-  let { name }: { name: 'apps' | 'grains' | 'external' | 'sidebar' | 'pencil' | 'close' | 'share' | 'users' } = $props();
+  let { name, toolbar = false }: { toolbar?: boolean; name: 'apps' | 'grains' | 'external' | 'sidebar' | 'pencil' | 'close' | 'share' | 'users' | 'bell' } = $props();
 </script>
-<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter">
+<svg aria-hidden="true" width={toolbar ? 18 : 20} height={toolbar ? 18 : 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={toolbar ? 1.8 : 1.6} stroke-linecap={toolbar ? 'round' : 'square'} stroke-linejoin={toolbar ? 'round' : 'miter'}>
   {#if name === 'apps'}
     <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
   {:else if name === 'grains'}
@@ -14,6 +14,8 @@
     <path d="m6 6 12 12M18 6 6 18" />
   {:else if name === 'share'}
     <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m9 10 6-3M9 14l6 3" />
+  {:else if name === 'bell'}
+    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
   {:else if name === 'users'}
     <circle cx="9" cy="7" r="3" /><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 13a5 5 0 0 1 3 5v3" />
   {:else}
