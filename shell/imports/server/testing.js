@@ -1,3 +1,4 @@
+import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
 import Capnp from "/imports/server/capnp";
 import { createRustShellBridge } from "./rust-shell-bridge-core.mjs";
 // Sandstorm - Personal Cloud Sandbox
@@ -1490,6 +1491,53 @@ if(isTesting) {
         let forged = false;
         try { await call("select",{key:"grain-"+grainId,mode:"view",role:"all"}); forged = true; } catch (_) {}
         if (forged) throw new Error("Powerbox accepted a forged option key");
+        const sourceCap = await globalThis.globalFrontendRefRegistry.create(globalDb,
+          {http:{url:"https://example.com/",auth:{none:null}}}, []);
+        const ids = [];
+        const remember = token => { const id = Crypto.createHash("sha256").update(token).digest("base64"); ids.push(id); return id; };
+        const webkeyUrl = token => new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeApiHost(token) + "/#" + token;
+        try {
+          const source = (await sourceCap.save({webkey:null})).sturdyRef.toString();
+          const sourceId = remember(source);
+          const link = webkeyUrl(source);
+          await call("begin",{query:[]});
+          const result = await call("select",{mode:"webkey",url:link,grainId:"must-not-own",sessionId:"must-not-own"});
+          const id = remember(result.token);
+          if (result.token === source) throw new Error("Powerbox returned the source webkey");
+          const row = await globalDb.collections.apiTokens.findOneAsync(id);
+          if (row.owner?.clientPowerboxRequest?.sessionId !== record.requesterId || row.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Pasted capability has the wrong owner");
+          await call("cancel");
+          const legacy = await getMethodHandler("finishPowerboxRequest").call({connection:{sandstormDb:globalDb}},record.requesterId,link,"label",null,"must-not-own");
+          remember(legacy);
+          const legacyRow = await globalDb.collections.apiTokens.findOneAsync(ids[ids.length-1]);
+          if (legacyRow.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Legacy webkey caller chose its own receiving grain");
+          const owned = (await sourceCap.save({clientPowerboxRequest:{sessionId:record.requesterId,grainId}})).sturdyRef.toString();
+          remember(owned);
+          const bad = ["https://example.com/#secret", link.split("#")[0],
+            link.slice(0,link.indexOf("#")) + "#wrong-token", process.env.ROOT_URL + "/shared/" + source];
+          bad.push(webkeyUrl(owned));
+          for (const url of bad) {
+            await call("begin",{query:[]});
+            let accepted = false;
+            try { await call("select",{mode:"webkey",url}); accepted = true; } catch (_) {}
+            finally { await call("cancel"); }
+            if (accepted) throw new Error("Invalid or non-webkey capability accepted");
+          }
+          let wrongAccount = false;
+          try { await redeemPowerboxWebkey(globalDb,"another-account",record.requesterId,link); wrongAccount = true; } catch (_) {}
+          if (wrongAccount) throw new Error("Webkey exchange crossed account session boundary");
+          await globalDb.collections.apiTokens.updateAsync(sourceId,{$set:{revoked:true}});
+          await call("begin",{query:[]});
+          let revoked = false;
+          try { await call("select",{mode:"webkey",url:link}); revoked = true; } catch (_) {}
+          finally { await call("cancel"); }
+          if (revoked) throw new Error("Revoked webkey was accepted");
+        } finally {
+          sourceCap.close();
+          await call("cancel");
+          for (const id of ids) await globalDb.removeApiTokens({_id:id});
+        }
+
         return true;
       }
       if (action === "verifyProviderClosed") {

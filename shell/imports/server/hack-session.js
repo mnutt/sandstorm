@@ -1,3 +1,4 @@
+import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
 // Sandstorm - Personal Cloud Sandbox
 // Copyright (c) 2014 Sandstorm Development Group, Inc. and contributors
 // All rights reserved.
@@ -272,45 +273,9 @@ Meteor.methods({
       throw new Meteor.Error(403, "Not logged in.");
     }
 
-    const parsedWebkey = Url.parse(webkeyUrl.trim());
-    const hostId = matchWildcardHost(parsedWebkey.host);
-    if (!hostId || !db.isApiHostId(hostId)) {
-      throw new Meteor.Error(500, "Hostname does not match this server. External webkeys are not " +
-        "supported (yet)");
-    }
-
-    let token = parsedWebkey.hash;
-    if (!token) {
-      throw new Meteor.Error(400, "Invalid webkey. You must pass in the full webkey, " +
-        "including domain name and hash fragment");
-    }
-
-    token = token.slice(1);
-    if (db.isTokenSpecificHostId(hostId) && hostId !== db.apiHostIdForToken(token)) {
-      // Note: This case is not security-sensitive. The client could easily compute the correct
-      //   host ID for this token. But since they've passed one that doesn't match, we assume
-      //   something is wrong and stop here.
-      throw new Meteor.Error(400, "Invalid webkey: token doesn't match hostname.");
-    }
-
-    const cap = (await globalThis.restoreInternal(db, token,
-        Match.Optional({ webkey: Match.Optional(Match.Any) }), [])).cap;
-    const castedCap = cap.castAs(SystemPersistent);
-    const owner = {
-      clientPowerboxRequest: {
-        grainId: grainId,
-        sessionId: sessionId,
-      },
-    };
-    if (saveLabel) {
-      grainOwner.saveLabel = {
-        defaultText: saveLabel,
-      };
-    }
-
-    const save = castedCap.save(owner);
-    const sturdyRef = (await save).sturdyRef;
-    return sturdyRef.toString();
+    // saveLabel and grainId are obsolete: claimRequest establishes the permanent
+    // owner, and the temporary owner must come from the authenticated session.
+    return redeemPowerboxWebkey(db, userId, sessionId, webkeyUrl);
   },
 
   async finishPowerboxOffer(sessionId) {

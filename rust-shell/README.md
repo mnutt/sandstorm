@@ -373,8 +373,9 @@ An embedded app's `powerboxRequest` opens a native Bits UI dialog after exact
 iframe origin/source validation. It offers a searchable list of matching grains
 and built-in capabilities. Users can grant a UiView with selected permissions,
 open a provider app inside the dialog to choose an object, use an existing
-verified email/network capability, or enter an HTTP(S) URL. Newly verified email,
-OAuth authorization, pasted capability links, and provider flows needing nested
+verified email/network capability, enter an HTTP(S) URL, or paste a local API
+capability link. Newly verified email,
+OAuth authorization and provider flows needing nested
 shell interactions retain **More options in main shell** as an explicit fallback.
 
 `GrainSession.powerbox` exposes only begin/select/poll/cancel operations. Each
@@ -395,6 +396,14 @@ are removed. Native provider fulfillment is conditional on a live, unclosed
 session and can be published only once; a late or duplicate save removes its
 new token. Mutations are never replayed automatically. Public shared-grain
 capabilities do not expose Powerbox authority.
+
+Pasted API capability links are exchanged with the canonical restore/save path;
+the input URL is never fetched. Only local API hosts with matching token-specific
+hostnames are accepted. The derived token is bound to the authenticated requesting
+session and grain; the app never receives the original webkey. Raw links stay in
+component memory, are cleared on submission/back/close, and are not persisted.
+External webkeys and ordinary `/shared/` grain links are not accepted. The same
+helper backs the legacy method and derives its receiving grain from the session.
 
 The fallback retains its exact origin/window/nonce checks. Tests cover native
 UiView and hosted-provider selection, cancellation, duplicate requests, forged

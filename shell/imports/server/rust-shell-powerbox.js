@@ -1,3 +1,4 @@
+import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
 import Crypto from "crypto";
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
@@ -68,6 +69,12 @@ export function rustPowerbox(db) {
     },
     async select(request, input, beforeWrite) {
       if (request.provider || request.result) fail("This request already has a selection.");
+      if (input.mode === "webkey") {
+        await validate(request.parent);
+        const token = await redeemPowerboxWebkey(db, request.parent.accountId, request.parent.sessionId, input.url, beforeWrite);
+        request.result = {token};
+        return {status:"complete",token};
+      }
       const option = request.options.get(input.key);
       if (!option) fail("Unknown Powerbox option.");
       await validate(request.parent);

@@ -18,6 +18,8 @@
   let provider = $state<Extract<PowerboxState,{status:'provider'}>>();
   let loaded = $state(false);
   let search = $state('');
+  let pasting = $state(false);
+  let webkey = $state('');
   let role = $state('all');
   let url = $state('');
   let limited = $state(false);
@@ -62,11 +64,21 @@
     })();
     expires = setTimeout(() => done({canceled:true}),300000);
     return () => {
-      alive = false;
+      alive = false; webkey = '';
       clearTimeout(pollTimer); clearTimeout(expires);
       void actions.call(id,'cancel').catch(() => {});
     };
   });
+  async function paste(event: SubmitEvent) {
+    event.preventDefault();
+    if (busy || error || !webkey.trim()) return;
+    const link = webkey.trim();
+    webkey = '';
+    busy = true;
+    try { await accept(await actions.call(id,'select',{mode:'webkey',url:link})); }
+    catch (e) { if (alive) error = `Could not connect using that link. Cancel and request it again. ${String(e)}`; }
+    finally { if (alive) busy = false; }
+  }
   async function connect(mode = 'ref') {
     if (!selected || busy || error) return;
     busy = true;
@@ -86,6 +98,12 @@
         {#if !loaded}<div class="loading"><LoadingStatus label="Loading provider…" /></div>{/if}
       </div>
     {:else if busy}<LoadingStatus label="Loading connection options…" />
+    {:else if pasting}
+      <form onsubmit={paste}>
+        <label>API capability link<TextInput type="url" bind:value={webkey} maxlength={16384} autocomplete="off" spellcheck={false} placeholder="https://api.example.com/#token" disabled={!!error} /></label>
+        <p class="hint">Paste an API capability link from this Sandstorm server. This gives the requesting app access through that link.</p>
+        <div class="actions"><Button type="submit" disabled={!!error || !webkey.trim()}>Connect using link</Button><Button variant="secondary" disabled={!!error} onclick={() => { pasting = false; webkey = ''; }}>Back</Button></div>
+      </form>
     {:else if selected}
       <div class="selected"><GrainIcon src={selected.iconSrc || ''} /><strong>{selected.title}</strong></div>
       {#if selected.uiView}
@@ -112,6 +130,7 @@
           </button></li>
         {:else}<li class="empty">No matching options.</li>{/each}
       </ul>
+      <div><Button variant="secondary" onclick={() => { pasting = true; }}>Paste capability link</Button></div>
       {#if limited}<p class="hint">Showing the first 64 options.</p>{/if}
       {#if hasLegacy}<p class="hint">Some account authorization options are available in the main shell.</p>{/if}
     {/if}
@@ -125,6 +144,7 @@
 <style>
   .powerbox { display: grid; gap: var(--ss-space-3); }
   p { margin: 0; }
+  form { display: grid; gap: var(--ss-space-3); }
   label { display: grid; gap: var(--ss-space-1); font-size: var(--ss-text-small); font-weight: 600; }
   .hint, small, .empty { color: var(--ss-muted); font-size: var(--ss-text-small); }
   .candidates { list-style: none; padding: 0; margin: 0; max-height: 45dvh; overflow: auto; }

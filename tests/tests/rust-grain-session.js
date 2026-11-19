@@ -230,7 +230,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
         removeEventListener('message',window.nativePowerboxListener);
         done(true);
       } catch (e) { done(e.message); }
-    }, [], result => browser.assert.equal(result.value,true,'native UiView, URL, replay protection and cleanup succeeded'));
+    }, [], result => browser.assert.equal(result.value,true,'native UiView, URL, pasted webkey authorization and cleanup succeeded'));
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
   utils.callMeteorTestMethod(browser, "testRustProfile");
   browser.frame(null).executeAsync(function (done) {

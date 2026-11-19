@@ -66,6 +66,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       powerbox: {
         open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
         select: async (request, input) => {
+          if (input.mode === 'webkey') { assert.equal(input.url,'https://api.example.test/#source-secret'); return {status:'complete',token:'derived-webkey-token'}; }
           if (input.key === 'view') return {status:'complete',token:'native-view-token',descriptor:'view-descriptor'};
           assert.equal(input.key,'provider'); providerComplete = false; nativeProviders.add(request);
           return {status:'provider',title:'Test provider',origin:grainOrigin,url:grainOrigin+'/powerbox-provider'};
@@ -647,6 +648,28 @@ test('authenticated notifications: handoff, shared writes, account switching and
       await expect.poll(() => nativeProviders.size).toBe(0);
       await expect(nativeDialog).toHaveCount(0);
     }
+
+    await app.evaluate(() => { window.webkeyMessages = []; addEventListener('message', event => window.webkeyMessages.push(event.data));
+      parent.postMessage({powerboxRequest:{rpcId:'native-webkey',query:[]}},'*'); });
+    const beforePastePages = context.pages().length;
+    await nativeDialog.getByRole('button',{name:'Paste capability link',exact:true}).click();
+    await nativeDialog.getByLabel('API capability link',{exact:true}).fill('https://api.example.test/#source-secret');
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-powerbox-webkey.png'});
+    await nativeDialog.getByRole('button',{name:'Connect using link',exact:true}).click();
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('native-webkey');
+    assert.equal(await app.evaluate(() => window.reply.token),'derived-webkey-token');
+    assert.equal(JSON.stringify(await app.evaluate(() => window.webkeyMessages)).includes('source-secret'),false);
+    assert.equal(await page.evaluate(() => JSON.stringify({...sessionStorage,...localStorage}).includes('source-secret')),false);
+    assert.equal(context.pages().length,beforePastePages);
+    await expect(nativeDialog).toHaveCount(0);
+    await app.evaluate(() => parent.postMessage({powerboxRequest:{rpcId:'cancel-webkey',query:[]}},'*'));
+    await nativeDialog.getByRole('button',{name:'Paste capability link',exact:true}).click();
+    await nativeDialog.getByLabel('API capability link',{exact:true}).fill('https://api.example.test/#source-secret');
+    await nativeDialog.getByRole('button',{name:'Back',exact:true}).click();
+    await nativeDialog.getByRole('button',{name:'Paste capability link',exact:true}).click();
+    await expect(nativeDialog.getByLabel('API capability link',{exact:true})).toHaveValue('');
+    await nativeDialog.getByRole('button',{name:'Cancel request',exact:true}).click();
+    await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('cancel-webkey');
 
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
     await page.getByRole('button', { name: 'More options in main shell' }).waitFor();
