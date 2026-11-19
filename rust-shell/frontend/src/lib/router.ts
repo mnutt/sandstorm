@@ -50,3 +50,12 @@ export function initialRoute() {
   } catch {}
   return readRoute();
 }
+
+// Only destinations implemented for notifications can bypass the legacy shell.
+export function notificationDestination(path: string): {path:string;label:string} | null {
+  if (!path || appPath(path) !== path) return null;
+  const route = readRoute(new URL(path, 'https://shell.invalid'));
+  if (route.page === 'grain') return {path,label:'Open grain'};
+  if (path === '/install') return {path,label:'Review updates'};
+  return null;
+}

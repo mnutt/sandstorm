@@ -2,6 +2,8 @@ import { emptyProfile, type ProfileState } from './profile';
 import type { CreationState } from './apps';
 
 export interface Notification {
+  nativePath: string;
+  nativeAction: string;
   id: string;
   title: string;
   body: string;

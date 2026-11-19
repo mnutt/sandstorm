@@ -1,3 +1,4 @@
+import type { NotificationDetails } from './notification-details';
 import { InstallService } from './install';
 import { clearStoredTemplateOffers } from './template';
 import { ProfileService, type Profile } from './profile';
@@ -62,10 +63,11 @@ export class ShellService {
     this.changed(this.state);
   }
   private snapshot(snapshot: Snapshot) {
+    this.profile.observe(snapshot.profileVersion);
     const entries: Notification[] = [];
     for (const entry of snapshot.entries) entries.push({
       id: entry.key || String(entry.id), title: entry.title, body: entry.body,
-      href: entry.href, unread: entry.unread, ongoing: entry.ongoing,
+      href: entry.href, nativePath: entry.nativePath, nativeAction: entry.nativeAction, unread: entry.unread, ongoing: entry.ongoing,
       timestamp: entry.timestamp, senderName: entry.senderName,
     });
     const grains: Grain[] = [];
@@ -90,6 +92,7 @@ export class ShellService {
   powerbox(id: string) { return this.grains.powerbox(id); }
   sharing(id: string) { return this.grains.sharing(id); }
   renderTemplate(id: string, input: unknown) { return this.grains.renderTemplate(id, input); }
+  uploadProfilePicture(image: Blob) { return this.profile.uploadPicture(image); }
   loadProfile() { return this.profile.load(); }
   saveProfile(profile: Pick<Profile, 'name' | 'handle' | 'pronoun'>) { return this.profile.save(profile); }
   listApps() { return this.apps.list(); }
@@ -106,6 +109,21 @@ export class ShellService {
       : shell.dismissReal(params => { params.key = id; }).promise());
   }
   addFixture() { return this.mutate(shell => shell.addFixture().promise()); }
+  async notificationDetails(key: string, operation: 'details' | 'setStats' = 'details', enabled = false): Promise<NotificationDetails> {
+    const result = await this.connection.run(this.connection.shell.notification(params => {
+      params.key = key; params.operation = operation; params.enabled = enabled;
+    }).promise(), 'Notification details');
+    return JSON.parse(result.state);
+  }
+  async readNotification(key: string) {
+    if (this.state.fixture || this.state.status !== 'ready') return;
+    const account = this.accountKey;
+    try {
+      await this.connection.run(this.connection.shell.markRead(params => { params.key = key; }).promise(), 'Mark notification as read');
+    } catch (error) {
+      if (account === this.accountKey) this.update({ notificationError: `${errorMessage(error)}. Could not confirm that the notification was marked as read.` });
+    }
+  }
   markRead() { return this.mutate(shell => shell.markRead().promise()); }
   private async mutate(operation: (shell: Shell$Client) => PromiseLike<unknown>) {
     if (this.state.status !== 'ready' || this.state.pending) return;

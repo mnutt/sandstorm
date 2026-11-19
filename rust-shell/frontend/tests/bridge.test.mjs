@@ -15,7 +15,7 @@ test('bridge authority: one-use handoff, account scoping, expiry and logout', as
       if (index < 0) throw Object.assign(new Error('Not yours'), { status: 403 });
       rows.splice(index, 1);
     },
-    markRead: async (user) => { rows.filter((row) => row.user === user).forEach((row) => { row.unread = false; }); },
+    markRead: async (user, key) => { rows.filter((row) => row.user === user && (key === undefined || row.key === key)).forEach((row) => { row.unread = false; }); },
   });
   const state = 'a'.repeat(64);
   const signIn = async (id = 'alice', previous) => {
@@ -33,6 +33,12 @@ test('bridge authority: one-use handoff, account scoping, expiry and logout', as
   const { token } = await signIn();
   assert.deepEqual((await bridge.handle('snapshot', { token, accountId: 'bob' })).entries.map((row) => row.key), ['a']);
   await assert.rejects(bridge.handle('dismiss', { token, id: 'b' }), { status: 403 });
+  await bridge.handle('read', { token, key:'b' });
+  assert.equal(rows[1].unread,true);
+  await assert.rejects(bridge.handle('read',{token,key:{$ne:null}}),{status:400});
+  await assert.rejects(bridge.handle('read',{token,key:''}),{status:400});
+  await bridge.handle('read',{token,key:'a'});
+  assert.equal(rows[0].unread,false); assert.equal(rows[1].unread,true);
   await bridge.handle('read', { token });
   assert.equal(rows[0].unread, false); assert.equal(rows[1].unread, true);
   rows.push({ key: 'legacy-write', user: 'alice', unread: true });
@@ -351,4 +357,51 @@ test('installation binds account, validates operations and fences writes after r
   await assert.rejects(pending,{status:401});
   assert.equal(writes,0);
   await assert.rejects(call('status'),{status:401});
+});
+
+test('notification operations validate inputs and recheck authority before writes', async () => {
+  let valid = true;
+  let revokeOnWrite = false;
+  let writes = 0;
+  const bridge = createRustShellBridge({
+    authorize: async () => valid ? {name:'Alice',expires:Date.now()+1000000} : null,
+    notification: async (account,key,operation,enabled,beforeWrite) => {
+      assert.equal(account,'alice');
+      assert.equal(key,'notice');
+      if (operation === 'setStats') {
+        if (revokeOnWrite) valid=false;
+        await beforeWrite(); ++writes;
+      }
+      return {kind:'stats',enabled};
+    },
+  });
+  const state='a'.repeat(64);
+  const code=await bridge.issue('alice','login',state);
+  const {token}=await bridge.handle('exchange',{code,state});
+  const call = input => bridge.handle('notification',{token,key:'notice',operation:'details',...input});
+  for (const input of [{key:''},{key:{$ne:null}},{operation:'setSetting'},{operation:'setStats',enabled:'true'}]) {
+    await assert.rejects(call(input),{status:400});
+  }
+  assert.equal((await call({accountId:'bob'})).kind,'stats');
+  await call({operation:'setStats',enabled:false});
+  assert.equal(writes,1);
+  revokeOnWrite=true;
+  await assert.rejects(call({operation:'setStats',enabled:true}),{status:401});
+  assert.equal(writes,1);
+});
+
+test('picture upload issuance is scoped to the linked account and rechecks revoked authority', async () => {
+  let authorized=true, revoke=false, issued=0;
+  const bridge=createRustShellBridge({authorize:async()=>authorized?{name:'Alice',expires:Date.now()+1000000}:null,
+    uploadPicture:async(accountId,beforeWrite)=>{
+      assert.equal(accountId,'alice');
+      if (revoke) authorized=false;
+      await beforeWrite(); ++issued; return {uploadUrl:'https://static.example/token'};
+    }});
+  const state='a'.repeat(64),code=await bridge.issue('alice','login',state);
+  const {token}=await bridge.handle('exchange',{code,state});
+  assert.equal((await bridge.handle('uploadPicture',{token,accountId:'bob'})).uploadUrl,'https://static.example/token');
+  revoke=true;
+  await assert.rejects(bridge.handle('uploadPicture',{token}),{status:401});
+  assert.equal(issued,1);
 });

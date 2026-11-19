@@ -121,12 +121,24 @@ total count. Mongo observers wake a pending Rust request when notifications,
 owned/shared grain titles, referenced sender names, or account authority change. Rust pushes changed snapshots
 over Cap'n Proto. Dismiss, cancel ongoing activity, and mark-all-read delegate to the
 same Meteor functions used by the main UI, including ownership and cleanup checks.
-Links open the main shell. Shared-grain titles use the recipient's token metadata
+Opening a notification marks only that account’s selected notice as read; the
+explicit mark-all action remains separate. Rows share date and action columns,
+so longer cancellation buttons do not shift the dates.
+Grain activity links open in the Rust shell, preserving the app path, query, and
+fragment; app-update links open the native installer. Usage-statistics choices,
+referral details, and account-identity notices open native dialogs. Statistics
+reads and writes require current administrator authority; the fixed reportStats
+setting and notice cleanup match the legacy admin UI. Referral projections include
+only the current account’s pending/completed names, bounded to 100 each.
+Other unsupported destinations retain an explicit main-shell link. Native paths are
+projected separately from legacy URLs and validated to stay within the specified
+grain route. Following a notification does not grant grain access: normal session
+authorization still applies. Shared-grain titles use the recipient's token metadata
 and the same upstream-title/personal-rename helper as the main UI; revoked tokens
 are excluded. Sender names are fetched only for accounts referenced by the
 recipient's own notifications. Title changes, token changes, and referenced sender
 renames wake the projection. Anonymous activity has an explicit label. Ongoing
-notifications preserve the app-provided message and explain cancellation separately.
+notifications preserve the app-provided message and confirm cancellation before stopping activity.
 Avatars, app icons, and localized notification copy remain to be ported.
 There is no test-notification button in this mode. Standalone runs without
 `RUST_SHELL_BRIDGE_SOCKET` retain the isolated fixture UI.
@@ -179,16 +191,32 @@ changes. Account switching, disconnect, and logout clear both projections.
 ### Account profile
 
 The **Account** page (`/account`) reads and edits display name, handle, and
-pronouns for the linked account. Entering the page or choosing **Refresh profile**
-reads current values from Meteor. It does not subscribe to profile changes;
-refresh to see edits made in another tab. A refresh discards the local draft.
-Login methods, email, and profile pictures link to the canonical `/account` page
-in the main shell.
+pronouns for the linked account. Entering the page reads current values. The live
+snapshot includes a version of the displayed profile fields; edits in another tab
+or the legacy shell show “The profile was updated by someone else.” with a
+**Refresh** button. Values and unsaved drafts remain untouched until Refresh is
+chosen. Own saves and picture uploads acknowledge their returned version.
+The page also displays and uploads profile pictures using the canonical static-asset
+endpoint. Choose a PNG or JPEG up to 20 MiB and explicitly upload it. The browser
+center-crops to 512×512, flattens transparency onto white, and encodes JPEG at 85%
+quality, reducing quality if necessary to meet the 64 KiB server limit. The original
+file is never uploaded. Selecting a file prepares a local thumbnail; Upload sends
+those exact preview bytes, and Cancel discards the selection. Preparation, upload errors, and success messages appear
+beside the image controls. The server checks image signatures and size, consumes the upload credential once,
+and manages asset references. Unused credentials expire after five minutes;
+issuing another Rust upload replaces that account’s previous unused Rust token.
+Upload bytes bypass RPC and omit cookies. The CSP permits the configured static
+host (`RUST_SHELL_WILDCARD_HOST`, supplied by the launcher), not arbitrary upload
+origins. Account changes/disconnect abort client uploads and discard late results;
+uncertain outcomes are never retried automatically. As in the legacy uploader,
+a credential already issued remains usable until consumed, replaced, or expired.
+Login methods and email still link to the canonical `/account` page in the main shell.
 
 `getProfile` and `updateProfile` derive the account from the linked session, never
 a browser-supplied account ID. Updates use the same `updateProfileForUser` helper
 as Meteor's `updateProfile` method, preserving handle/pronoun validation and
-signup completion. Only these three profile fields are writable. The spike bounds
+signup completion. Only these three text profile fields are writable through `updateProfile`; picture
+uploads use their separate one-use credential. The spike bounds
 names to 160 characters and handles to 64; it admits one update per account and
 eight across the bridge, and rechecks login/cancellation immediately before writes.
 Profile reads are reauthorized before returning. Credentials and other profile
@@ -198,7 +226,7 @@ The profile service owns request lifetimes and save outcomes across route change
 Disconnect clears account data; an unconfirmed save displays an explicit warning
 and is never replayed. Late reads cannot overwrite a save or a different account.
 The displayed connected name updates after a successful save or profile refresh.
-This is not full account-settings parity or cross-tab conflict resolution: saves
+This is not full account-settings parity or conflict resolution: saves
 retain the main shell's last-write-wins behavior.
 
 ### Installed apps and grain creation

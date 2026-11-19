@@ -39,7 +39,7 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
     await second.goto(origin);
     await second.getByRole('heading', { name: 'Welcome to the Rust shell' }).waitFor();
     await second.close();
-    await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await page.reload();
     await page.getByRole('heading', { name: 'Welcome to the Rust shell' }).waitFor();
 
     await serveProbe(page, './rpc-probe.ts', 'rpc-probe.js');

@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const deferred = () => {
@@ -328,4 +328,53 @@ test('template credentials are isolated between grains and cleared at shell/sess
   assert.equal(storage[firstKey],undefined, 'session reset clears offers, including orphaned keys');
   assert.equal(storage.unrelated,'keep me');
   clearStoredTemplateOffers();
+});
+
+test('notification navigation only accepts supported canonical local destinations', () => {
+  assert.deepEqual(notificationDestination('/grain/grain-1/folder?x=1#comment'),{path:'/grain/grain-1/folder?x=1#comment',label:'Open grain'});
+  assert.deepEqual(notificationDestination('/install'),{path:'/install',label:'Review updates'});
+  for (const path of ['', '//evil.test/grain/a', 'https://evil.test/grain/a', '/admin', '/grain/a/../../install', '/install?url=evil', '/grain/%2e%2e/admin']) {
+    assert.equal(notificationDestination(path),null);
+  }
+});
+
+test('picture uploads validate before issuing tokens and discard late results after account switches', async t => {
+  let requests=0, state;
+  const pending=deferred();
+  const connection={signal:new AbortController().signal,run:promise=>promise,shell:{uploadPicture:()=>{++requests;return {promise:()=>pending.promise};}}};
+  const profile=new ProfileService(connection,value=>{state=value;},()=>{});
+  await profile.uploadPicture(new File(['<svg/>'],'bad.svg',{type:'image/svg+xml'}));
+  assert.equal(requests,0);
+  assert.match(state.pictureError,/preview/);
+
+  const upload=profile.uploadPicture(new Blob(['jpeg'],{type:'image/jpeg'}));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(requests,1);
+  profile.reset(true);
+  t.mock.method(globalThis,'fetch',()=>{throw new Error('Must not upload after account switch');});
+  pending.resolve({uploadUrl:'https://static.example.test/token'});
+  await upload;
+  assert.equal(state.value,null);
+  assert.equal(state.error,'');
+});
+
+test('profile notices preserve the displayed values and distinguish own saves from remote edits', async () => {
+  let state;
+  let current={name:'Alice',handle:'alice',pronoun:'neutral',version:'one',pictureUrl:'',mainHref:''};
+  let save;
+  const profile=new ProfileService({run:p=>p,shell:{getProfile:()=>({promise:async()=>({profile:current})}),updateProfile:()=>({promise:()=>new Promise(resolve=>{save=resolve;})})}},value=>state=value,()=>{});
+  profile.observe('one'); await profile.load();
+  profile.observe('two');
+  assert.equal(state.stale,true); assert.equal(state.value.name,'Alice');
+  current={...current,name:'Remote',version:'two'};
+  await profile.load(); assert.equal(state.stale,false); assert.equal(state.value.name,'Remote');
+  const saving=profile.save({name:'Mine',handle:'alice',pronoun:'neutral'});
+  profile.observe('three');
+  save({profile:{...current,name:'Mine',version:'three'}}); await saving;
+  profile.observe('three'); assert.equal(state.stale,false);
+  const later=profile.save({name:'Mine again',handle:'alice',pronoun:'neutral'});
+  profile.observe('four'); profile.observe('five');
+  save({profile:{...current,name:'Mine again',version:'four'}}); await later;
+  assert.equal(state.stale,true,'A concurrent remote update after our save still shows the banner');
+  profile.reset(true); assert.equal(state.stale,false); assert.equal(state.value,null);
 });

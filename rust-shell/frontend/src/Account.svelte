@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProfilePicture from './ProfilePicture.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import NativeSelect from './components/ui/NativeSelect.svelte';
@@ -43,9 +44,12 @@
     <p role="status">Connecting to Sandstorm…</p>
   {:else}
     <p>Your profile is shared with the main shell and apps.</p>
-    <Button variant="secondary" disabled={profile.loading || profile.saving} onclick={() => { dirty = false; void service.loadProfile(); }}>Refresh profile</Button>
+    {#if profile.stale}<div class="profile-update" role="status"><span>The profile was updated by someone else.</span><Button variant="secondary" disabled={profile.loading || profile.saving} onclick={() => { dirty = false; void service.loadProfile(); }}>Refresh</Button></div>{/if}
     {#if profile.loading}<p role="status">Loading profile…</p>{/if}
     {#if profile.value}
+      {#key model.accountKey}
+        <ProfilePicture {profile} upload={image => service.uploadProfilePicture(image)} />
+      {/key}
       <form onsubmit={save} oninput={() => { dirty = true; }}>
         <label for="profile-name">Display name</label>
         <TextInput id="profile-name" bind:value={name} maxlength={160} required disabled={profile.saving} />
@@ -59,13 +63,14 @@
         </NativeSelect>
         <Button type="submit" disabled={profile.saving || !dirty || !name.trim()}>{profile.saving ? 'Saving profile…' : 'Save profile'}</Button>
       </form>
-      <p><a href={profile.value.mainHref}>Manage login methods, email, and profile picture in the main shell ↗</a></p>
+      <p><a href={profile.value.mainHref}>Manage login methods and email in the main shell ↗</a></p>
     {/if}
   {/if}
   {#if profile.error}<p class="error" role="alert">{profile.error}</p>{/if}
   {#if profile.notice}<p role="status">{profile.notice}</p>{/if}
 </Panel>
 <style>
+  .profile-update { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.75rem; background:var(--ss-brand-subtle); margin-block:1rem; }
   h2 {
     margin: 0 0 var(--ss-space-4);
     font-size: var(--ss-text-title);

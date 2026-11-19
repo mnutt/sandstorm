@@ -26,6 +26,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let leaseClockOffset = 0;
   let renewals = 0;
   let templates = 0;
+  let uploadedPicture;
   const grainTitles = {};
   let creations = 0;
   let failCreation = false;
@@ -45,6 +46,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let bridgeOffline = false;
   const sessionStore = memorySessionStore();
   const profiles = {alice:{name:'Alice',handle:'alice',pronoun:'neutral'},bob:{name:'Bob',handle:'bob',pronoun:'neutral'}};
+  const profileVersion = id => JSON.stringify(profiles[id]);
   const sharingGrants = [];
   let shareCreations = 0;
   let providerComplete = false;
@@ -64,8 +66,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
       if (operation === 'upgrade') installState.olderGrains = 0;
       return {...installState};
     },
-    getProfile: async id => ({...profiles[id],mainHref:mainOrigin+'/account'}),
-    updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = profile; users[id].name = profile.name; },
+    uploadPicture: async (id,beforeWrite) => { await beforeWrite(); assert.equal(id,'alice'); return {uploadUrl:mainOrigin+'/picture-token'}; },
+    getProfile: async id => ({...profiles[id],version:profileVersion(id),mainHref:mainOrigin+'/account'}),
+    updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = {...profiles[id],...profile}; users[id].name = profile.name; changed(); },
     sessionStore,
     listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
     createGrain: async (id, action, title, beforeCreate) => {
@@ -119,10 +122,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
       if (bridgeOffline) throw Object.assign(new Error('Main shell starting'), { status: 503 });
       return users[id]?.hash === hash ? users[id] : null;
     },
+    notification: async (id,key,operation,enabled,beforeWrite) => {
+      assert.equal(rows.get(key)?.user,id);
+      if (operation === 'setStats') { await beforeWrite(); rows.delete(key); changed(); return {kind:'stats',enabled,sample:'',sampleLimited:false}; }
+      const kind = rows.get(key).nativeAction;
+      if (kind === 'stats') return {kind,enabled:null,sample:'{}',sampleLimited:false};
+      if (kind === 'referrals') return {kind,enabled:true,pending:['Pending person'],completed:['Completed person'],limited:false};
+      return {kind};
+    },
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
+      return { profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', appId: 'test-app', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
@@ -131,7 +142,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       if (rows.get(key)?.user !== id) throw Object.assign(new Error('Not your notification'), { status: 403 });
       rows.delete(key); changed();
     },
-    markRead: async (id) => { for (const row of rows.values()) if (row.user === id) row.unread = false; changed(); },
+    markRead: async (id,key) => { for (const row of rows.values()) if (row.user === id && (key === undefined || row.key === key)) row.unread = false; changed(); },
   };
   let sharedRevoked = false;
   let guestsAllowed = true;
@@ -171,6 +182,20 @@ test('authenticated notifications: handoff, shared writes, account switching and
     bridgeServer.listen(bridgeSocket); await once(bridgeServer, 'listening'); await chmod(bridgeSocket, 0o600);
     main = httpsServer(proxy.tls, async (req, res) => {
       try {
+        if (req.url === '/picture-token' && req.method === 'POST') {
+          assert.equal(req.headers.cookie,undefined);
+          const chunks=[]; for await (const chunk of req) chunks.push(chunk);
+          const uploaded = Buffer.concat(chunks); uploadedPicture=uploaded;
+          assert.equal(uploaded[0],255); assert.equal(uploaded[1],216);
+          assert.ok(uploaded.length <= 65536);
+          assert.equal(req.headers['content-type'],'image/jpeg');
+          profiles.alice.pictureUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+          changed();
+          res.writeHead(204,{'Access-Control-Allow-Origin':'*'}); res.end(); return;
+        }
+        if (req.url === '/picture-token' && req.method === 'OPTIONS') {
+          res.writeHead(204,{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'POST'}); res.end(); return;
+        }
         if (req.url === '/rust-shell-powerbox') {
           res.setHeader('Content-Type', 'text/html');
           res.end(`<button id="choose">Choose test capability</button><script>
@@ -194,7 +219,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     mainOrigin = `https://localhost:${main.address().port}`;
     rust = (await start('debug/sandstorm-rust-shell', [], {
       RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin,
-      RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
+      RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_WILDCARD_HOST: new URL(mainOrigin).host, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
       RUST_SHELL_FIXTURE_SOCKET: '',
     }, /Rust shell: (https:\/\/\S+)/)).child;
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/usr/bin/chromium',
@@ -252,11 +277,99 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
+    rows.get('alice-real-id').nativePath = '/grain/alice-grain/folder?mode=read#comment';
+    add('alice-update','alice','App updates available');
+    rows.get('alice-update').nativePath = '/install';
+    add('alice-admin','alice','Administration');
+    rows.get('alice-admin').href = mainOrigin + '/admin';
+    changed();
+    for (const [key,title,kind] of [['stats','Share usage statistics','stats'],['referrals','Referral update','referrals'],['identity','Account identities have changed','identity']]) {
+      add(key,'alice',title); rows.get(key).nativeAction = kind;
+    }
+    changed();
+    await page.getByRole('button',{name:'Share usage statistics',exact:true}).click();
+    await page.getByRole('button',{name:'Disable reporting',exact:true}).click();
+    await page.getByText('Reporting preference saved.',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    await page.getByRole('button',{name:'Referral update',exact:true}).click();
+    await page.getByText('Completed person',{exact:true}).waitFor();
+    await expect.poll(() => rows.get('referrals').unread).toBe(false);
+    assert.equal(rows.get('identity').unread,true,'Opening a notice must not read other notices');
+    assert.equal(rows.get('bob-real-id').unread,true,'Opening a notice must not read another account’s notices');
+    await page.getByText('Pending person',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    await page.getByRole('button',{name:'Account identities have changed',exact:true}).click();
+    await page.getByText(/No action is required for this notice/).waitFor();
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    assert.equal(await page.getByRole('button',{name:'Reconnect',exact:true}).count(),0);
+    rows.delete('referrals'); rows.delete('identity'); changed();
+    rows.get('alice-admin').ongoing = true; changed();
+    await page.getByRole('button',{name:'Cancel activity for Administration'}).waitFor();
+    const datePositions = await page.locator('.notification-item time').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().x));
+    assert.ok(datePositions.every(x => Math.abs(x-datePositions[0]) < 1),'Dates align even when action buttons have different labels');
+    const notificationCount = context.pages().length;
+    await expect(page.getByRole('link',{name:'Open grain',exact:true})).toHaveAttribute('href','/grain/alice-grain/folder?mode=read#comment');
+    await expect(page.getByRole('link',{name:'Open in main shell ↗',exact:true})).toHaveAttribute('href',mainOrigin+'/admin');
+    await page.getByRole('link',{name:'Open grain',exact:true}).click();
+    await page.waitForURL('**/grain/alice-grain/folder?mode=read#comment');
+    await expect.poll(() => rows.get('alice-real-id').unread).toBe(false);
+    assert.equal(rows.get('alice-update').unread,true);
+    await page.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    assert.equal(new URL(await page.locator('iframe').getAttribute('src')).searchParams.get('path'),'/folder?mode=read#comment');
+    await page.locator('.open-grains li.current button').click();
+    await page.getByRole('link',{name:'Notifications',exact:true}).click();
+    await page.getByRole('link',{name:'Review updates',exact:true}).click();
+    await page.waitForURL('**/install');
+    await page.getByRole('heading',{name:'Available updates',exact:true}).waitFor();
+    assert.equal(context.pages().length,notificationCount,'native notification navigation must not open legacy windows');
+    rows.delete('alice-update'); rows.delete('alice-admin'); delete rows.get('alice-real-id').nativePath; changed();
+    await page.getByRole('link',{name:'Notifications',exact:true}).click();
+
     await page.getByRole('button', {name:'Account: Alice',exact:true}).click();
     await page.getByRole('link', {name:'Account',exact:true}).click();
     await expect(page).toHaveTitle('Account · Sandstorm');
     await expect(page.locator('.route-content')).toBeFocused();
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice');
+    await page.getByLabel('Choose an image',{exact:true}).setInputFiles({name:'broken.png',mimeType:'image/png',buffer:Buffer.from('not an image')});
+    await expect(page.locator('.picture [role=alert]')).toContainText('could not be opened');
+    await expect(page.getByRole('button',{name:'Upload picture',exact:true})).toBeDisabled();
+    const source = await page.evaluate(async () => {
+      const canvas=document.createElement('canvas'); canvas.width=900; canvas.height=600;
+      const ctx=canvas.getContext('2d'); const pixels=ctx.createImageData(900,600);
+      for (let i=0;i<pixels.data.length;i+=4) { pixels.data[i]=Math.random()*255; pixels.data[i+1]=Math.random()*255; pixels.data[i+2]=Math.random()*255; pixels.data[i+3]=255; }
+      ctx.putImageData(pixels,0,0);
+      return canvas.toDataURL('image/png').split(',')[1];
+    });
+    assert.ok(Buffer.from(source,'base64').length > 65536);
+    await page.getByLabel('Choose an image',{exact:true}).setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:Buffer.from(source,'base64')});
+    const thumbnail = page.getByRole('img',{name:'New avatar preview'});
+    await expect(thumbnail).toBeVisible();
+    assert.equal(uploadedPicture,undefined,'Choosing an image does not upload it');
+    await page.getByRole('button',{name:'Cancel',exact:true}).click();
+    await expect(thumbnail).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Upload picture',exact:true})).toBeDisabled();
+    await page.getByLabel('Choose an image',{exact:true}).setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:Buffer.from(source,'base64')});
+    await expect(thumbnail).toBeVisible();
+    profiles.alice = {...profiles.alice,name:'Remote avatar edit'}; changed();
+    await page.getByText('The profile was updated by someone else.',{exact:true}).waitFor();
+    await expect(thumbnail).toBeVisible();
+    profiles.alice = {...profiles.alice,name:'Alice'}; changed();
+    await expect(page.getByText('The profile was updated by someone else.',{exact:true})).toHaveCount(0);
+    const previewBytes = Buffer.from((await thumbnail.getAttribute('src')).split(',')[1],'base64');
+    await page.getByRole('button',{name:'Upload picture',exact:true}).click();
+    await page.getByText('Profile picture updated.',{exact:true}).waitFor();
+    assert.ok(uploadedPicture.equals(previewBytes),'Uploaded bytes must exactly match the preview');
+    await expect(thumbnail).toHaveCount(0);
+    const dimensions = await page.evaluate(async base64 => {
+      const bytes=Uint8Array.from(atob(base64), c=>c.charCodeAt(0));
+      const image=await createImageBitmap(new Blob([bytes],{type:'image/jpeg'}));
+      const result=[image.width,image.height]; image.close(); return result;
+    },uploadedPicture.toString('base64'));
+    assert.deepEqual(dimensions,[512,512]);
+    await expect(page.locator('.picture [role=alert]')).toHaveCount(0);
+    await expect(page.getByText('The profile was updated by someone else.',{exact:true})).toHaveCount(0);
+    await expect(page.getByRole('img',{name:'Current avatar'})).toHaveAttribute('src',profiles.alice.pictureUrl);
+    assert.equal(profiles.bob.pictureUrl,undefined);
     await page.getByLabel('Display name', {exact:true}).fill('Alice renamed');
     await page.getByLabel('Handle', {exact:true}).fill('alice_renamed');
     await page.getByLabel('Pronouns', {exact:true}).selectOption('female');
@@ -266,8 +379,12 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(profiles.bob.name,'Bob');
     await page.reload();
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice renamed');
-    profiles.alice = {name:'Legacy edit',handle:'alice',pronoun:'neutral'};
-    await page.getByRole('button', {name:'Refresh profile',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Refresh',exact:true})).toHaveCount(0);
+    await page.getByLabel('Display name',{exact:true}).fill('Unsaved draft');
+    profiles.alice = {name:'Legacy edit',handle:'alice',pronoun:'neutral'}; changed();
+    await page.getByText('The profile was updated by someone else.',{exact:true}).waitFor();
+    await expect(page.getByLabel('Display name',{exact:true})).toHaveValue('Unsaved draft');
+    await page.getByRole('button', {name:'Refresh',exact:true}).click();
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Legacy edit');
     await page.getByLabel('Display name', {exact:true}).fill('Alice');
     await page.getByRole('button', {name:'Save profile',exact:true}).click();
@@ -772,7 +889,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await rm(socket, { force: true });
     rust = (await start('debug/sandstorm-rust-shell', [], {
       RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin,
-      RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
+      RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_WILDCARD_HOST: new URL(mainOrigin).host, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
       RUST_SHELL_FIXTURE_SOCKET: '',
     }, /Rust shell: (https:\/\/\S+)/)).child;
     await page.reload();

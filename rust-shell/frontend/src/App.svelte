@@ -179,7 +179,7 @@
   {:else if view === 'grains'}
     <Grains {model} {service} {navigate} />
   {:else}
-    <Notifications {model} {service} />
+    <Notifications {model} {service} {navigate} />
   {/if}
   </div>
   {/if}
