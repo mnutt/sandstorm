@@ -14,6 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 import { inMeteor } from "/imports/server/async-helpers";
 import Crypto from "crypto";
 import Dns from "dns";
@@ -951,11 +952,15 @@ export async function inspectRustSharedGrain(db, webkey) {
   return {title:await getSharersTitle(db,grain,token), guestsAllowed:!await db.getOrganizationDisallowGuestsAsync()};
 }
 export async function createRustSharedGrainSession(db, webkey, accountId, parentOrigin) {
-  await rustSharedContext(db,webkey);
+  const { grain } = await rustSharedContext(db,webkey);
   if (!accountId && await db.getOrganizationDisallowGuestsAsync()) throw new Meteor.Error(403,"Guest access is disabled.");
-  return createSession(db,accountId,Crypto.randomBytes(32).toString("hex"), {
+  const pkg = grain.packageId && await db.collections.packages.findOneAsync(grain.packageId);
+  const staticPrefix = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("static");
+  const iconSrc = pkg ? iconSrcForPackage(pkg, "grain", staticPrefix) : "";
+  const session = await createSession(db,accountId,Crypto.randomBytes(32).toString("hex"), {
     token:webkey,revealIdentity:!!accountId,parentOrigin,rustShell:true,
   });
+  return { ...session, iconSrc };
 }
 export async function closeRustSharedGrainSession(db, handle) {
   await db.collections.sessions.removeAsync({ _id: handle.sessionId, rustShellSession: true });

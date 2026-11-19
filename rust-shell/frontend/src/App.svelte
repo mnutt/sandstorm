@@ -24,11 +24,11 @@
   let toolbarTarget = $state<HTMLDivElement>();
   let headerHeight = $state(48);
   let focusVersion = 0;
-  let sharedTabs = $state<{webkey:string;path:string;title:string}[]>([]);
+  let sharedTabs = $state<{webkey:string;path:string;title:string;iconSrc:string}[]>([]);
   $effect(() => {
     const current = route;
     if (current.page === 'shared' && (model.status === 'ready' || model.status === 'signed-out') && !sharedTabs.some(tab=>tab.webkey===current.webkey)) {
-      if (sharedTabs.length < 8) sharedTabs = [...sharedTabs,{webkey:current.webkey,path:current.path,title:'Shared grain'}];
+      if (sharedTabs.length < 8) sharedTabs = [...sharedTabs,{webkey:current.webkey,path:current.path,title:'Shared grain',iconSrc:''}];
     }
   });
   function sharedPathChanged(webkey:string,path:string) {
@@ -115,7 +115,7 @@
           <li class:current={route.page === 'shared' && route.webkey === tab.webkey}>
             <a href={sharedRoute(tab.webkey,tab.path)} aria-label={`Switch to ${tab.title}`} title={tab.title}
               aria-current={route.page==='shared' && route.webkey===tab.webkey?'page':undefined}
-              onclick={event=>navigation.link(event,sharedRoute(tab.webkey,tab.path))}><ShellIcon name="grains" /><span>{tab.title}</span></a>
+              onclick={event=>navigation.link(event,sharedRoute(tab.webkey,tab.path))}><GrainIcon src={tab.iconSrc} /><span>{tab.title}</span></a>
             <div class="close-grain"><Button variant="chrome" aria-label={`Close ${tab.title}`} title={`Close ${tab.title}`} onclick={()=>closeShared(tab.webkey)}><ShellIcon name="close" /></Button></div>
           </li>
         {/each}
@@ -135,7 +135,7 @@
     {#each sharedTabs as tab (tab.webkey)}
       <SharedGrain webkey={tab.webkey} path={tab.path} active={route.page==='shared' && route.webkey===tab.webkey}
         {toolbarTarget} accountKey={model.accountKey} pathChanged={path=>sharedPathChanged(tab.webkey,path)}
-        titleChanged={title=>{sharedTabs=sharedTabs.map(item=>item.webkey===tab.webkey?{...item,title}:item);}} />
+        metadataChanged={(title,iconSrc)=>{sharedTabs=sharedTabs.map(item=>item.webkey===tab.webkey?{...item,title,iconSrc}:item);}} />
     {/each}
     {#each model.openGrains as grain (grain.url)}
       <GrainFrame {toolbarTarget} active={model.activeGrain?.grainId === grain.grainId}

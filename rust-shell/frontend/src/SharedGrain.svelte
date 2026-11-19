@@ -9,9 +9,9 @@
   import GrainFrame from './GrainFrame.svelte';
   import Panel from './components/ui/Panel.svelte';
   import Button from './components/ui/Button.svelte';
-  let { webkey, path, active, toolbarTarget, accountKey, pathChanged, titleChanged }:
+  let { webkey, path, active, toolbarTarget, accountKey, pathChanged, metadataChanged }:
     {webkey:string;path:string;active:boolean;toolbarTarget:HTMLElement;accountKey:string|null;
-      pathChanged:(path:string)=>void;titleChanged:(title:string)=>void} = $props();
+      pathChanged:(path:string)=>void;metadataChanged:(title:string,iconSrc:string)=>void} = $props();
   let phase = $state<'loading'|'choice'|'opening'|'open'|'error'>('loading');
   let info = $state({title:'Shared grain',signedIn:false,guestsAllowed:false,accountName:''});
   let grain = $state<ActiveGrain|null>(null);
@@ -59,7 +59,7 @@
       const result = await runOperation(client.inspect(params => {params.webkey=webkey;}).promise(), 'Check sharing link', {signal:lifetime.signal});
       if (current !== generation) return;
       info = {title:result.info.title,signedIn:result.info.signedIn,guestsAllowed:result.info.guestsAllowed,accountName:result.info.accountName};
-      titleChanged(info.title);
+      metadataChanged(info.title, '');
       phase = 'choice';
       if (!info.signedIn && info.guestsAllowed) await open(false);
     } catch (err) { if (current === generation) fail(errorMessage(err)); }
@@ -78,7 +78,7 @@
       url.searchParams.set('path',path);
       grain = {grainId:result.view.grainId,path,url:url.href,origin:result.view.origin,title:result.view.title || info.title,
         ownerTitle:result.view.ownerTitle,iconSrc:result.view.iconSrc,mainHref:result.view.mainHref};
-      titleChanged(grain.title);
+      metadataChanged(grain.title, grain.iconSrc);
       phase = 'open';
     } catch (err) {if (current === generation) fail(errorMessage(err));}
   }

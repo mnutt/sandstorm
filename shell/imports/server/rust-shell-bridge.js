@@ -55,7 +55,7 @@ export const rustShellBridge = createRustShellBridge({
       const session = await createRustSharedGrainSession(globalDb,webkey,accountId,origin);
       const frameOrigin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return {handle:{sessionId:session._id,hashedToken:session.hashedToken,accountId:accountId || undefined},
-        view:{grainId:session.grainId, title:text(session.sharersTitle,256), ownerTitle:text(session.sharersTitle,256),
+        view:{grainId:session.grainId, iconSrc:session.iconSrc, title:text(session.sharersTitle,256), ownerTitle:text(session.sharersTitle,256),
           origin:frameOrigin,url:frameOrigin+"/_sandstorm-init?sessionid="+session._id+"&path=%2F",
           mainHref:new URL("/shared/"+encodeURIComponent(webkey),process.env.ROOT_URL).href}};
     },
