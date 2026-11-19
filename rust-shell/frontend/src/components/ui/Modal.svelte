@@ -2,21 +2,21 @@
   import { Dialog } from 'bits-ui';
   import type { Snippet } from 'svelte';
   import Button from './Button.svelte';
-  let { open = $bindable(false), title, description, triggerLabel, triggerVariant = 'secondary', triggerContent, onTrigger, busy = false, children }:
-    { open?: boolean; title: string; description: string; triggerLabel: string; triggerContent?: Snippet; triggerVariant?: 'secondary' | 'chrome'; onTrigger?: () => void; busy?: boolean; children: Snippet } = $props();
+  let { open = $bindable(false), title, description, triggerLabel, triggerVariant = 'secondary', triggerContent, onTrigger, returnFocus, wide = false, busy = false, children }:
+    { open?: boolean; wide?: boolean; title: string; description: string; triggerLabel?: string; returnFocus?: HTMLElement; triggerContent?: Snippet; triggerVariant?: 'secondary' | 'chrome'; onTrigger?: () => void; busy?: boolean; children: Snippet } = $props();
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Trigger onclick={onTrigger}>
+  {#if triggerLabel}<Dialog.Trigger onclick={onTrigger}>
     {#snippet child({ props })}<Button {...props} variant={triggerVariant} aria-label={triggerLabel} title={triggerContent ? triggerLabel : undefined}>{#if triggerContent}{@render triggerContent()}{:else}{triggerLabel}{/if}</Button>{/snippet}
-  </Dialog.Trigger>
+  </Dialog.Trigger>{/if}
   <Dialog.Portal>
     <Dialog.Overlay>
       {#snippet child({ props })}<div {...props} class="overlay"></div>{/snippet}
     </Dialog.Overlay>
-    <Dialog.Content escapeKeydownBehavior={busy ? 'ignore' : 'close'} interactOutsideBehavior={busy ? 'ignore' : 'close'}>
+    <Dialog.Content onCloseAutoFocus={event => { if (returnFocus?.isConnected) { event.preventDefault(); returnFocus.focus(); } }} escapeKeydownBehavior={busy ? 'ignore' : 'close'} interactOutsideBehavior={busy ? 'ignore' : 'close'}>
       {#snippet child({ props })}
-        <div {...props} class="dialog">
+        <div {...props} class="dialog" class:wide>
           <Dialog.Title>{#snippet child({ props })}<h2 {...props}>{title}</h2>{/snippet}</Dialog.Title>
           <Dialog.Description>{#snippet child({ props })}<p {...props}>{description}</p>{/snippet}</Dialog.Description>
           {@render children()}
@@ -50,6 +50,8 @@
     color: var(--ss-text);
     box-shadow: var(--ss-shadow-dialog);
   }
+
+  .dialog.wide { width: min(44rem, calc(100vw - 2rem)); }
 
   h2 {
     margin: 0 0 var(--ss-space-3);

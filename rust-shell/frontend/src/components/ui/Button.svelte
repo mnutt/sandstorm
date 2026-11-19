@@ -22,8 +22,8 @@
     align-items: center;
     justify-content: center;
     gap: var(--ss-space-2);
-    min-height: var(--ss-control-height);
-    padding: var(--ss-space-2) var(--ss-space-4);
+    min-height: 2.125rem;
+    padding: var(--ss-space-1) var(--ss-space-3);
     border: 1px solid transparent;
     border-radius: var(--ss-radius-control);
     background: var(--ss-brand);
@@ -64,8 +64,8 @@
   .scope > :global(.chrome) {
     background: transparent;
     color: var(--ss-chrome-text);
-    padding: var(--ss-space-2);
-    min-width: var(--ss-control-height);
+    padding: var(--ss-space-1);
+    min-width: 2.125rem;
   }
 
   .scope > :global(.chrome:hover:not(:disabled)) {
