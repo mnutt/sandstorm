@@ -188,7 +188,8 @@ function(sandstorm_add_packaging_targets)
     set(_rust_stamp "${CMAKE_BINARY_DIR}/rust-shell.stamp")
     file(GLOB_RECURSE _rust_sources CONFIGURE_DEPENDS
       "${_rust_shell_dir}/server/*" "${_rust_shell_dir}/schema/*"
-      "${_rust_shell_dir}/frontend/src/*.ts" "${_rust_shell_dir}/frontend/src/*.svelte")
+      "${_rust_shell_dir}/frontend/src/*.ts" "${_rust_shell_dir}/frontend/src/*.svelte"
+      "${_rust_shell_dir}/frontend/src/*.css" "${_rust_shell_dir}/frontend/public/*")
     list(FILTER _rust_sources EXCLUDE REGEX "/generated/")
     add_custom_command(OUTPUT "${_rust_stamp}"
       COMMAND "${SANDSTORM_NPM_EXECUTABLE}" ci --ignore-scripts
