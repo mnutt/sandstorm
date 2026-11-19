@@ -54,32 +54,7 @@ Meteor.methods({
     const db = this.connection.sandstormDb;
     const frontendRefRegistry = this.connection.frontendRefRegistry;
 
-    const session = await db.collections.sessions.findOneAsync(
-        { _id: sessionId, userId: this.userId || { $exists: false } });
-    if (!session) {
-      throw new Meteor.Error(403, "Invalid session ID");
-    }
-
-    let { descriptor, requirements, frontendRef } =
-        await frontendRefRegistry.validate(db, session, frontendRefRequest);
-    descriptor = encodePowerboxDescriptor(descriptor);
-
-    const grainId = session.grainId;
-    const apiTokenOwner = {
-      clientPowerboxRequest: {
-        grainId: grainId,
-        sessionId: session._id,
-      },
-    };
-
-    const cap = await frontendRefRegistry.create(db, frontendRef, requirements);
-    let sturdyRef;
-    try {
-      sturdyRef = (await cap.save(apiTokenOwner)).sturdyRef.toString();
-    } finally {
-      cap.close();
-    }
-    return { sturdyRef, descriptor };
+    return newPowerboxFrontendRef(db, frontendRefRegistry, this.userId, sessionId, frontendRefRequest);
   },
 
   async fulfillUiViewRequest(sessionId, obsolete1, grainId, petname, roleAssignment, ownerGrainId) {
@@ -94,34 +69,7 @@ Meteor.methods({
       throw new Meteor.Error(403, "Must be logged in");
     }
 
-    const provider = {
-      accountId: await resolveAccountIdForPowerbox(this.userId),
-    };
-
-    const title = await db.userGrainTitle(grainId, this.userId);
-
-    const descriptor = encodePowerboxDescriptor({
-      tags: [
-        { id: Grain.UiView.typeId,
-          value: Capnp.serialize(Grain.UiView.PowerboxTag, { title }),
-        },
-      ],
-    });
-
-    const owner = {
-      clientPowerboxRequest: {
-        grainId: ownerGrainId,
-        sessionId: sessionId,
-      },
-    };
-
-    const result = await SandstormPermissions.createNewApiToken(
-        db, provider, grainId, petname, roleAssignment, owner);
-
-    return {
-      sturdyRef: result.token,
-      descriptor,
-    };
+    return fulfillPowerboxUiView(db, this.userId, sessionId, grainId, petname, roleAssignment, ownerGrainId);
   },
 });
 
@@ -281,164 +229,8 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
   const frontendRefRegistry = this.connection.frontendRefRegistry;
 
   const runQuery = async () => {
-    if (descriptorList.length > 0) {
-      const descriptorMatches = await Promise.all(descriptorList.map(async packedDescriptor => {
-      // Decode the descriptor.
-      // TODO(now): Also single-segment? Canonical?
-
-      // Note: Node's base64 decoder also accepts URL-safe base64, so no need to translate.
-      const queryDescriptor = Capnp.parse(
-          Powerbox.PowerboxDescriptor,
-          new Buffer(packedDescriptor, "base64"),
-          { packed: true });
-
-      if (!queryDescriptor.tags || queryDescriptor.tags.length === 0) {
-        return { descriptor: queryDescriptor, matches: {} };
-      }
-
-      // Expand each tag into a match map.
-        const tagMatches = await Promise.all(queryDescriptor.tags.map(async tag => {
-          const result = {};
-          const options = await frontendRefRegistry.query(db, this.userId, tag);
-          options.forEach(option => {
-            result[option._id] = new PowerboxOption(option);
-          });
-
-          return result;
-        }));
-
-      // Intersect two tags' matches.
-      const matches = tagMatches.reduce((a, b) => {
-        for (const id in a) {
-          if (id in b) {
-            if (!a[id].intersect(b[id])) {
-              // Empty intersection.
-              delete a[id];
-            }
-          } else {
-            // This match only exists in a, not b, so delete it.
-            delete a[id];
-          }
-        }
-
-        return a;
-      });
-
-      // Search among the user's grains for hosted objects that match.
-
-      if (this.userId) {
-        // Find all grains shared to this user.
-        const sharedGrainTokens = await db.userApiTokens(this.userId).fetchAsync();
-        const sharedGrainIds = sharedGrainTokens.map(token => token.grainId);
-
-        // Among all grains owned by the user or shared with the user, search for grains having
-        // any powerbox tag IDs matching the tag IDs in the query.
-        const grains = await db.collections.grains
-            .find({
-              $or: [{ userId: this.userId }, { _id: { $in: sharedGrainIds } }],
-              "cachedViewInfo.matchRequests.tags.id":
-                  { $in: queryDescriptor.tags.map(tag => tag.id) },
-            }, { fields: { "cachedViewInfo.matchRequests": 1 } })
-            .fetchAsync();
-        grains.forEach((grain) => {
-          // Filter down to grains that actually have a matching descriptor.
-          let alreadyMatched = false;
-          grain.cachedViewInfo.matchRequests.forEach(grainDescriptor => {
-            if (alreadyMatched) return;
-
-            // Build map of descriptor tags by ID.
-            const grainTagsById = {};
-            grainDescriptor.tags.forEach(tag => {
-              grainTagsById[tag.id] = tag.value;
-            });
-
-            let allMatched = true;
-            queryDescriptor.tags.forEach(queryTag => {
-              if (!allMatched) return;
-
-              if (queryTag.id in grainTagsById) {
-                const value = grainTagsById[queryTag.id];
-                // Null values match everything, so only pay attention if non-null.
-                if (value && queryTag.value) {
-                  if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
-                    allMatched = false;
-                  }
-                }
-              } else {
-                allMatched = false;
-              }
-            });
-
-            if (allMatched) {
-              alreadyMatched = true;
-              const option = new PowerboxOption({
-                _id: "grain-" + grain._id,
-                grainId: grain._id,
-                hostedObject: {},
-                cardTemplate: "grainPowerboxCard",
-                configureTemplate: "uiViewPowerboxConfiguration",  // TODO(cleanup): rename
-              });
-              if (option._id in matches) {
-                matches[option._id].union(option);
-              } else {
-                matches[option._id] = option;
-              }
-            }
-          });
-        });
-      }
-
-        return { descriptor: queryDescriptor, matches };
-      }));
-
-    // TODO(someday): The implementation of matchQuality here is not quite right. In theory, we're
-    //   supposed to compare descriptors to determine which ones are more specific than which
-    //   others, and prefer the most-specific match. For now, though, I've implemented a heuristic:
-    //   consider each descriptor in order. If it is "unacceptable", have it cancel out any
-    //   matches seen previously. Otherwise, take the maximum match quality. This will usually
-    //   produce the same results as long as "unacceptable" descriptors are placed last in the
-    //   list.
-
-      const matches = descriptorMatches.reduce((finalMatches, clause) => {
-        if (clause.matchQuality === "unacceptable") {
-          // Remove b's matches from a.
-          for (const id in clause.matches) {
-            if (id in finalMatches) {
-              if (!finalMatches[id].subtract(clause.matches[id])) {
-                delete finalMatches[id];
-              }
-            }
-          }
-
-          return finalMatches;
-        } else {
-          for (const id in clause.matches) {
-            if (id in finalMatches) {
-              finalMatches[id].union(clause.matches[id]);
-            } else {
-              finalMatches[id] = clause.matches[id];
-            }
-
-            if (clause.matchQuality === "preferred") {
-              finalMatches[id].matchQuality = "preferred";
-            }
-          }
-          return finalMatches;
-        }
-      }, {});
-
-      for (const id in matches) {
-        if (!matches[id].matchQuality) {
-          matches[id].matchQuality = "acceptable";
-        }
-
-        matches[id].requestId = requestId;
-        this.added("powerboxOptions", id, matches[id]);
-      }
-    }
-
-    // TODO(someday): Make reactive? Seems annoying.
-
+    const options = await queryPowerboxOptions(db, frontendRefRegistry, this.userId, descriptorList);
+    for (const option of options) this.added("powerboxOptions", option._id, { ...option, requestId });
     this.ready();
   };
 
@@ -449,3 +241,222 @@ Meteor.publish("powerboxOptions", function (requestId, descriptorList) {
 });
 
 globalThis.SandstormPowerbox = { registerUiViewQueryHandler };
+
+export async function queryPowerboxOptions(db, frontendRefRegistry, userId, descriptorList) {
+  check(descriptorList, [String]);
+
+  if (descriptorList.length > 0) {
+    const descriptorMatches = await Promise.all(descriptorList.map(async packedDescriptor => {
+    // Decode the descriptor.
+    // TODO(now): Also single-segment? Canonical?
+
+    // Note: Node's base64 decoder also accepts URL-safe base64, so no need to translate.
+    const queryDescriptor = Capnp.parse(
+        Powerbox.PowerboxDescriptor,
+        new Buffer(packedDescriptor, "base64"),
+        { packed: true });
+
+    if (!queryDescriptor.tags || queryDescriptor.tags.length === 0) {
+      return { descriptor: queryDescriptor, matches: {} };
+    }
+
+    // Expand each tag into a match map.
+      const tagMatches = await Promise.all(queryDescriptor.tags.map(async tag => {
+        const result = {};
+        const options = await frontendRefRegistry.query(db, userId, tag);
+        options.forEach(option => {
+          result[option._id] = new PowerboxOption(option);
+        });
+
+        return result;
+      }));
+
+    // Intersect two tags' matches.
+    const matches = tagMatches.reduce((a, b) => {
+      for (const id in a) {
+        if (id in b) {
+          if (!a[id].intersect(b[id])) {
+            // Empty intersection.
+            delete a[id];
+          }
+        } else {
+          // This match only exists in a, not b, so delete it.
+          delete a[id];
+        }
+      }
+
+      return a;
+    });
+
+    // Search among the user's grains for hosted objects that match.
+
+    if (userId) {
+      // Find all grains shared to this user.
+      const sharedGrainTokens = await db.userApiTokens(userId).fetchAsync();
+      const sharedGrainIds = sharedGrainTokens.map(token => token.grainId);
+
+      // Among all grains owned by the user or shared with the user, search for grains having
+      // any powerbox tag IDs matching the tag IDs in the query.
+      const grains = await db.collections.grains
+          .find({
+            $or: [{ userId: userId }, { _id: { $in: sharedGrainIds } }],
+            "cachedViewInfo.matchRequests.tags.id":
+                { $in: queryDescriptor.tags.map(tag => tag.id) },
+          }, { fields: { "cachedViewInfo.matchRequests": 1 } })
+          .fetchAsync();
+      grains.forEach((grain) => {
+        // Filter down to grains that actually have a matching descriptor.
+        let alreadyMatched = false;
+        grain.cachedViewInfo.matchRequests.forEach(grainDescriptor => {
+          if (alreadyMatched) return;
+
+          // Build map of descriptor tags by ID.
+          const grainTagsById = {};
+          grainDescriptor.tags.forEach(tag => {
+            grainTagsById[tag.id] = tag.value;
+          });
+
+          let allMatched = true;
+          queryDescriptor.tags.forEach(queryTag => {
+            if (!allMatched) return;
+
+            if (queryTag.id in grainTagsById) {
+              const value = grainTagsById[queryTag.id];
+              // Null values match everything, so only pay attention if non-null.
+              if (value && queryTag.value) {
+                if (!Capnp.matchPowerboxQuery(queryTag.value, value)) {
+                  allMatched = false;
+                }
+              }
+            } else {
+              allMatched = false;
+            }
+          });
+
+          if (allMatched) {
+            alreadyMatched = true;
+            const option = new PowerboxOption({
+              _id: "grain-" + grain._id,
+              grainId: grain._id,
+              hostedObject: {},
+              cardTemplate: "grainPowerboxCard",
+              configureTemplate: "uiViewPowerboxConfiguration",  // TODO(cleanup): rename
+            });
+            if (option._id in matches) {
+              matches[option._id].union(option);
+            } else {
+              matches[option._id] = option;
+            }
+          }
+        });
+      });
+    }
+
+      return { descriptor: queryDescriptor, matches };
+    }));
+
+  // TODO(someday): The implementation of matchQuality here is not quite right. In theory, we're
+  //   supposed to compare descriptors to determine which ones are more specific than which
+  //   others, and prefer the most-specific match. For now, though, I've implemented a heuristic:
+  //   consider each descriptor in order. If it is "unacceptable", have it cancel out any
+  //   matches seen previously. Otherwise, take the maximum match quality. This will usually
+  //   produce the same results as long as "unacceptable" descriptors are placed last in the
+  //   list.
+
+    const matches = descriptorMatches.reduce((finalMatches, clause) => {
+      if (clause.matchQuality === "unacceptable") {
+        // Remove b's matches from a.
+        for (const id in clause.matches) {
+          if (id in finalMatches) {
+            if (!finalMatches[id].subtract(clause.matches[id])) {
+              delete finalMatches[id];
+            }
+          }
+        }
+
+        return finalMatches;
+      } else {
+        for (const id in clause.matches) {
+          if (id in finalMatches) {
+            finalMatches[id].union(clause.matches[id]);
+          } else {
+            finalMatches[id] = clause.matches[id];
+          }
+
+          if (clause.matchQuality === "preferred") {
+            finalMatches[id].matchQuality = "preferred";
+          }
+        }
+        return finalMatches;
+      }
+    }, {});
+
+    for (const id in matches) {
+      if (!matches[id].matchQuality) {
+        matches[id].matchQuality = "acceptable";
+      }
+    }
+    return Object.values(matches);
+  }
+  return [];
+}
+
+export async function newPowerboxFrontendRef(db, frontendRefRegistry, accountId, sessionId, frontendRefRequest) {
+  const session = await db.collections.sessions.findOneAsync(
+      { _id: sessionId, userId: accountId || { $exists: false } });
+  if (!session) {
+    throw new Meteor.Error(403, "Invalid session ID");
+  }
+
+  let { descriptor, requirements, frontendRef } =
+      await frontendRefRegistry.validate(db, session, frontendRefRequest);
+  descriptor = encodePowerboxDescriptor(descriptor);
+
+  const grainId = session.grainId;
+  const apiTokenOwner = {
+    clientPowerboxRequest: {
+      grainId: grainId,
+      sessionId: session._id,
+    },
+  };
+
+  const cap = await frontendRefRegistry.create(db, frontendRef, requirements);
+  let sturdyRef;
+  try {
+    sturdyRef = (await cap.save(apiTokenOwner)).sturdyRef.toString();
+  } finally {
+    cap.close();
+  }
+  return { sturdyRef, descriptor };
+}
+
+export async function fulfillPowerboxUiView(db, accountId, sessionId, grainId, petname, roleAssignment, ownerGrainId) {
+  const provider = {
+    accountId: await resolveAccountIdForPowerbox(accountId),
+  };
+
+  const title = await db.userGrainTitle(grainId, accountId);
+
+  const descriptor = encodePowerboxDescriptor({
+    tags: [
+      { id: Grain.UiView.typeId,
+        value: Capnp.serialize(Grain.UiView.PowerboxTag, { title }),
+      },
+    ],
+  });
+
+  const owner = {
+    clientPowerboxRequest: {
+      grainId: ownerGrainId,
+      sessionId: sessionId,
+    },
+  };
+
+  const result = await SandstormPermissions.createNewApiToken(
+      db, provider, grainId, petname, roleAssignment, owner);
+
+  return {
+    sturdyRef: result.token,
+    descriptor,
+  };
+}

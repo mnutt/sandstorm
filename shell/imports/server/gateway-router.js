@@ -974,14 +974,14 @@ export async function keepRustSharedGrainSession(db, handle) {
 
 // Narrow entry point for the experimental shell. The gateway still performs
 // the full permission check and attaches its existing revocation observer.
-export async function createRustGrainSession(db, accountId, grainId, parentOrigin) {
+export async function createRustGrainSession(db, accountId, grainId, parentOrigin, powerboxRequest) {
   const grain = await db.collections.grains.findOneAsync({ _id: grainId });
   if (!grain || grain.trashed || grain.suspended ||
       !await SandstormPermissions.mayOpenGrainAsync(db, { grain: { _id: grainId, accountId } })) {
     throw new Meteor.Error(403, "You do not have access to this grain.");
   }
   return createSession(db, accountId, Crypto.randomBytes(32).toString("hex"), {
-    grainId, revealIdentity: true, parentOrigin, rustShell: true,
+    grainId, revealIdentity: true, parentOrigin, rustShell: true, powerboxRequest,
   });
 }
 

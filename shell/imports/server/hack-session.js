@@ -225,13 +225,21 @@ class SessionContextImpl {
         };
       }
 
-      await globalDb.collections.sessions.updateAsync({ _id: this.sessionId },
+      const nativeRequest = isFulfill && session.rustShellSession && session.powerboxRequest;
+      const target = nativeRequest ? { _id: this.sessionId, rustShellLeaseExpires: { $gt: Date.now() },
+        rustPowerboxClosing: { $ne: true }, "powerboxView.fulfill": { $exists: false } } : { _id: this.sessionId };
+      const updated = await globalDb.collections.sessions.updateAsync(target,
         {
           $set: {
             powerboxView: powerboxView,
           },
         },
       );
+      if (nativeRequest && !updated) {
+        await globalDb.removeApiTokens({ _id: hashSturdyRef(sturdyRef) });
+        throw new Error("Powerbox request closed or already fulfilled.");
+      }
+
     });
   }
 
