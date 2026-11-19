@@ -9,6 +9,7 @@ use std::{
 
 #[derive(Deserialize)]
 pub struct View {
+    #[serde(default)]
     pub lease: String,
     #[serde(rename = "grainId")]
     pub grain_id: String,

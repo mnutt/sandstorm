@@ -318,6 +318,19 @@ The user also confirmed the Powerbox handoff and Davros API templates on yertle.
 ### URL navigation
 
 The shell has `/notifications`, `/grains`, `/apps`, and `/grain/<id>/<app-path>` routes.
+Shared links (`/shared/<token>/<app-path>`) use a separate public SharedShell RPC
+bootstrap. Anonymous visitors can open the link when guest policy permits it;
+signed-in visitors explicitly choose anonymous viewing or revealing their identity.
+Both choices use the webkey permission vertex, never broader account permissions.
+The shared interface exposes only inspection, opening and closing its own session;
+it cannot read account notifications/profile/grains or create API tokens. Shared
+views retain the app path and can stay mounted in background sidebar tabs. They do
+not redeem the token into permanent account access. Rename, sharing management,
+Powerbox and API-template issuance are not exposed through this guest interface.
+Public shared viewers use at most eight of the sixteen WebSocket slots. Unopened
+connections expire after 30 seconds for guests or 120 seconds after a validated
+sign-in; active sessions renew their 45-second lease every ten seconds.
+
 Sidebar navigation and opening/closing grains participate in browser history;
 Back/Forward selects an existing tab or opens a new authorized session. Background
 `setPath` messages update that tab’s link without changing the selected route. Valid

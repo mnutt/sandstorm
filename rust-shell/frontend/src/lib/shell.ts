@@ -38,7 +38,7 @@ export class ShellService {
           this.update({ notificationError: '', grainError: '' });
         }
         this.apps.selectAccount(key);
-        this.update({ fixture: session.fixture, account: session.account?.name ?? null });
+        this.update({ fixture: session.fixture, account: session.account?.name ?? null, accountKey:key });
       },
       status: (status, connectionError) => this.update({
         status, connectionError, entries: [], grains: [], grainsLimited: false, total: 0,

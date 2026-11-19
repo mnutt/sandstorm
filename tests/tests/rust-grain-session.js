@@ -158,6 +158,11 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   operation(browser, 'open', true);
   browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
   operation(browser, 'close');
+  for (const mode of ['webkey-anonymous', 'webkey-identity']) {
+    operation(browser, mode, true);
+    browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
+    operation(browser, 'close');
+  }
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
   utils.callMeteorTestMethod(browser, "testRustProfile");
   browser.frame(null).executeAsync(function (done) {

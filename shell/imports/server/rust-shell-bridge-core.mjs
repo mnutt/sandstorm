@@ -1,3 +1,4 @@
+import { createSharedLeases } from "./rust-shell-shared-leases.mjs";
 import { memorySessionStore } from "./rust-shell-session-store.mjs";
 import { createGrainLeases } from "./rust-shell-grain-leases.mjs";
 import { createHash, randomBytes } from "node:crypto";
@@ -9,7 +10,7 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, listApps, createGrain, getProfile, updateProfile, grains = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, listApps, createGrain, getProfile, updateProfile, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
   const creating = new Set();
   const updatingProfiles = new Set();
@@ -39,8 +40,12 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
     }
   };
   const leases = createGrainLeases({ ...grains, validate: session, now });
+  const sharedLeases = createSharedLeases({ ...shared, now, account: async token => {
+    const value = await session(token);
+    return {id:value.record.accountId, name:value.account.name};
+  } });
   return {
-    sweepGrains: () => leases.sweep(),
+    sweepGrains: () => Promise.all([leases.sweep(), sharedLeases.sweep()]),
     pruneSessions: () => sessions.prune(now()),
     async issue(accountId, loginHash, state) {
       prune();
@@ -54,6 +59,10 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
     },
     async handle(action, input, signal = new AbortController().signal) {
       prune();
+      if (action === "inspectSharedGrain") return sharedLeases.inspect(input);
+      if (action === "openSharedGrain") return sharedLeases.open(input, signal);
+      if (action === "keepSharedGrain") return sharedLeases.keep(input);
+      if (action === "closeSharedGrain") return sharedLeases.close(input);
       if (action === "exchange") {
         if (!validSecret(input.code) || !validSecret(input.state)) throw unauthorized();
         const key = hash(input.code);
@@ -220,7 +229,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|renameGrain|listApps|createGrain|getProfile|updateProfile)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|renameGrain|listApps|createGrain|getProfile|updateProfile)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

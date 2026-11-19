@@ -3,6 +3,7 @@ mod bridge;
 mod grain;
 mod interop;
 mod service;
+mod shared;
 mod transport;
 
 pub mod shell_capnp {
@@ -30,6 +31,8 @@ type Connection = (
     axum::extract::ws::WebSocket,
     OwnedSemaphorePermit,
     Option<bridge::Session>,
+    Option<bridge::Bridge>,
+    Option<OwnedSemaphorePermit>,
 );
 
 enum Listener {
@@ -63,6 +66,7 @@ struct AppState {
     host: String,
     sockets: mpsc::Sender<Connection>,
     permits: Arc<Semaphore>,
+    shared_permits: Arc<Semaphore>,
 }
 
 async fn upgrade(
@@ -93,7 +97,41 @@ async fn upgrade(
     ws.max_message_size(transport::MAX_MESSAGE)
         .max_frame_size(transport::MAX_MESSAGE)
         .on_upgrade(move |socket| async move {
-            let _ = state.sockets.send((socket, permit, session)).await;
+            let _ = state
+                .sockets
+                .send((socket, permit, session, None, None))
+                .await;
+        })
+}
+
+async fn upgrade_shared(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if headers.get(header::HOST).and_then(|v| v.to_str().ok()) != Some(&state.host)
+        || headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(&state.origin)
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(bridge) = state.auth.bridge.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // Anonymous visitors cannot consume every account-shell connection slot.
+    let Ok(shared_permit) = state.shared_permits.try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let Ok(permit) = state.permits.try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let account = auth::session(&state.auth, &headers);
+    ws.max_message_size(transport::MAX_MESSAGE)
+        .max_frame_size(transport::MAX_MESSAGE)
+        .on_upgrade(move |socket| async move {
+            let _ = state
+                .sockets
+                .send((socket, permit, account, Some(bridge), Some(shared_permit)))
+                .await;
         })
 }
 
@@ -151,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         host,
         sockets,
         permits: Arc::new(Semaphore::new(16)),
+        shared_permits: Arc::new(Semaphore::new(8)),
     };
     let index = ServeFile::new(assets.join("index.html"));
     let app = Router::new()
@@ -160,7 +199,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route_service("/account", index.clone())
         .route_service("/grain/{id}", index.clone())
         .route_service("/grain/{id}/", index.clone())
-        .route_service("/grain/{id}/{*path}", index)
+        .route_service("/grain/{id}/{*path}", index.clone())
+        .route_service("/shared/{token}", index.clone())
+        .route_service("/shared/{token}/", index.clone())
+        .route_service("/shared/{token}/{*path}", index)
         .route("/healthz", get(move || async move { if fixture { "rust-shell fixture spike\n" } else { "rust-shell authenticated bridge\n" } }))
         .route("/auth/session", get(auth::status))
         .route("/auth/start", get(auth::start))
@@ -171,6 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             async move { Redirect::temporary(&url) }
         }))
         .route("/rpc", get(upgrade))
+        .route("/shared-rpc", get(upgrade_shared))
         .fallback_service(ServeDir::new(assets))
         .with_state(state)
         .layer(DefaultBodyLimit::max(4096))
@@ -219,11 +262,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 tokio::select! {
                     result = &mut server => { result?; break; }
-                    Some((socket, permit, session)) = receiver.recv() => {
+                    Some((socket, permit, session, shared_bridge, shared_permit)) = receiver.recv() => {
                         let fixture_socket = fixture_socket.clone();
                         connections.spawn_local(async move {
                             let _permit = permit;
-                            transport::serve(socket, fixture_socket, session).await;
+                            let _shared_permit = shared_permit;
+                            if let Some(bridge) = shared_bridge { transport::serve_shared(socket,bridge,session).await; }
+                            else { transport::serve(socket, fixture_socket, session).await; }
                         });
                     }
                     Some(_) = connections.join_next(), if !connections.is_empty() => {}

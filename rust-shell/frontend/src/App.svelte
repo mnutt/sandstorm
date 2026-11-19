@@ -5,9 +5,10 @@
   import Button from './components/ui/Button.svelte';
   import Panel from './components/ui/Panel.svelte';
   import { onMount, tick } from 'svelte';
-  import { grainRoute, rememberRoute } from './lib/router';
+  import { grainRoute, sharedRoute, rememberRoute } from './lib/router';
   import { NavigationController } from './lib/navigation';
   import { ShellService, initialShellState, type ShellState } from './lib/shell';
+  import SharedGrain from './SharedGrain.svelte';
   import GrainFrame from './GrainFrame.svelte';
   import Apps from './Apps.svelte';
   import Account from './Account.svelte';
@@ -23,6 +24,24 @@
   let toolbarTarget = $state<HTMLDivElement>();
   let headerHeight = $state(48);
   let focusVersion = 0;
+  let sharedTabs = $state<{webkey:string;path:string;title:string}[]>([]);
+  $effect(() => {
+    const current = route;
+    if (current.page === 'shared' && (model.status === 'ready' || model.status === 'signed-out') && !sharedTabs.some(tab=>tab.webkey===current.webkey)) {
+      if (sharedTabs.length < 8) sharedTabs = [...sharedTabs,{webkey:current.webkey,path:current.path,title:'Shared grain'}];
+    }
+  });
+  function sharedPathChanged(webkey:string,path:string) {
+    sharedTabs = sharedTabs.map(tab=>tab.webkey===webkey?{...tab,path}:tab);
+    if (route.page === 'shared' && route.webkey === webkey) {
+      history.replaceState(null,'',sharedRoute(webkey,path));
+      navigation.navigate(sharedRoute(webkey,path),true);
+    }
+  }
+  function closeShared(webkey:string) {
+    sharedTabs=sharedTabs.filter(tab=>tab.webkey!==webkey);
+    if (route.page==='shared' && route.webkey===webkey) navigate('/grains');
+  }
   let sidebarCollapsed = $state(readSidebarCollapsed());
   function toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
@@ -42,7 +61,7 @@
   });
   let route = $state(navigation.route);
   const view = $derived(route.page === 'grain' ? 'grains' : route.page);
-  const pageTitle = $derived(model.activeGrain?.title || ({notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', missing:'Page not found'}[route.page]));
+  const pageTitle = $derived(model.activeGrain?.title || ({notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
   $effect(() => { route; navigation.sync(model); });
   const navigate = (path: string) => navigation.navigate(path);
   onMount(() => {
@@ -92,12 +111,20 @@
             <GrainIcon src={grain.iconSrc} /><span>{grain.title}</span>
           </a><div class="close-grain"><Button variant="chrome" aria-label={`Close ${grain.title}`} title={`Close ${grain.title}`} onclick={() => closeTab(grain.grainId)}><ShellIcon name="close" /></Button></div></li>
         {/each}
+        {#each sharedTabs as tab (tab.webkey)}
+          <li class:current={route.page === 'shared' && route.webkey === tab.webkey}>
+            <a href={sharedRoute(tab.webkey,tab.path)} aria-label={`Switch to ${tab.title}`} title={tab.title}
+              aria-current={route.page==='shared' && route.webkey===tab.webkey?'page':undefined}
+              onclick={event=>navigation.link(event,sharedRoute(tab.webkey,tab.path))}><ShellIcon name="grains" /><span>{tab.title}</span></a>
+            <div class="close-grain"><Button variant="chrome" aria-label={`Close ${tab.title}`} title={`Close ${tab.title}`} onclick={()=>closeShared(tab.webkey)}><ShellIcon name="close" /></Button></div>
+          </li>
+        {/each}
       </ul>
     </nav>
     <div class="shell-links"><a href="/main-shell" aria-label="Main shell" title="Main shell"><ShellIcon name="external" /><span>Main shell</span></a><div class="sidebar-toggle"><Button variant="chrome" onclick={toggleSidebar} aria-controls="shell-sidebar" aria-expanded={!sidebarCollapsed}
       aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}><ShellIcon name="sidebar" /></Button></div></div>
   </aside>
-  <div class="route-content" class:workspace={!!model.activeGrain} bind:this={content} tabindex="-1">
+  <div class="route-content" class:workspace={!!model.activeGrain || route.page === 'shared'} bind:this={content} tabindex="-1">
   <p class="sr-only" aria-live="polite" aria-atomic="true">{pageTitle}</p>
   {#if model.connectionError}<p class="error" role="alert">{model.connectionError}</p>{/if}
   {#if model.notificationError || model.grainError}
@@ -105,6 +132,11 @@
       <Button onclick={() => service.clearErrors()}>Dismiss message</Button></div>
   {/if}
   {#if toolbarTarget}
+    {#each sharedTabs as tab (tab.webkey)}
+      <SharedGrain webkey={tab.webkey} path={tab.path} active={route.page==='shared' && route.webkey===tab.webkey}
+        {toolbarTarget} accountKey={model.accountKey} pathChanged={path=>sharedPathChanged(tab.webkey,path)}
+        titleChanged={title=>{sharedTabs=sharedTabs.map(item=>item.webkey===tab.webkey?{...item,title}:item);}} />
+    {/each}
     {#each model.openGrains as grain (grain.url)}
       <GrainFrame {toolbarTarget} active={model.activeGrain?.grainId === grain.grainId}
         pathChanged={path => pathChanged(grain.grainId, path)} rename={title => service.renameGrain(grain.grainId, title)}
@@ -114,6 +146,9 @@
   {#if !model.activeGrain}
   {#if route.page === 'missing'}
     <Panel><h2>Page not found</h2><Button onclick={() => navigate('/grains')}>Go to grains</Button></Panel>
+  {:else if route.page === 'shared'}
+    {@const webkey = route.webkey}
+    {#if !sharedTabs.some(tab=>tab.webkey===webkey)}<Panel><p role="status">{sharedTabs.length>=8 ? 'Close a shared grain before opening another.' : 'Connecting…'}</p></Panel>{/if}
   {:else if route.page === 'grain'}
     <Panel aria-label="Grain route">
       <h2>Grain</h2>
@@ -344,7 +379,7 @@
   .grain-toolbar { flex: 1; min-width: 0; padding: 0 var(--ss-space-3); }
   .brand-group { flex: 0 0 10.25rem; }
   .workspace { padding: 0; height: calc(100dvh - var(--ss-header-height)); display: flex; flex-direction: column; }
-  .workspace > :global(.grain-view:not([hidden])) { flex: 1; min-height: 0; }
+  .workspace > :global(.grain-view:not([hidden])), .workspace > :global(.shared-view:not([hidden])) { flex: 1; min-height: 0; }
   .open-grains { list-style: none; padding: 0; margin: 0; }
   .open-grains li { display: flex; align-items: center; min-width: 0; position: relative; }
   .open-grains li.current { background: var(--ss-chrome-selected); }

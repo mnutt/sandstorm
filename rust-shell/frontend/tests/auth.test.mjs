@@ -14,7 +14,7 @@ import { createRustShellBridge, bridgeHandler } from '../../../shell/imports/ser
 
 // Uses the production bridge authority/HTTP implementation with an in-memory DB
 // adapter. No test writes or login tokens touch the installed Meteor/Mongo server.
-test('authenticated notifications: handoff, shared writes, account switching and revocation', { timeout: 90000 }, async () => {
+test('authenticated notifications: handoff, shared writes, account switching and revocation', { timeout: 120000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'rust-shell-auth-'));
   const socket = join(directory, 'rust.sock');
   const bridgeSocket = join(directory, 'meteor.sock');
@@ -89,6 +89,23 @@ test('authenticated notifications: handoff, shared writes, account switching and
     },
     markRead: async (id) => { for (const row of rows.values()) if (row.user === id) row.unread = false; changed(); },
   };
+  let sharedRevoked = false;
+  let guestsAllowed = true;
+  const sharedOpens = [];
+  bridgeOptions.shared = {
+    inspect: async webkey => {
+      if (webkey !== 'valid-share' || sharedRevoked) throw Object.assign(new Error('Sharing link revoked or invalid'), {status:403});
+      return {title:'Shared test grain',guestsAllowed};
+    },
+    open: async (webkey,accountId) => {
+      sharedOpens.push({webkey,accountId});
+      const handle = ++serial; liveGrains.add(handle);
+      return {handle,view:{grainId:'shared-grain',title:'Shared test grain',ownerTitle:'Shared test grain',
+        origin:grainOrigin,url:grainOrigin+'/_sandstorm-init?sessionid='+handle,mainHref:mainOrigin+'/shared/'+webkey}};
+    },
+    keep: async handle => {if (!liveGrains.has(handle)) throw new Error('Revoked');},
+    close: async handle => {liveGrains.delete(handle);},
+  };
   let bridge = createRustShellBridge(bridgeOptions);
   try {
     proxy = await httpsProxy(directory, socket);
@@ -153,7 +170,32 @@ test('authenticated notifications: handoff, shared writes, account switching and
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(proxy.origin);
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
+
+
     assert.equal(await page.getByRole('button', { name: 'Add test notification' }).count(), 0);
+    const guest = await context.newPage();
+    await guest.goto(proxy.origin+'/shared/valid-share/folder?view=guest#document');
+    await guest.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await serveProbe(guest, './shared-probe.ts', 'shared-probe.js');
+    assert.equal(await guest.evaluate(async ()=>(await import('/shared-probe.js')).probe()),true,'public shared bootstrap cannot be cast to account Shell');
+    assert.equal(sharedOpens.at(-1).accountId,null);
+    assert.equal(new URL(await guest.locator('iframe').getAttribute('src')).searchParams.get('path'),'/folder?view=guest#document');
+    assert.equal(await guest.getByRole('button',{name:'Rename grain',exact:true}).count(),0);
+    await guest.frameLocator('iframe').locator('body').evaluate(()=>parent.postMessage({setPath:'/next?x=1#part'},'*'));
+    await guest.waitForURL('**/shared/valid-share/next?x=1#part');
+    await guest.getByRole('link',{name:'Notifications',exact:true}).click();
+    assert.equal(await guest.locator('iframe').count(),1,'shared views stay mounted in the background');
+    await guest.getByRole('link',{name:'Switch to Shared test grain'}).click();
+    sharedRevoked = true; await bridge.sweepGrains();
+    await expect.poll(()=>liveGrains.size).toBe(0);
+    await expect(guest.getByRole('alert')).toContainText('Shared session ended',{timeout:15000});
+    await guest.close(); sharedRevoked = false;
+    guestsAllowed = false;
+    const blockedGuest = await context.newPage();
+    await blockedGuest.goto(proxy.origin+'/shared/valid-share');
+    await blockedGuest.getByText('This server requires you to sign in before viewing shared grains.').waitFor();
+    assert.equal(await blockedGuest.locator('iframe').count(),0);
+    await blockedGuest.close(); guestsAllowed = true;
     const denied = await page.evaluate(() => new Promise((resolve) => {
       const ws = new WebSocket(location.origin.replace('https:', 'wss:') + '/rpc');
       ws.onopen = () => { ws.close(); resolve(false); }; ws.onerror = () => resolve(true);
@@ -200,6 +242,20 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', {name:'Create grain',exact:true}).click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/grain/alice-created');
     await page.locator('.open-grains li.current button').waitFor();
+    const signedShare = await context.newPage();
+    await signedShare.goto(proxy.origin+'/shared/valid-share');
+    await signedShare.getByRole('button',{name:'Open as Alice',exact:true}).waitFor();
+    assert.equal(await signedShare.locator('iframe').count(),0,'signed-in identity must not be revealed automatically');
+    await signedShare.getByRole('button',{name:'Open anonymously',exact:true}).click();
+    await signedShare.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    assert.equal(sharedOpens.at(-1).accountId,null);
+    await signedShare.reload();
+    await signedShare.getByRole('button',{name:'Open as Alice',exact:true}).click();
+    await signedShare.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    assert.equal(sharedOpens.at(-1).accountId,'alice');
+    await signedShare.screenshot({path:'/tmp/sandstorm-rust-ui-shared.png'});
+    await signedShare.close();
+    await expect.poll(()=>liveGrains.size).toBe(1);
     assert.equal(creations,1);
     await page.locator('.open-grains li.current button').click();
     failCreation = true;

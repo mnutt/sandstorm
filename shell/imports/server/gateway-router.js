@@ -134,7 +134,7 @@ function boolListToBuffer(bools) {
   return buf;
 }
 
-async function validateWebkey(apiToken, refreshedExpiration) {
+async function validateWebkey(apiToken, refreshedExpiration, markUsed = true) {
   // Validates that `apiToken` is a valid UiView webkey, throwing an exception if it is not. If
   // `refreshedExpiration` is set and if the token has an `expiresIfUnused` field, then the
   // `expiresIfUnused` field is reset to `refreshedExpiration`.
@@ -162,7 +162,7 @@ async function validateWebkey(apiToken, refreshedExpiration) {
     } else if (refreshedExpiration) {
       await globalDb.collections.apiTokens.updateAsync(
           apiToken._id, { $set: { expiresIfUnused: refreshedExpiration } });
-    } else {
+    } else if (markUsed) {
       // It's getting used now, so clear the expiresIfUnused field.
       await globalDb.collections.apiTokens.updateAsync(
           apiToken._id, { $set: { expiresIfUnused: null } });
@@ -929,6 +929,42 @@ async function createSession(db, userId, sessionId, options) {
 
   await globalDb.collections.sessions.insertAsync(session);
   return session;
+}
+
+// Shared Rust views always authorize through the webkey vertex, even when the
+// visitor reveals an identity. Never substitute their broader account access.
+async function rustSharedContext(db, webkey) {
+  const hashed = Crypto.createHash("sha256").update(webkey).digest("base64");
+  const token = await db.collections.apiTokens.findOneAsync(hashed);
+  // Inspection and lease checks must not consume an unused link. The gateway
+  // marks it used only when the visitor actually opens the app.
+  await validateWebkey(token, undefined, false);
+  const grain = await db.collections.grains.findOneAsync(token.grainId);
+  if (!grain || grain.trashed || grain.suspended ||
+      !await SandstormPermissions.mayOpenGrainAsync(db, {token:{_id:hashed,grainId:token.grainId}})) {
+    throw new Meteor.Error(403,"This sharing link is no longer available.");
+  }
+  return {token, grain};
+}
+export async function inspectRustSharedGrain(db, webkey) {
+  const {token, grain} = await rustSharedContext(db,webkey);
+  return {title:await getSharersTitle(db,grain,token), guestsAllowed:!await db.getOrganizationDisallowGuestsAsync()};
+}
+export async function createRustSharedGrainSession(db, webkey, accountId, parentOrigin) {
+  await rustSharedContext(db,webkey);
+  if (!accountId && await db.getOrganizationDisallowGuestsAsync()) throw new Meteor.Error(403,"Guest access is disabled.");
+  return createSession(db,accountId,Crypto.randomBytes(32).toString("hex"), {
+    token:webkey,revealIdentity:!!accountId,parentOrigin,rustShell:true,
+  });
+}
+export async function closeRustSharedGrainSession(db, handle) {
+  await db.collections.sessions.removeAsync({ _id: handle.sessionId, rustShellSession: true });
+}
+export async function keepRustSharedGrainSession(db, handle) {
+  const row = await db.collections.sessions.findOneAsync({_id:handle.sessionId,rustShellSession:true});
+  if (!row || row.denied || row.hashedToken !== handle.hashedToken) throw new Meteor.Error(403,"Shared session ended.");
+  await bumpSession(handle.sessionId);
+  await db.collections.sessions.updateAsync({_id:handle.sessionId},{$set:{rustShellLeaseExpires:Date.now()+45000}});
 }
 
 // Narrow entry point for the experimental shell. The gateway still performs

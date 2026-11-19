@@ -47,7 +47,7 @@ import {
   waitForMigrationDocument,
   waitForReplicaMigrations,
 } from "/imports/server/migration-coordination";
-import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { closeRustSharedGrainSession, keepRustSharedGrainSession, inspectRustSharedGrain, createRustSharedGrainSession, createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { rustShellBridge, rustShellSessionStore, authorizeRustShellAccount } from "/imports/server/rust-shell-bridge";
 import { renameGrainForUser } from "/imports/server/grain-server";
@@ -1531,6 +1531,35 @@ if(isTesting) {
       if (!grain || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
       const key = this.userId + ":" + grainId;
       let record = rustGrainTestSessions.get(key);
+      if (operation === "webkey-anonymous" || operation === "webkey-identity") {
+        if (record) throw new Meteor.Error(409, "Close test session first");
+        const share = await SandstormPermissions.createNewApiToken(globalDb, { accountId: this.userId },
+            grainId, "Rust native shared viewer", { allAccess: null }, { webkey: null });
+        record = { accountId: this.userId, grainId, tokenId: share.id };
+        rustGrainTestSessions.set(key, record);
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { expiresIfUnused: new Date(Date.now() + 60000) } });
+        await inspectRustSharedGrain(globalDb, share.token);
+        if (!(await globalDb.collections.apiTokens.findOneAsync(share.id)).expiresIfUnused) {
+          throw new Error("Inspecting consumed the unused sharing link");
+        }
+        const accountId = operation === "webkey-identity" ? this.userId : null;
+        const session = await createRustSharedGrainSession(globalDb, share.token, accountId, process.env.ROOT_URL);
+        record.sessionId = session._id;
+        record.hashedToken = session.hashedToken;
+        await keepRustSharedGrainSession(globalDb, record);
+        if (session.hashedToken !== share.id || !!session.identityId !== !!accountId ||
+            !!session.userId !== !!accountId || !session.rustShellSession) throw new Error("Incorrect shared identity or authority");
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { revoked: true } });
+        for (const identity of [null, this.userId]) {
+          let denied = false;
+          try { await createRustSharedGrainSession(globalDb, share.token, identity, process.env.ROOT_URL); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Account authority bypassed a revoked webkey");
+        }
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { revoked: false } });
+        const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
+        return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
+      }
       if (operation === "open" || operation === "shared") {
         if (record) throw new Meteor.Error(409, "Close test session first");
         record = { accountId: this.userId, grainId };
@@ -1629,7 +1658,8 @@ if(isTesting) {
         return true;
       }
       if (operation === "close") {
-        await closeRustGrainSession(globalDb, record);
+        if (record.hashedToken) await closeRustSharedGrainSession(globalDb, record);
+        else await closeRustGrainSession(globalDb, record);
         if (await globalDb.collections.sessions.findOneAsync(record.sessionId)) throw new Error("UI session leaked");
         if (record.tokenId) await globalDb.removeApiTokens({ _id: record.tokenId });
         if (record.recipient) await Meteor.users.removeAsync(record.recipient);

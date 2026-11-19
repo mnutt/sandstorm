@@ -6,7 +6,7 @@ import { check } from "meteor/check";
 import Http from "node:http";
 import Fs from "node:fs/promises";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
-import { createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { inspectRustSharedGrain, createRustSharedGrainSession, keepRustSharedGrainSession, closeRustSharedGrainSession, createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { grainMenu, rustGrainTitles } from "/imports/server/rust-shell-grains";
 import { rustAppActions, createRustGrain } from "/imports/server/rust-shell-apps";
 import { renameGrainForUser } from "/imports/server/grain-server";
@@ -47,6 +47,21 @@ export const rustShellBridge = createRustShellBridge({
   listApps: rustAppActions,
   createGrain: createRustGrain,
   sessionStore: rustShellSessionStore,
+  shared: {
+    inspect: webkey => inspectRustSharedGrain(globalDb,webkey),
+    async open(webkey, accountId) {
+      const origin = Meteor.settings.public.rustShellOrigin;
+      if (!origin) throw new Meteor.Error(503,"Rust shell is not enabled.");
+      const session = await createRustSharedGrainSession(globalDb,webkey,accountId,origin);
+      const frameOrigin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
+      return {handle:{sessionId:session._id,hashedToken:session.hashedToken,accountId:accountId || undefined},
+        view:{grainId:session.grainId, title:text(session.sharersTitle,256), ownerTitle:text(session.sharersTitle,256),
+          origin:frameOrigin,url:frameOrigin+"/_sandstorm-init?sessionid="+session._id+"&path=%2F",
+          mainHref:new URL("/shared/"+encodeURIComponent(webkey),process.env.ROOT_URL).href}};
+    },
+    keep: handle => keepRustSharedGrainSession(globalDb,handle),
+    close: handle => closeRustSharedGrainSession(globalDb, handle),
+  },
   grains: {
     async open(accountId, grainId) {
       const parentOrigin = Meteor.settings.public.rustShellOrigin;

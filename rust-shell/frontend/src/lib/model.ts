@@ -52,6 +52,7 @@ export interface ShellState {
   pending: boolean;
   fixture: boolean;
   account: string | null;
+  accountKey: string | null;
   total: number;
   creation: CreationState;
   profile: ProfileState;
@@ -61,6 +62,6 @@ export function initialShellState(): ShellState {
     profile: emptyProfile(), status: 'connecting', entries: [], grains: [], grainsLimited: false,
     activeGrain: null, openGrains: [], openingGrain: false, revision: 0,
     connectionError: '', notificationError: '', grainError: '', pending: false,
-    fixture: true, account: null, total: 0, creation: { status: 'idle' },
+    fixture: true, account: null, accountKey:null, total: 0, creation: { status: 'idle' },
   };
 }

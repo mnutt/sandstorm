@@ -42,6 +42,51 @@ pub async fn serve(
     } else {
         None
     };
+    let link = Rc::new(crate::interop::Link::new(fixture_socket));
+    let _scope = link.scope();
+    let Ok(service) = crate::service::Shell::new(link.clone(), session, initial) else {
+        return;
+    };
+    let bootstrap: crate::shell_capnp::shell::Client = capnp_rpc::new_client(service.clone());
+    let maintain = async {
+        if let Some(scope) = &service.grain {
+            scope.maintain().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    serve_rpc(socket, bootstrap.client, service.synchronize(), maintain).await;
+    if let Some(scope) = &service.grain {
+        scope.close_all().await;
+    }
+}
+
+pub async fn serve_shared(
+    socket: WebSocket,
+    bridge: crate::bridge::Bridge,
+    account: Option<crate::bridge::Session>,
+) {
+    let Ok(service) = crate::shared::SharedShell::new(bridge, account) else {
+        return;
+    };
+    let bootstrap: crate::shell_capnp::shared_shell::Client =
+        capnp_rpc::new_client(service.clone());
+    serve_rpc(
+        socket,
+        bootstrap.client,
+        std::future::pending::<()>(),
+        service.maintain(),
+    )
+    .await;
+    service.close().await;
+}
+
+async fn serve_rpc(
+    socket: WebSocket,
+    bootstrap: capnp::capability::Client,
+    synchronize: impl std::future::Future<Output = ()>,
+    maintain: impl std::future::Future<Output = ()>,
+) {
     let (mut ws_out, mut ws_in) = socket.split();
     let (rpc_io, bridge_io) = tokio::io::duplex(64 * 1024);
     let (rpc_read, rpc_write) = tokio::io::split(rpc_io);
@@ -52,13 +97,7 @@ pub async fn serve(
         rpc_twoparty_capnp::Side::Server,
         options(),
     );
-    let link = Rc::new(crate::interop::Link::new(fixture_socket));
-    let _scope = link.scope();
-    let Ok(service) = crate::service::Shell::new(link.clone(), session, initial) else {
-        return;
-    };
-    let bootstrap: crate::shell_capnp::shell::Client = capnp_rpc::new_client(service.clone());
-    let rpc = RpcSystem::new(Box::new(network), Some(bootstrap.client));
+    let rpc = RpcSystem::new(Box::new(network), Some(bootstrap));
     let incoming = async {
         while let Some(Ok(message)) = ws_in.next().await {
             match message {
@@ -86,24 +125,14 @@ pub async fn serve(
             }
         }
     };
-    let maintain = async {
-        if let Some(scope) = &service.grain {
-            scope.maintain().await;
-        } else {
-            std::future::pending::<()>().await;
-        }
-    };
     // Dropping any one future drops the RPC system, capabilities and both IO halves.
     tokio::select! {
         _ = rpc => {},
         _ = incoming => {},
         _ = outgoing => {},
-        _ = service.synchronize() => {},
+        _ = synchronize => {},
         _ = maintain => {},
         _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {},
-    }
-    if let Some(scope) = &service.grain {
-        scope.close_all().await;
     }
 }
 

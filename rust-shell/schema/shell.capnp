@@ -94,3 +94,18 @@ interface Shell {
   # Profile authority remains in Meteor; updates are never automatically replayed.
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
+
+# Separate public bootstrap. Possession of a shared webkey never exposes Shell.
+struct SharedInfo {
+  title @0 :Text;
+  guestsAllowed @1 :Bool;
+  signedIn @2 :Bool;
+  accountName @3 :Text;
+}
+interface SharedSession {
+  close @0 () -> ();
+}
+interface SharedShell {
+  inspect @0 (webkey :Text) -> (info :SharedInfo);
+  open @1 (webkey :Text, revealIdentity :Bool) -> (view :GrainView, session :SharedSession);
+}

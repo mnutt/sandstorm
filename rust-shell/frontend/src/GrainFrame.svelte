@@ -11,7 +11,7 @@
   import { SharingWindow, type SharingState } from './lib/sharing';
   import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, active, toolbarTarget, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
+  let { grain, active, toolbarTarget, canManage = true, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   let path = $state(untrack(() => grain.path));
@@ -55,7 +55,7 @@
       if (next) { path = next; pathChanged(path); }
     }
     if (data.getGrainTitle) titles.request(data.rpcId, data.getGrainTitle, data.subscribe);
-    if (data.powerboxRequest) chooser?.request(data.powerboxRequest);
+    if (data.powerboxRequest && canManage) chooser?.request(data.powerboxRequest);
     const template = record(data.renderTemplate);
     if (template && typeof template.rpcId === 'string' && template.rpcId.length <= 256) {
       const source = event.source as Window;
@@ -64,8 +64,8 @@
       renderTemplate(template).then(uri => source.postMessage({ rpcId, uri }, origin),
         error => source.postMessage({ rpcId, error: String(error) }, origin));
     }
-    if (data.startSharing) sharing?.request('share', data.startSharing);
-    if (data.showConnectionGraph) sharing?.request('access');
+    if (data.startSharing && canManage) sharing?.request('share', data.startSharing);
+    if (data.showConnectionGraph && canManage) sharing?.request('access');
   }
 </script>
 
@@ -77,7 +77,7 @@
       <div class="title-text"><h2 title={frameTitle || grain.title}>{frameTitle || grain.title}</h2>
         {#if frameTitle}<p>{grain.title}</p>{/if}
       </div>
-      <div class="rename-action">
+      {#if canManage}<div class="rename-action">
   <Modal bind:open={editing} title="Rename grain" triggerLabel="Rename grain" triggerVariant="chrome"
     description="For a shared grain, this changes only your copy’s name." busy={renaming}
     onTrigger={() => { draftTitle = grain.title; renameError = ''; }}>
@@ -92,12 +92,12 @@
     </form>
     {#if renameError}<p role="alert">{renameError}</p>{/if}
   </Modal>
-      </div>
+      </div>{/if}
     </div>
-    <div class="grain-actions">
+    {#if canManage}<div class="grain-actions">
       <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { sharing.request('share'); sharing.open(); }}><ShellIcon name="share" /></Button>
       <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { sharing.request('access'); sharing.open(); }}><ShellIcon name="users" /></Button>
-    </div>
+    </div>{/if}
   </div>
   {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
     {#if sharingState.status !== 'failed'}
