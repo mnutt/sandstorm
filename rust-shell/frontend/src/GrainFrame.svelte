@@ -1,5 +1,7 @@
 <script lang="ts">
   import { portal } from './lib/portal';
+  import GrainIcon from './components/ui/GrainIcon.svelte';
+  import ShellIcon from './components/ui/ShellIcon.svelte';
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
@@ -9,7 +11,7 @@
   import { SharingWindow, type SharingState } from './lib/sharing';
   import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, active, toolbarTarget, close, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; close: () => void; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
+  let { grain, active, toolbarTarget, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   let path = $state(untrack(() => grain.path));
@@ -41,7 +43,6 @@
       value => { sharingState = value; });
     return () => { titles.clear(); chooser.cancel(); sharing.cancel(); };
   });
-  const mainHref = $derived(grain.mainHref + (path === '/' ? '' : path));
   function message(event: MessageEvent) {
     chooser?.message(event);
     sharing?.message(event);
@@ -71,13 +72,16 @@
 <svelte:window onmessage={message} />
 <section class="grain-view" aria-label="Open grain" hidden={!active}>
   <div class="toolbar" use:portal={toolbarTarget} hidden={!active}>
-    <div class="grain-title"><h2>{frameTitle || grain.title}</h2>
-      {#if frameTitle}<p>{grain.title}</p>{/if}
-    </div>
-    <div class="grain-actions">
+    <div class="grain-title">
+      <GrainIcon src={grain.iconSrc} />
+      <div class="title-text"><h2 title={frameTitle || grain.title}>{frameTitle || grain.title}</h2>
+        {#if frameTitle}<p>{grain.title}</p>{/if}
+      </div>
+      <div class="rename-action">
   <Modal bind:open={editing} title="Rename grain" triggerLabel="Rename grain" triggerVariant="chrome"
     description="For a shared grain, this changes only your copy’s name." busy={renaming}
     onTrigger={() => { draftTitle = grain.title; renameError = ''; }}>
+    {#snippet triggerContent()}<ShellIcon name="pencil" />{/snippet}
     <form onsubmit={saveTitle}>
       <label for="rename-grain-title">Grain title</label>
       <TextInput id="rename-grain-title" bind:value={draftTitle} maxlength={160} required disabled={renaming} />
@@ -88,10 +92,11 @@
     </form>
     {#if renameError}<p role="alert">{renameError}</p>{/if}
   </Modal>
-  <a href={mainHref}>Main shell ↗</a>
-    <Button variant="chrome" onclick={() => { sharing.request('share'); sharing.open(); }}>Share</Button>
-    <Button variant="chrome" onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</Button>
-    <Button variant="chrome" onclick={close}>Close grain</Button>
+      </div>
+    </div>
+    <div class="grain-actions">
+      <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { sharing.request('share'); sharing.open(); }}><ShellIcon name="share" /></Button>
+      <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { sharing.request('access'); sharing.open(); }}><ShellIcon name="users" /></Button>
     </div>
   </div>
   {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
@@ -115,8 +120,11 @@
   }
 
   .grain-title {
-    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--ss-space-2);
     min-width: 0;
+    max-width: calc(100% - 6rem);
   }
 
   .grain-title p {
@@ -132,24 +140,10 @@
     gap: var(--ss-space-1);
   }
 
-  .grain-actions a {
-    font-size: var(--ss-text-small);
-  }
-
   h2 {
     margin: 0;
     font-size: 1rem;
     line-height: 1.3;
-  }
-
-  a {
-    color: var(--ss-chrome-text);
-    text-underline-offset: .2em;
-  }
-
-  a:focus-visible {
-    outline: 3px solid var(--ss-chrome-focus);
-    outline-offset: 3px;
   }
 
   p {
@@ -170,13 +164,11 @@
   }
   .toolbar[hidden], .grain-view[hidden] { display: none; }
   h2, .grain-title p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .grain-actions { overflow-x: auto; flex-shrink: 0; max-width: 75%; }
-  .grain-actions a { white-space: nowrap; padding: var(--ss-space-2); }
-  @media (max-width: 1000px) {
-    .toolbar { flex-wrap: wrap; gap: 0; }
-    .grain-title { flex-basis: 100%; }
-    .grain-actions { max-width: 100%; }
-  }
+  .title-text { min-width: 0; }
+  .rename-action { flex: none; opacity: 0; }
+  .grain-title:hover .rename-action, .grain-title:focus-within .rename-action { opacity: 1; }
+  .grain-actions { margin-left: auto; flex: none; }
+  @media (hover: none) { .rename-action { opacity: 1; } }
 
   .dialog-actions {
     display: flex;

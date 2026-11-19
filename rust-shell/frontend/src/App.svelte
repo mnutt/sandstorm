@@ -86,11 +86,11 @@
       <a href="/grains" aria-label="Grains" title={sidebarCollapsed ? 'Grains' : undefined} aria-current={route.page === 'grains' ? 'page' : undefined} onclick={event => navigation.link(event, '/grains')}><ShellIcon name="grains" /><span>Grains</span></a>
       <ul class="open-grains" aria-label="Open grains">
         {#each model.openGrains as grain (grain.url)}
-          <li><a href={grainRoute(grain.grainId, grain.path)} aria-label={`Switch to ${grain.title}`} title={grain.title}
+          <li class:current={model.activeGrain?.grainId === grain.grainId}><a href={grainRoute(grain.grainId, grain.path)} aria-label={`Switch to ${grain.title}`} title={grain.title}
             aria-current={model.activeGrain?.grainId === grain.grainId ? 'page' : undefined}
             onclick={event => navigation.link(event, grainRoute(grain.grainId, grain.path))}>
             <GrainIcon src={grain.iconSrc} /><span>{grain.title}</span>
-          </a></li>
+          </a><div class="close-grain"><Button variant="chrome" aria-label={`Close ${grain.title}`} title={`Close ${grain.title}`} onclick={() => closeTab(grain.grainId)}><ShellIcon name="close" /></Button></div></li>
         {/each}
       </ul>
     </nav>
@@ -108,7 +108,7 @@
     {#each model.openGrains as grain (grain.url)}
       <GrainFrame {toolbarTarget} active={model.activeGrain?.grainId === grain.grainId}
         pathChanged={path => pathChanged(grain.grainId, path)} rename={title => service.renameGrain(grain.grainId, title)}
-        renderTemplate={input => service.renderTemplate(grain.grainId, input)} {grain} close={() => closeTab(grain.grainId)} />
+        renderTemplate={input => service.renderTemplate(grain.grainId, input)} {grain} />
     {/each}
   {/if}
   {#if !model.activeGrain}
@@ -233,6 +233,7 @@
   }
 
   nav {
+    grid-template-columns: minmax(0, 1fr);
     overflow-y: auto;
     min-height: 0;
     display: grid;
@@ -345,7 +346,21 @@
   .workspace { padding: 0; height: calc(100dvh - var(--ss-header-height)); display: flex; flex-direction: column; }
   .workspace > :global(.grain-view:not([hidden])) { flex: 1; min-height: 0; }
   .open-grains { list-style: none; padding: 0; margin: 0; }
-  .open-grains a { font-weight: 400; font-size: var(--ss-text-small); padding-left: var(--ss-space-5); }
+  .open-grains li { display: flex; align-items: center; min-width: 0; position: relative; }
+  .open-grains li.current { background: var(--ss-chrome-selected); }
+  .open-grains a { flex: 1; min-width: 0; font-weight: 400; font-size: var(--ss-text-small); padding-left: var(--ss-space-3); padding-right: 0; }
+  .close-grain { flex: none; opacity: 0; }
+  .open-grains li:hover .close-grain, .open-grains li:focus-within .close-grain { opacity: 1; }
+  .collapsed .open-grains li { flex-wrap: wrap; }
+  .collapsed .open-grains a { flex-basis: 100%; }
+  .collapsed .close-grain { display: none; margin: auto; }
+  .collapsed .open-grains li:hover .close-grain, .collapsed .open-grains li:focus-within .close-grain { display: block; }
+  @media (hover: none) {
+    .close-grain { opacity: 1; }
+    .collapsed .open-grains li { flex-wrap: wrap; }
+    .collapsed .open-grains a { flex-basis: 100%; }
+    .collapsed .close-grain { display: block; }
+  }
   .open-grains span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 1000px) {
     header.has-grain { flex-wrap: wrap; }

@@ -24,7 +24,8 @@
     <Popover.Content align="end" sideOffset={6} onCloseAutoFocus={event => {
       if (navigating) { event.preventDefault(); navigating = false; }
     }}>
-      {#snippet child({ props })}
+      {#snippet child({ props, wrapperProps })}
+      <div {...wrapperProps}>
         <div {...props} class="account-menu" aria-label="Account controls">
           <strong>{model.account ? `Connected as ${model.account}` : label}</strong>
           <a href="/account" onclick={event => { navigating = isPlainNavigation(event); navigate(event, '/account'); open = false; }}>Account</a>
@@ -37,6 +38,7 @@
             <p>Test data, private to this connection.</p>
           {/if}
         </div>
+      </div>
       {/snippet}
     </Popover.Content>
   </Popover.Portal>

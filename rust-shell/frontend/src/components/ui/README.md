@@ -23,6 +23,8 @@ Use Svelte scoped CSS, with plain semantic tokens and no utility-CSS dependency.
   render native nodes so the portal's CSS remains Svelte-scoped. Set `busy` while
   a write is pending and provide an explicit close/cancel action in the content.
 - Page components: local layout, headings, labels, list rows and empty states.
+  Floating Bits content using a child snippet must render both `wrapperProps` on
+  an outer node and `props` on the content node; the wrapper owns positioning.
   Never reach through component boundaries to override a control's internals.
 
 ## Visual direction
@@ -55,6 +57,11 @@ toggle remains available. Collapsing leaves an icon rail on desktop and mobile. 
 in localStorage (default collapsed on small screens), with an in-memory fallback when storage is unavailable. Icon-only
 links retain accessible names and native title hints. Use 2–3px corner radii for
 controls and panels; navigation rows stay square.
+
+Grain icons use 20px slots aligned with the primary navigation. Names truncate
+with ellipses and retain their full title as a native tooltip. Rename and sidebar
+close actions appear on hover or keyboard focus, and stay visible on touch devices.
+Icon-only actions always have accessible names and title hints.
 
 ## Validation
 

@@ -43,6 +43,17 @@ test('sidebar preference survives reloads; navigation stays pinned while content
     await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(100);
     assert.equal(Math.round((await page.locator('header').boundingBox()).y),0);
     assert.equal(Math.round((await sidebar.boundingBox()).y),48);
+    const account = page.getByRole('button',{name:'Account: Fixture mode',exact:true});
+    await account.click();
+    const menu = page.locator('.account-menu');
+    await expect(menu).toBeVisible();
+    await expect.poll(async () => (await menu.boundingBox()).y).toBeLessThan(60);
+    const bounds = await menu.boundingBox();
+    assert.ok(bounds.y >= (await account.boundingBox()).height);
+    assert.ok(bounds.y + bounds.height <= 720);
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-account.png'});
+    await page.keyboard.press('Escape');
+    await expect(account).toBeFocused();
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-sticky.png'});
     for (const width of [390,320]) {
       await page.setViewportSize({width,height:844});
