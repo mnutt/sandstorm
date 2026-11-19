@@ -53,3 +53,14 @@ export async function serveProbe(page, source, url) {
   const code = bundle[0].output.find((item) => item.type === 'chunk').code;
   await page.route(`**/${url}`, (route) => route.fulfill({ contentType: 'text/javascript', body: code }));
 }
+
+export async function availablePort() {
+  // Vite treats port 0 as its default, so reserve an OS-selected port first.
+  const { createServer } = await import('node:net');
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}

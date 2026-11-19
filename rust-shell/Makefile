@@ -1,4 +1,4 @@
-.PHONY: build check test test-package run cpp-fixture
+.PHONY: build check test test-package run dev cpp-fixture
 
 cpp-fixture: target/cpp-fixture
 
@@ -28,3 +28,8 @@ test-package:
 
 run:
 	cargo run --locked
+
+# Run on the same host as the installed Sandstorm server. The HTTPS gateway proxies this port.
+dev:
+	@echo "Open the existing Rust-shell HTTPS URL for hot reload."
+	cd frontend && npm run dev

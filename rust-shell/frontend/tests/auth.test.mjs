@@ -3,11 +3,13 @@ import { test } from 'node:test';
 import { mkdtemp, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createServer as createViteServer } from 'vite';
 import { createServer as httpServer } from 'node:http';
 import { createServer as httpsServer } from 'node:https';
 import { once } from 'node:events';
 import { chromium, expect } from '@playwright/test';
-import { start, stop, serveProbe } from './harness.mjs';
+import { start, stop, serveProbe, availablePort } from './harness.mjs';
 import { httpsProxy } from './https-harness.mjs';
 import { memorySessionStore } from '../../../shell/imports/server/rust-shell-session-store.mjs';
 import { createRustShellBridge, bridgeHandler } from '../../../shell/imports/server/rust-shell-bridge-core.mjs';
@@ -18,7 +20,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const directory = await mkdtemp(join(tmpdir(), 'rust-shell-auth-'));
   const socket = join(directory, 'rust.sock');
   const bridgeSocket = join(directory, 'meteor.sock');
-  let proxy, main, grainServer, bridgeServer, browser, rust;
+  let proxy, main, grainServer, bridgeServer, browser, rust, vite;
+  let vitePort;
   const liveGrains = new Set();
   let grainOrigin;
   let mainOrigin;
@@ -164,6 +167,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
   };
   let bridge = createRustShellBridge(bridgeOptions);
   try {
+    if (process.env.RUST_SHELL_TEST_DEV === '1') {
+      const root=fileURLToPath(new URL('..',import.meta.url));
+      vite=await createViteServer({root,configFile:join(root,'vite.config.ts'),logLevel:'silent',server:{host:'127.0.0.1',port:await availablePort()}});
+      await vite.listen(); vitePort=vite.httpServer.address().port;
+    }
     proxy = await httpsProxy(directory, socket);
     grainServer = httpsServer(proxy.tls, (_req, res) => {
       if (_req.url === '/powerbox-complete') { providerComplete = true; res.end('ok'); return; }
@@ -219,7 +227,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     main.listen(0, '127.0.0.1'); await once(main, 'listening');
     mainOrigin = `https://localhost:${main.address().port}`;
     rust = (await start('debug/sandstorm-rust-shell', [], {
-      RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin,
+      RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin, RUST_SHELL_DEV_PORT: vitePort?.toString(),
       RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_WILDCARD_HOST: new URL(mainOrigin).host, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
       RUST_SHELL_FIXTURE_SOCKET: '',
     }, /Rust shell: (https:\/\/\S+)/)).child;
@@ -894,7 +902,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(liveGrains.size, 0);
     await rm(socket, { force: true });
     rust = (await start('debug/sandstorm-rust-shell', [], {
-      RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin,
+      RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin, RUST_SHELL_DEV_PORT: vitePort?.toString(),
       RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_WILDCARD_HOST: new URL(mainOrigin).host, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
       RUST_SHELL_FIXTURE_SOCKET: '',
     }, /Rust shell: (https:\/\/\S+)/)).child;
@@ -1013,7 +1021,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     console.error("Grain browser test failed:", error.message);
     throw error;
   } finally {
-    await browser?.close(); await stop(rust);
+    await browser?.close();
+    await vite?.close(); await stop(rust);
     leaseClockOffset += 46000;
     await bridge.sweepGrains();
     await expect.poll(() => observers.size).toBe(0);

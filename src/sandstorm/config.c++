@@ -196,6 +196,13 @@ Config readConfig(const char *path, bool parseUids) {
       } else {
         KJ_FAIL_REQUIRE("invalid config value HTTPS_PORT", value);
       }
+    } else if (key == "RUST_SHELL_DEV_PORT") {
+      KJ_IF_MAYBE(p, parseUInt(value, 10)) {
+        KJ_REQUIRE(*p > 0 && *p <= 65535, "invalid RUST_SHELL_DEV_PORT", value);
+        config.rustShellDevPort = *p;
+      } else {
+        KJ_FAIL_REQUIRE("invalid RUST_SHELL_DEV_PORT", value);
+      }
     } else if (key == "RUST_SHELL_BIND_IP") {
       config.rustShellBindIp = kj::mv(value);
     } else if (key == "RUST_SHELL_PORT") {
@@ -332,6 +339,15 @@ Config readConfig(const char *path, bool parseUids) {
         "RUST_SHELL_PORT conflicts with another service");
     for (auto existing: config.ports) {
       KJ_REQUIRE(*port != existing, "RUST_SHELL_PORT conflicts with PORT/HTTPS_PORT");
+    }
+  }
+  KJ_IF_MAYBE(port, config.rustShellDevPort) {
+    KJ_REQUIRE(config.rustShellPort != nullptr, "RUST_SHELL_DEV_PORT requires RUST_SHELL_PORT");
+    KJ_REQUIRE(*port != KJ_REQUIRE_NONNULL(config.rustShellPort) &&
+        *port != config.mongoPort && *port != config.smtpListenPort,
+        "RUST_SHELL_DEV_PORT conflicts with another service");
+    for (auto existing: config.ports) {
+      KJ_REQUIRE(*port != existing, "RUST_SHELL_DEV_PORT conflicts with PORT/HTTPS_PORT");
     }
   }
   return config;

@@ -7,7 +7,8 @@
     "generate": "mkdir -p src/generated && capnp compile -I../schema --src-prefix=../schema -o./node_modules/.bin/capnpc-ts:src/generated ../schema/shell.capnp ../schema/fixture.capnp",
     "check": "npm run generate && svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.public.json",
     "build": "npm run generate && vite build",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "dev": "npm run generate && vite"
   },
   "dependencies": {
     "bits-ui": "2.21.0",

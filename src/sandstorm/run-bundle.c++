@@ -2885,6 +2885,11 @@ private:
       KJ_SYSCALL(setenv("RUST_SHELL_SOCKET", socket, true));
       auto origin = rustShellOrigin(config);
       KJ_SYSCALL(setenv("RUST_SHELL_ORIGIN", origin.cStr(), true));
+      KJ_IF_MAYBE(port, config.rustShellDevPort) {
+        KJ_SYSCALL(setenv("RUST_SHELL_DEV_PORT", kj::str(*port).cStr(), true));
+      } else {
+        KJ_SYSCALL(unsetenv("RUST_SHELL_DEV_PORT"));
+      }
       KJ_SYSCALL(setenv("RUST_SHELL_ASSETS", "/rust-shell/dist", true));
       KJ_SYSCALL(setenv("RUST_SHELL_MAIN_URL", config.rootUrl.cStr(), true));
       if (config.wildcardHost != nullptr) {

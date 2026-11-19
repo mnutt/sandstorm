@@ -1,5 +1,6 @@
 mod auth;
 mod bridge;
+mod dev;
 mod grain;
 mod interop;
 mod rpc_budget;
@@ -210,23 +211,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "default-src 'self'; img-src 'self' data: https:; connect-src 'self' {}/upload/ {}; style-src 'self' 'unsafe-inline'; frame-src https:; frame-ancestors 'none'",
         state.auth.main_origin, static_origin
     ))?;
+    let dev_port = std::env::var("RUST_SHELL_DEV_PORT")
+        .ok()
+        .map(|value| value.parse::<std::num::NonZeroU16>())
+        .transpose()?;
     let index = ServeFile::new(assets.join("index.html"));
-    let app = Router::new()
-        .route_service("/notifications", index.clone())
-        .route_service("/grains", index.clone())
-        .route_service("/install", index.clone())
-        .route_service("/install/{id}", index.clone())
-        .route_service("/install/{id}/", index.clone())
-        .route_service("/apps", index.clone())
-        .route_service("/apps/{id}", index.clone())
-        .route_service("/apps/{id}/", index.clone())
-        .route_service("/account", index.clone())
-        .route_service("/grain/{id}", index.clone())
-        .route_service("/grain/{id}/", index.clone())
-        .route_service("/grain/{id}/{*path}", index.clone())
-        .route_service("/shared/{token}", index.clone())
-        .route_service("/shared/{token}/", index.clone())
-        .route_service("/shared/{token}/{*path}", index)
+    let frontend: Router<AppState> = if let Some(port) = dev_port {
+        eprintln!("Rust shell frontend development proxy: 127.0.0.1:{port}");
+        Router::new()
+            .route("/__vite_hmr", get(dev::hmr))
+            .fallback(dev::frontend)
+            .with_state(dev::Frontend::new(port.get(), origin.clone())?)
+    } else {
+        Router::new()
+            .route_service("/notifications", index.clone())
+            .route_service("/grains", index.clone())
+            .route_service("/install", index.clone())
+            .route_service("/install/{id}", index.clone())
+            .route_service("/install/{id}/", index.clone())
+            .route_service("/apps", index.clone())
+            .route_service("/apps/{id}", index.clone())
+            .route_service("/apps/{id}/", index.clone())
+            .route_service("/account", index.clone())
+            .route_service("/grain/{id}", index.clone())
+            .route_service("/grain/{id}/", index.clone())
+            .route_service("/grain/{id}/{*path}", index.clone())
+            .route_service("/shared/{token}", index.clone())
+            .route_service("/shared/{token}/", index.clone())
+            .route_service("/shared/{token}/{*path}", index)
+            .fallback_service(ServeDir::new(assets.clone()))
+    };
+    let app = frontend
+        // Keep the isolated offer-template document out of Vite's HTML transforms.
+        .route_service("/offer-template.html", ServeFile::new(assets.join("offer-template.html")))
+        .route_service("/offer-template.js", ServeFile::new(assets.join("offer-template.js")))
         .route("/healthz", get(move || async move { if fixture { "rust-shell fixture spike\n" } else { "rust-shell authenticated bridge\n" } }))
         .route("/auth/session", get(auth::status))
         .route("/auth/start", get(auth::start))
@@ -238,7 +256,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .route("/rpc", get(upgrade))
         .route("/shared-rpc", get(upgrade_shared))
-        .fallback_service(ServeDir::new(assets))
         .layer(axum::middleware::from_fn_with_state(state.clone(), |State(state): State<AppState>, request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
             if request.headers().get(header::HOST).and_then(|v| v.to_str().ok()) != Some(state.host.as_str()) {
                 return StatusCode::FORBIDDEN.into_response();

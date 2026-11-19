@@ -34,6 +34,61 @@ Non-loopback binds are rejected. The compiled binary defaults to this checkout's
 `frontend/dist`; set `RUST_SHELL_ASSETS` when moving it elsewhere. Stop with Ctrl-C.
 Standalone fixture runs make no durable writes or grain lifecycle changes.
 
+## Frontend hot reload against installed Sandstorm
+
+Enable this once in `/opt/sandstorm/sandstorm.conf` alongside `RUST_SHELL_PORT`:
+
+```ini
+RUST_SHELL_DEV_PORT=5173
+```
+
+Install a bundle containing development-proxy support using the usual command:
+
+```sh
+sudo sandstorm update "$PWD/build/dev/packages/sandstorm-0-fast.tar.xz"
+```
+
+Then run this from the checkout **on the Sandstorm host** and leave it running:
+
+```sh
+make -C rust-shell dev
+```
+
+Open the existing Rust-shell HTTPS URL (on this machine,
+`https://yertle.sandhost.org:7443`). Svelte, TypeScript, and CSS edits now go through
+Vite hot reload. CSS updates preserve the page and component state; structural
+component/module changes can remount affected components or trigger a reload.
+No bundle rebuild or Sandstorm update is needed for these frontend edits. Vite binds to `127.0.0.1:5173` and refuses to silently choose a different
+port. To change the port, set the same `RUST_SHELL_DEV_PORT` in the config and in
+the environment when running `make -C rust-shell dev`.
+
+The installed Rust process retains `/auth/*`, `/rpc`, and `/shared-rpc`. Frontend
+HTTP and `/__vite_hmr` use a fixed loopback proxy under the same HTTPS origin, so
+cookies, sign-in handoff, and iframe origin checks keep working. The proxy strips
+cookies and authorization headers, checks the HMR Origin, preserves Vite's
+WebSocket-token check, and blocks developer-control routes such as opening an
+editor. Vite's filesystem access stays inside the frontend directory. The
+isolated `/offer-template.html` and its script remain bundled assets, without
+Vite injection. The production CSP remains in place.
+
+If Vite is stopped, frontend pages return a clear 503 with the startup command;
+authentication and RPC remain available. Open tabs detect a Vite restart and
+reload automatically through its availability-ping protocol. There is no silent fallback to old
+production assets. Remove `RUST_SHELL_DEV_PORT` and restart Sandstorm to return
+to the bundled frontend. Development mode is opt-in; normal installations do not
+proxy anything to Vite.
+
+This loop covers frontend edits. Rust, Cap'n Proto schema, Meteor bridge, C++
+gateway, and isolated offer-template changes still use the build/update workflow.
+Run the normal tests and build a bundle at integration checkpoints. For the
+focused hot-reload and authenticated-development checks:
+
+```sh
+cd rust-shell/frontend
+node --test tests/dev.test.mjs
+RUST_SHELL_TEST_DEV=1 node --test tests/auth.test.mjs
+```
+
 ## Install alongside the main shell, with HTTPS
 
 The repository's `make fast` now includes a release build of the Rust server and

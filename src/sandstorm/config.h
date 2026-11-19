@@ -15,6 +15,7 @@ struct UserIds {
 struct Config {
   kj::Maybe<uint> httpsPort;
   kj::Maybe<uint> rustShellPort;
+  kj::Maybe<uint> rustShellDevPort;
   kj::String rustShellBindIp = nullptr;
   kj::Array<uint> ports;
   uint mongoPort = 3001;

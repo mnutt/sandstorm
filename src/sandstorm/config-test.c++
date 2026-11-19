@@ -76,6 +76,16 @@ KJ_TEST("Rust shell listener is opt-in and rejects conflicting ports or HTTP") {
   KJ_EXPECT_THROW_MESSAGE("requires", parse("BASE_URL=http://example.test\nRUST_SHELL_PORT=7443"));
 }
 
+KJ_TEST("Rust frontend development proxy is opt-in and rejects conflicting ports") {
+  KJ_EXPECT(parse("RUST_SHELL_PORT=7443").rustShellDevPort == nullptr);
+  auto config = parse("RUST_SHELL_PORT=7443\nRUST_SHELL_DEV_PORT=5173");
+  KJ_EXPECT(KJ_REQUIRE_NONNULL(config.rustShellDevPort) == 5173);
+  KJ_EXPECT_THROW_MESSAGE("requires", parse("RUST_SHELL_DEV_PORT=5173"));
+  KJ_EXPECT_THROW_MESSAGE("invalid", parse("RUST_SHELL_PORT=7443\nRUST_SHELL_DEV_PORT=0"));
+  KJ_EXPECT_THROW_MESSAGE("conflicts", parse("RUST_SHELL_PORT=7443\nRUST_SHELL_DEV_PORT=7443"));
+  KJ_EXPECT_THROW_MESSAGE("conflicts", parse("RUST_SHELL_PORT=7443\nRUST_SHELL_DEV_PORT=443"));
+}
+
 KJ_TEST("Sandhost explicit addressing and Rust HTTPS listener coexist") {
   auto config = parse("SANDCATS_BACKEND=sandhost\nSANDCATS_BASE_DOMAIN=sandhost.org\n"
       "SANDCATS_ADDRESS_MODE=explicit\nSANDCATS_IP_ADDRESS=100.89.147.5\n"
