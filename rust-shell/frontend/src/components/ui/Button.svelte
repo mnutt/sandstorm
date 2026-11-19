@@ -3,7 +3,7 @@
   import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
   let { variant = 'primary', children, class: className = '', type = 'button', ...rest }:
-    HTMLButtonAttributes & { variant?: 'primary' | 'secondary' | 'danger'; children?: Snippet } = $props();
+    HTMLButtonAttributes & { variant?: 'primary' | 'secondary' | 'danger' | 'chrome'; children?: Snippet } = $props();
 </script>
 
 <span class="scope">
@@ -59,6 +59,22 @@
   .scope > :global(.button:disabled) {
     opacity: .5;
     cursor: not-allowed;
+  }
+
+  .scope > :global(.chrome) {
+    background: transparent;
+    color: var(--ss-chrome-text);
+    padding: var(--ss-space-2);
+    min-width: var(--ss-control-height);
+  }
+
+  .scope > :global(.chrome:hover:not(:disabled)) {
+    background: var(--ss-chrome-hover);
+  }
+
+  .scope > :global(.chrome:focus-visible) {
+    outline-color: var(--ss-chrome-focus);
+    outline-offset: -3px;
   }
 
   @media (forced-colors: active) {

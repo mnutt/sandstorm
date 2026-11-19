@@ -6,6 +6,16 @@
   --ss-brand: #6e3c8e;
   --ss-brand-hover: #542770;
   --ss-brand-subtle: #f0e9f5;
+  --ss-chrome: #24212b;
+  --ss-chrome-header: #1e1b24;
+  --ss-chrome-text: #f4f0f8;
+  --ss-chrome-muted: #bcb4c8;
+  --ss-chrome-border: #3b3547;
+  --ss-chrome-hover: #302b39;
+  --ss-chrome-selected: #40384d;
+  --ss-chrome-focus: #d4b5f2;
+  --ss-header-height: 3rem;
+  --ss-layer-chrome: 20;
   --ss-canvas: #f6f5f8;
   --ss-surface: #fff;
   --ss-text: #292330;
@@ -22,8 +32,8 @@
   --ss-space-5: 1.5rem;
   --ss-space-6: 2rem;
   --ss-space-7: 3rem;
-  --ss-radius-control: .375rem;
-  --ss-radius-panel: .75rem;
+  --ss-radius-control: .125rem;
+  --ss-radius-panel: .1875rem;
   --ss-shadow-panel: 0 2px 8px #29233006;
   --ss-shadow-dialog: 0 16px 64px #29233033;
   --ss-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

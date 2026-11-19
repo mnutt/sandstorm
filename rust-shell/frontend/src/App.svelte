@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { readSidebarCollapsed, saveSidebarCollapsed } from './lib/preferences';
+  import ShellIcon from './components/ui/ShellIcon.svelte';
   import Button from './components/ui/Button.svelte';
   import Panel from './components/ui/Panel.svelte';
   import { onMount, tick } from 'svelte';
@@ -17,6 +19,11 @@
   const service = new ShellService(next => { model = next; });
   let content: HTMLDivElement;
   let focusVersion = 0;
+  let sidebarCollapsed = $state(readSidebarCollapsed());
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    saveSidebarCollapsed(sidebarCollapsed);
+  }
   const navigation = new NavigationController({
     close: () => service.closeGrain(),
     open: (id, path) => service.openGrain(id, path),
@@ -40,7 +47,13 @@
 <svelte:head><title>{pageTitle} · Sandstorm</title><meta name="description" content="Experimental Sandstorm shell running on Rust and Svelte." /></svelte:head>
 
 <header>
+  <div class="brand-group">
+    <Button variant="chrome" onclick={toggleSidebar} aria-controls="shell-sidebar" aria-expanded={!sidebarCollapsed}
+      aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+      <ShellIcon name="sidebar" />
+    </Button>
   <a class="brand" href="/grains" onclick={event => navigation.link(event, '/grains')}>Sandstorm</a>
+  </div>
   <div class="topbar-actions">
     <a class="notifications" href="/notifications" aria-label="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
@@ -51,13 +64,13 @@
     <AccountMenu {model} navigate={(event, path) => navigation.link(event, path)} disconnect={() => service.logout()} />
   </div>
 </header>
-<main class="shell-layout">
-  <aside aria-label="Shell navigation">
+<main class="shell-layout" class:collapsed={sidebarCollapsed}>
+  <aside id="shell-sidebar" aria-label="Shell navigation">
     <nav aria-label="Shell pages">
-      <a href="/apps" aria-current={view === 'apps' ? 'page' : undefined} onclick={event => navigation.link(event, '/apps')}>Apps</a>
-      <a href="/grains" aria-current={view === 'grains' ? 'page' : undefined} onclick={event => navigation.link(event, '/grains')}>Grains</a>
+      <a href="/apps" aria-label="Apps" title={sidebarCollapsed ? 'Apps' : undefined} aria-current={view === 'apps' ? 'page' : undefined} onclick={event => navigation.link(event, '/apps')}><ShellIcon name="apps" /><span>Apps</span></a>
+      <a href="/grains" aria-label="Grains" title={sidebarCollapsed ? 'Grains' : undefined} aria-current={view === 'grains' ? 'page' : undefined} onclick={event => navigation.link(event, '/grains')}><ShellIcon name="grains" /><span>Grains</span></a>
     </nav>
-    <div class="shell-links"><a href="/main-shell">Main shell ↗</a><small>Preview</small></div>
+    <div class="shell-links"><a href="/main-shell" aria-label="Main shell" title="Main shell"><ShellIcon name="external" /><span>Main shell</span></a><small>Preview</small></div>
   </aside>
   <div class="route-content" bind:this={content} tabindex="-1">
   <p class="sr-only" aria-live="polite" aria-atomic="true">{pageTitle}</p>
@@ -98,13 +111,24 @@
 
 <style>
   header {
+    position: sticky;
+    top: 0;
+    z-index: var(--ss-layer-chrome);
+    height: var(--ss-header-height);
     display: flex;
     justify-content: space-between;
     align-items: center;
     min-height: 3rem;
     padding: 0 var(--ss-space-3);
-    background: var(--ss-brand-hover);
-    color: white;
+    background: var(--ss-chrome-header);
+    color: var(--ss-chrome-text);
+  }
+
+  .brand-group {
+    display: flex;
+    align-items: center;
+    gap: var(--ss-space-2);
+    min-width: 0;
   }
 
   .brand {
@@ -118,7 +142,7 @@
   .topbar-actions {
     display: flex;
     align-items: center;
-    gap: var(--ss-space-2);
+    gap: var(--ss-space-1);
     min-width: 0;
   }
 
@@ -151,18 +175,30 @@
     --ss-workspace-height: calc(100dvh - 4.5rem);
   }
 
+  .shell-layout.collapsed {
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+  }
+
   aside {
+    position: sticky;
+    top: var(--ss-header-height);
+    height: calc(100dvh - var(--ss-header-height));
+    overflow-y: auto;
+    align-self: start;
+    scrollbar-width: thin;
+    color-scheme: dark;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--ss-border);
-    background: var(--ss-surface);
-    padding: var(--ss-space-3) var(--ss-space-2);
+    border-right: 1px solid var(--ss-chrome-border);
+    background: var(--ss-chrome);
+    color: var(--ss-chrome-text);
+    padding: var(--ss-space-2) 0;
   }
 
   nav {
     display: grid;
-    gap: var(--ss-space-1);
+    gap: 0;
   }
 
   nav a {
@@ -170,32 +206,61 @@
     align-items: center;
     min-height: var(--ss-control-height);
     padding: 0 var(--ss-space-3);
-    border-radius: var(--ss-radius-control);
-    color: var(--ss-text);
+    gap: var(--ss-space-3);
+    border-radius: 0;
+    color: var(--ss-chrome-muted);
     text-decoration: none;
     font-weight: 600;
   }
 
   nav a:hover {
-    background: var(--ss-canvas);
+    background: var(--ss-chrome-hover);
   }
 
   nav a[aria-current=page] {
-    color: var(--ss-brand-hover);
-    background: var(--ss-brand-subtle);
-    box-shadow: inset 3px 0 var(--ss-brand);
+    color: var(--ss-chrome-text);
+    background: var(--ss-chrome-selected);
   }
 
   .shell-links {
     display: grid;
     gap: var(--ss-space-1);
     margin-top: auto;
-    padding: var(--ss-space-3);
+    padding: var(--ss-space-2) 0;
     font-size: var(--ss-text-small);
   }
 
+  .shell-links a {
+    display: flex;
+    align-items: center;
+    gap: var(--ss-space-3);
+    min-height: var(--ss-control-height);
+    padding: 0 var(--ss-space-3);
+    color: var(--ss-chrome-muted);
+    text-decoration: none;
+  }
+
+  .shell-links a:hover {
+    background: var(--ss-chrome-hover);
+    color: var(--ss-chrome-text);
+  }
+
   small {
-    color: var(--ss-muted);
+    color: var(--ss-chrome-muted);
+    padding: 0 var(--ss-space-3);
+  }
+
+  .collapsed nav a, .collapsed .shell-links a {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .collapsed aside span, .collapsed aside small {
+    display: none;
+  }
+
+  aside a:focus-visible {
+    outline-color: var(--ss-chrome-focus);
   }
 
   a {
@@ -234,17 +299,27 @@
   }
 
   @media (max-width: 600px) {
-    .shell-layout {
+    .shell-layout, .shell-layout.collapsed {
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto 1fr;
       --ss-workspace-height: calc(100dvh - 8rem);
     }
+    .shell-layout.collapsed {
+      grid-template-rows: 1fr;
+      --ss-workspace-height: calc(100dvh - 4rem);
+    }
+    .collapsed aside {
+      display: none;
+    }
     aside {
+      height: auto;
+      max-height: calc(100dvh - var(--ss-header-height));
+      z-index: var(--ss-layer-chrome);
       flex-direction: row;
       align-items: center;
       justify-content: space-between;
       border-right: 0;
-      border-bottom: 1px solid var(--ss-border);
+      border-bottom: 1px solid var(--ss-chrome-border);
       padding: var(--ss-space-1) var(--ss-space-2);
     }
     nav {
@@ -254,8 +329,17 @@
       margin: 0;
       padding: 0 var(--ss-space-2);
     }
-    .shell-links small {
+    .shell-links span, .shell-links small {
       display: none;
+    }
+    header {
+      padding: 0 var(--ss-space-2);
+    }
+    .brand {
+      font-size: 1.125rem;
+    }
+    .brand-group {
+      gap: var(--ss-space-1);
     }
     .notifications > span:not(.unread) {
       display: none;

@@ -118,7 +118,7 @@
 
   @media (max-width: 600px) {
     .trigger {
-      max-width: 8rem;
+      max-width: 7rem;
     }
   }
 </style>

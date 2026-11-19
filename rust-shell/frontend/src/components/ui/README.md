@@ -8,7 +8,7 @@ Use Svelte scoped CSS, with plain semantic tokens and no utility-CSS dependency.
 
 - `src/styles.css`: `--ss-*` tokens, document box sizing/body reset, `.sr-only`.
   No global button, input, list, section, heading, or Bits data-attribute selectors.
-- `Button.svelte`: Bits button, primary/secondary/danger variants, focus/disabled
+- `Button.svelte`: Bits button, primary/secondary/danger/chrome variants, focus/disabled
   states. Defaults to `type="button"`; form actions must explicitly use `submit`.
   A local wrapper scopes the narrow `:global()` selectors needed to style the
   DOM rendered by Bits. Don't add global `.button` rules.
@@ -35,10 +35,11 @@ iframe visually distinct from shell chrome. No remote fonts or decorative assets
 Use semantic tokens for color, spacing, radii, typography, focus and overlay
 stacking. Tokens live on `:root` so portals under `body` inherit them. A future
 alternate theme should override tokens there (or on an explicit portal container),
-not require page-specific overrides. Light mode is the current supported theme.
+not require page-specific overrides. Content uses light surfaces; navigation uses
+the separate dark `--ss-chrome-*` palette.
 
 Controls have a 44px minimum target height. Focus uses a visible 3px outline;
-selected navigation has a border/inset marker as well as color. The current
+selected navigation uses square, full-width rows with `aria-current`. The current
 foundation uses no motion; future transitions must honor reduced-motion settings.
 Preserve native links and browser modifiers for route navigation. Shell placement follows the main UI: Apps/Grains in the left rail, notifications
 and the account popover in the top bar, and grain actions immediately above the
@@ -47,11 +48,19 @@ padding; desktop grain rows align their metadata in columns. At narrow widths
 the rail becomes a short horizontal navigation row and actions wrap. Keep component content usable
 at zoom and allow long account/grain names to wrap.
 
+The 48px top bar stays sticky; the sidebar sticks below it and scrolls independently
+when necessary. Its top-bar toggle collapses to an icon rail on desktop and hides
+the navigation row on mobile. `lib/preferences.ts` persists this device-local choice
+in localStorage, with an in-memory fallback when storage is unavailable. Icon-only
+links retain accessible names and native title hints. Use 2–3px corner radii for
+controls and panels; navigation rows stay square.
+
 ## Validation
 
 `make -C rust-shell test` checks TypeScript/Svelte and browser interactions.
 The browser suite exercises dialog focus trapping/restoration, Escape, form saves,
-portal styling, mobile overflow, and absence of style leakage into unrelated DOM.
+portal styling, mobile overflow, sticky navigation, persistent sidebar collapse,
+and absence of style leakage into unrelated DOM.
 Review desktop, mobile, and dialog captures in `/tmp/sandstorm-rust-ui-*.png`
 after running tests. The trusted offer-template document has its own stylesheet;
 it does not inherit shell or app-frame styles.
