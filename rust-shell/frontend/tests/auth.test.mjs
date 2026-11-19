@@ -284,18 +284,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.reload();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, '/grains');
-    assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), `${mainOrigin}/grain/alice-grain`);
+    assert.equal(await page.getByRole('link', { name: 'Alice grain', exact: true }).getAttribute('href'), '/grain/alice-grain');
     assert.equal(await page.getByRole('link', { name: 'Bob grain', exact: true }).count(), 0);
     await page.locator('.grain-item').getByText('Owned by you', { exact: true }).waitFor();
-    assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Zebra shared');
+    assert.equal(await page.locator('.grain-item .grain-name').first().innerText(), 'Zebra shared');
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-grains.png',fullPage:true});
     await page.getByLabel('Sort by').selectOption('title');
-    assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Alice grain');
+    assert.equal(await page.locator('.grain-item .grain-name').first().innerText(), 'Alice grain');
     await page.getByLabel('Filter shown grains').fill('editor');
     assert.equal(await page.locator('.grain-item').count(), 1);
     await page.getByLabel('Filter shown grains').fill('');
     await page.getByLabel('Show', { exact: true }).selectOption('shared');
-    assert.equal(await page.locator('.grain-item h3').innerText(), 'Zebra shared');
+    assert.equal(await page.locator('.grain-item .grain-name').innerText(), 'Zebra shared');
     await page.getByLabel('Show', { exact: true }).selectOption('all');
     await page.getByLabel('Filter shown grains').fill('nothing matches');
     await page.getByText('No matching grains.', { exact: true }).waitFor();
@@ -306,7 +306,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.release()));
     await expect.poll(() => liveGrains.size).toBe(0);
     await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.disconnect()));
-    await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
+    await page.getByRole('link', { name: 'Alice grain', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     assert.equal(liveGrains.size, 1);
     assert.equal(new URL(page.url()).pathname, '/grain/alice-grain');
@@ -330,7 +330,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await app.getByLabel('App state').fill('background draft');
     const firstSession = await page.locator('iframe').getAttribute('src');
     await page.getByRole('link', {name:'Grains',exact:true}).click();
-    await page.getByRole('button', {name:'Open Zebra shared here',exact:true}).click();
+    await page.getByRole('link', { name: 'Zebra shared', exact: true }).click();
     await expect(page.locator('iframe')).toHaveCount(2);
     await expect.poll(() => liveGrains.size).toBe(2);
     await expect(page.locator('iframe:visible')).toHaveAttribute('title','Zebra shared');
@@ -598,7 +598,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await expect.poll(() => grainClosePopup.isClosed()).toBe(true);
     assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('rustOfferTemplate:')).length), 0);
     await expect.poll(() => liveGrains.size).toBe(0);
-    await page.getByRole('button', { name: 'Open Alice grain here', exact: true }).click();
+    await page.getByRole('link', { name: 'Alice grain', exact: true }).click();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     // A Rust crash closes the browser view; Meteor's bounded lease survives only
     // until expiry. The independent grain host stays alive throughout.
@@ -672,7 +672,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const racing = await context.newPage();
     await racing.goto(proxy.origin + '/grains');
     holdOpen = true;
-    await racing.getByRole('button', {name:'Open Alice grain here', exact:true}).click();
+    await racing.getByRole('link', { name: 'Alice grain', exact: true }).click();
     await expect.poll(() => !!releaseOpen).toBe(true);
     await racing.getByRole('link', {name:'Notifications', exact:true}).click();
     holdOpen = false; releaseOpen();
@@ -697,7 +697,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await other.getByRole('link', { name: 'Bob grain', exact: true }).waitFor();
     await other.locator('.grain-item').getByText('Shared with you', { exact: true }).waitFor();
     assert.equal(await other.getByRole('link', { name: 'Alice grain', exact: true }).count(), 0);
-    await other.getByRole('button', { name: 'Open Bob grain here', exact: true }).click();
+    await other.getByRole('link', { name: 'Bob grain', exact: true }).click();
     await other.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     await other.frameLocator('iframe').locator('body').evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'shared-title' }, '*'));
     await expect.poll(() => other.frameLocator('iframe').locator('body').evaluate(() => window.reply?.grainTitle)).toBe('Owner title');

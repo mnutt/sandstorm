@@ -88,7 +88,7 @@
   <div class="brand-group">
     <a class="brand" href="/grains" onclick={event => navigation.link(event, '/grains')}><img src="/sandstorm-logo.svg" width="28" height="30" alt="" /><span>Sandstorm</span></a>
   </div>
-  <div class="grain-toolbar" bind:this={toolbarTarget}></div>
+  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'grains'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
   <div class="topbar-actions">
     <a class="notifications" href="/notifications" aria-label="Notifications" title="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
@@ -176,6 +176,7 @@
 </div>
 
 <style>
+  .page-title { margin: 0; font-size: 1rem; font-weight: 600; color: var(--ss-chrome-text); }
   header {
     position: sticky;
     top: 0;
