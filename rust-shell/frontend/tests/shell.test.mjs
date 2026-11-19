@@ -19,6 +19,16 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
     await page.goto(origin);
     await page.getByRole('status').filter({ hasText: /^ready$/ }).waitFor();
     assert.equal(await page.locator('.notification-item').count(), 1);
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-desktop.png',fullPage:true});
+    const unstyled = await page.evaluate(() => {
+      const section = document.createElement('section');
+      const button = document.createElement('button');
+      button.textContent = 'Unrelated control'; section.append(button); document.body.append(section);
+      const result = {sectionBorder:getComputedStyle(section).borderTopWidth,buttonHeight:button.getBoundingClientRect().height};
+      section.remove(); return result;
+    });
+    assert.equal(unstyled.sectionBorder,'0px');
+    assert.ok(unstyled.buttonHeight < 44, 'Shared button styles must not reach unrelated native buttons');
     await page.getByRole('button', { name: 'Add test notification' }).click();
     await page.getByRole('heading', { name: 'Test notification 2' }).waitFor();
     await page.getByRole('button', { name: 'Dismiss Test notification 2' }).click();
@@ -58,6 +68,7 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
     }
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-mobile.png',fullPage:true});
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

@@ -44,7 +44,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let activeMainAccount = 'alice';
   let bridgeOffline = false;
   const sessionStore = memorySessionStore();
+  const profiles = {alice:{name:'Alice',handle:'alice',pronoun:'neutral'},bob:{name:'Bob',handle:'bob',pronoun:'neutral'}};
   const bridgeOptions = {
+    getProfile: async id => ({...profiles[id],mainHref:mainOrigin+'/account'}),
+    updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = profile; users[id].name = profile.name; },
     sessionStore,
     listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app'}],limited:false}),
     createGrain: async (id, action, title, beforeCreate) => {
@@ -165,6 +168,24 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
+    await page.getByRole('link', {name:'Account',exact:true}).click();
+    await expect(page).toHaveTitle('Account · Sandstorm');
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice');
+    await page.getByLabel('Display name', {exact:true}).fill('Alice renamed');
+    await page.getByLabel('Handle', {exact:true}).fill('alice_renamed');
+    await page.getByLabel('Pronouns', {exact:true}).selectOption('female');
+    await page.getByRole('button', {name:'Save profile',exact:true}).click();
+    await page.getByText('Profile saved.', {exact:true}).waitFor();
+    await page.getByRole('heading', {name:'Connected as Alice renamed',exact:true}).waitFor();
+    assert.equal(profiles.bob.name,'Bob');
+    await page.reload();
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice renamed');
+    profiles.alice = {name:'Legacy edit',handle:'alice',pronoun:'neutral'};
+    await page.getByRole('button', {name:'Refresh profile',exact:true}).click();
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Legacy edit');
+    await page.getByLabel('Display name', {exact:true}).fill('Alice');
+    await page.getByRole('button', {name:'Save profile',exact:true}).click();
+    await page.getByText('Profile saved.', {exact:true}).waitFor();
     await page.getByRole('link', {name:'Apps',exact:true}).click();
     await page.getByLabel('Installed app action').waitFor();
     assert.equal(new URL(page.url()).pathname,'/apps');
@@ -243,6 +264,20 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const app = page.frames().find((frame) => frame.url().startsWith(grainOrigin));
     await app.evaluate(() => { window.renameFrameMarker = 'still here'; });
     await page.getByRole('button', {name:'Rename grain',exact:true}).click();
+    const dialog = page.getByRole('dialog', {name:'Rename grain',exact:true});
+    await expect(dialog).toBeVisible();
+    await expect(page.getByLabel('Grain title', {exact:true})).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.getByRole('button', {name:'Cancel rename',exact:true})).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByLabel('Grain title', {exact:true})).toBeFocused();
+    assert.equal(await dialog.evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 255)');
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-dialog.png'});
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('button', {name:'Rename grain',exact:true})).toBeFocused();
+    await page.getByRole('button', {name:'Rename grain',exact:true}).click();
+
     await page.getByLabel('Grain title', {exact:true}).fill('Renamed in Rust');
     await page.getByRole('button', {name:'Save title',exact:true}).click();
     await page.getByRole('heading', {name:'Renamed in Rust',exact:true}).waitFor();

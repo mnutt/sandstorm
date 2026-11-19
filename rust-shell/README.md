@@ -176,6 +176,31 @@ those when opening the link. No privileged backend capabilities cross the API.
 Mongo observation covers title, usage, trash, ownership, suspension, and token
 changes. Account switching, disconnect, and logout clear both projections.
 
+### Account profile
+
+The **Account** page (`/account`) reads and edits display name, handle, and
+pronouns for the linked account. Entering the page or choosing **Refresh profile**
+reads current values from Meteor. It does not subscribe to profile changes;
+refresh to see edits made in another tab. A refresh discards the local draft.
+Login methods, email, and profile pictures link to the canonical `/account` page
+in the main shell.
+
+`getProfile` and `updateProfile` derive the account from the linked session, never
+a browser-supplied account ID. Updates use the same `updateProfileForUser` helper
+as Meteor's `updateProfile` method, preserving handle/pronoun validation and
+signup completion. Only these three profile fields are writable. The spike bounds
+names to 160 characters and handles to 64; it admits one update per account and
+eight across the bridge, and rechecks login/cancellation immediately before writes.
+Profile reads are reauthorized before returning. Credentials and other profile
+fields are preserved.
+
+The profile service owns request lifetimes and save outcomes across route changes.
+Disconnect clears account data; an unconfirmed save displays an explicit warning
+and is never replayed. Late reads cannot overwrite a save or a different account.
+The displayed connected name updates after a successful save or profile refresh.
+This is not full account-settings parity or cross-tab conflict resolution: saves
+retain the main shell's last-write-wins behavior.
+
 ### Installed apps and grain creation
 
 The **Apps** page lists up to 100 installed account-owned actions. It refreshes
@@ -552,7 +577,11 @@ change's validation. This is separate from the main Meteor dependency tree.
 
 `App.svelte` composes route pages and layout. `Notifications.svelte`, `Grains.svelte`,
 `Apps.svelte`, and `GrainFrame.svelte` own their presentation and local form state.
-`styles.css` holds common controls and color tokens. Navigation links support
+`styles.css` holds semantic `--ss-*` tokens and a minimal document reset.
+Shared controls live in `components/ui`; their styles are scoped to the component.
+Bits UI supplies button and dialog behavior, while simple input/select controls
+retain native semantics. See `frontend/src/components/ui/README.md` for the
+component contract and visual direction. Navigation links support
 normal browser modifiers/new tabs; client navigation updates the document title,
 focuses the route content, and announces the page name.
 

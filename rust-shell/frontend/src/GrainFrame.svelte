@@ -1,4 +1,8 @@
 <script lang="ts">
+  import Modal from './components/ui/Modal.svelte';
+  import Button from './components/ui/Button.svelte';
+  import TextInput from './components/ui/TextInput.svelte';
+  import Panel from './components/ui/Panel.svelte';
   import { appPath } from './lib/router';
   import { onMount, untrack } from 'svelte';
   import { PowerboxChooser } from './lib/powerbox';
@@ -64,41 +68,94 @@
 </script>
 
 <svelte:window onmessage={message} />
-<section class="grain-view" aria-label="Open grain">
-  <div class="toolbar"><h2>{frameTitle || grain.title}</h2><button onclick={close}>Close grain</button></div>
+<Panel class="grain-view" aria-label="Open grain">
+  <div class="toolbar"><h2>{frameTitle || grain.title}</h2><Button variant="secondary" onclick={close}>Close grain</Button></div>
   {#if frameTitle}<p>Grain: {grain.title}</p>{/if}
-  {#if editing}
+  <Modal bind:open={editing} title="Rename grain" triggerLabel="Rename grain"
+    description="For a shared grain, this changes only your copy’s name." busy={renaming}
+    onTrigger={() => { draftTitle = grain.title; renameError = ''; }}>
     <form onsubmit={saveTitle}>
       <label for="rename-grain-title">Grain title</label>
-      <input id="rename-grain-title" bind:value={draftTitle} maxlength="160" required disabled={renaming} />
-      <button disabled={renaming || !draftTitle.trim()}>{renaming ? 'Saving title…' : 'Save title'}</button>
-      <button type="button" disabled={renaming} onclick={() => { editing = false; renameError = ''; }}>Cancel rename</button>
+      <TextInput id="rename-grain-title" bind:value={draftTitle} maxlength={160} required disabled={renaming} />
+      <div class="dialog-actions">
+      <Button type="submit" disabled={renaming || !draftTitle.trim()}>{renaming ? 'Saving title…' : 'Save title'}</Button>
+      <Button variant="secondary" type="button" disabled={renaming} onclick={() => { editing = false; renameError = ''; }}>Cancel rename</Button>
+      </div>
     </form>
-    <p>For a shared grain, this changes only your copy’s name.</p>
-  {:else}<button onclick={() => { draftTitle = grain.title; editing = true; renameError = ''; }}>Rename grain</button>{/if}
-  {#if renameError}<p role="alert">{renameError}</p>{/if}
+    {#if renameError}<p role="alert">{renameError}</p>{/if}
+  </Modal>
   <p><a href={mainHref}>Open in main shell ↗</a>
-    <button onclick={() => { sharing.request('share'); sharing.open(); }}>Share</button>
-    <button onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</button></p>
+    <Button onclick={() => { sharing.request('share'); sharing.open(); }}>Share</Button>
+    <Button onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</Button></p>
   {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
     {#if sharingState.status !== 'failed'}
-      <button onclick={() => sharing.open()}>Open sharing window</button>
-      <button onclick={() => sharing.cancel()}>Close sharing window</button>
-    {:else}<button onclick={() => sharing.cancel()}>Dismiss sharing error</button>{/if}
+      <Button onclick={() => sharing.open()}>Open sharing window</Button>
+      <Button onclick={() => sharing.cancel()}>Close sharing window</Button>
+    {:else}<Button onclick={() => sharing.cancel()}>Dismiss sharing error</Button>{/if}
   </div>{/if}
   {#if choosing}<div role="status"><p>This app wants you to choose a capability.</p>
-    <button onclick={() => chooser.open()}>Choose in Sandstorm</button>
-    <button onclick={() => chooser.cancel()}>Cancel request</button></div>{/if}
+    <Button onclick={() => chooser.open()}>Choose in Sandstorm</Button>
+    <Button onclick={() => chooser.cancel()}>Cancel request</Button></div>{/if}
   <iframe bind:this={frame} title={grain.title} src={grain.url} referrerpolicy="no-referrer"></iframe>
-</section>
+</Panel>
 
 <style>
-  .grain-view { min-width: 0; background: var(--surface); border: 1px solid var(--border); padding: 16px; }
-  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-  h2 { margin: 0; font-size: 20px; overflow-wrap: anywhere; }
-  button { font: inherit; padding: 8px 12px; cursor: pointer; }
-  a { color: var(--accent); }
-  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
-  input { font: inherit; padding: 8px; max-width: 100%; box-sizing: border-box; }
-  iframe { width: 100%; height: 70vh; min-height: 360px; border: 1px solid var(--border); }
+  h2 {
+    margin: 0 0 var(--ss-space-4);
+    font-size: var(--ss-text-title);
+    line-height: 1.3;
+  }
+
+  a {
+    color: var(--ss-brand);
+    text-underline-offset: .2em;
+  }
+
+  a:focus-visible {
+    outline: 3px solid var(--ss-focus);
+    outline-offset: 3px;
+  }
+
+  p {
+    overflow-wrap: anywhere;
+  }
+
+  [role=alert] {
+    color: var(--ss-danger);
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--ss-space-3);
+    margin-bottom: var(--ss-space-4);
+  }
+
+  h2 {
+    overflow-wrap: anywhere;
+  }
+
+  .dialog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ss-space-3);
+    justify-content: flex-end;
+    margin-top: var(--ss-space-3);
+  }
+
+  form {
+    display: grid;
+    gap: var(--ss-space-3);
+  }
+
+  iframe {
+    width: 100%;
+    height: 70vh;
+    min-height: 360px;
+    border: 1px solid var(--ss-border);
+    border-radius: var(--ss-radius-control);
+    background: var(--ss-surface);
+  }
 </style>
