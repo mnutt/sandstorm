@@ -7,10 +7,9 @@
 <style>
   section {
     min-width: 0;
-    padding: clamp(var(--ss-space-4), 3vw, var(--ss-space-6));
+    padding: var(--ss-space-4);
     background: var(--ss-surface);
     border: 1px solid var(--ss-border);
-    border-radius: var(--ss-radius-panel);
-    box-shadow: var(--ss-shadow-panel);
+    border-radius: var(--ss-radius-control);
   }
 </style>

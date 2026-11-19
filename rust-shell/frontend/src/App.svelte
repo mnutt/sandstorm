@@ -8,6 +8,7 @@
   import GrainFrame from './GrainFrame.svelte';
   import Apps from './Apps.svelte';
   import Account from './Account.svelte';
+  import AccountMenu from './AccountMenu.svelte';
   import Grains from './Grains.svelte';
   import Notifications from './Notifications.svelte';
   import './styles.css';
@@ -38,32 +39,25 @@
 <svelte:window onpopstate={() => navigation.navigate(location.pathname + location.search + location.hash, true)} />
 <svelte:head><title>{pageTitle} · Sandstorm</title><meta name="description" content="Experimental Sandstorm shell running on Rust and Svelte." /></svelte:head>
 
-<header><strong>Sandstorm</strong><span>Rust shell · experimental</span></header>
+<header>
+  <a class="brand" href="/grains" onclick={event => navigation.link(event, '/grains')}>Sandstorm</a>
+  <div class="topbar-actions">
+    <a class="notifications" href="/notifications" aria-label="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
+      onclick={event => navigation.link(event, '/notifications')}>
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+      <span>Notifications</span>
+      {#if model.entries.some(entry => entry.unread)}<span class="unread" aria-label="Unread notifications"></span>{/if}
+    </a>
+    <AccountMenu {model} navigate={(event, path) => navigation.link(event, path)} disconnect={() => service.logout()} />
+  </div>
+</header>
 <main class="shell-layout">
-  <aside aria-label="About this shell">
-    <h1>Shell preview</h1>
-    <p>A small first step toward the new architecture.</p>
-    <a href="/main-shell">Open the main shell ↗</a>
+  <aside aria-label="Shell navigation">
     <nav aria-label="Shell pages">
-      <a href="/notifications" aria-current={view === 'notifications' ? 'page' : undefined} onclick={event => navigation.link(event, '/notifications')}>Notifications</a>
-      <a href="/grains" aria-current={view === 'grains' ? 'page' : undefined} onclick={event => navigation.link(event, '/grains')}>Grains</a>
       <a href="/apps" aria-current={view === 'apps' ? 'page' : undefined} onclick={event => navigation.link(event, '/apps')}>Apps</a>
-      <a href="/account" aria-current={view === 'account' ? 'page' : undefined} onclick={event => navigation.link(event, '/account')}>Account</a>
+      <a href="/grains" aria-current={view === 'grains' ? 'page' : undefined} onclick={event => navigation.link(event, '/grains')}>Grains</a>
     </nav>
-    <hr />
-    {#if model.fixture}
-      <h2>Fixture mode</h2>
-      <p>These notifications are test data, private to this connection. Reconnecting resets them.</p>
-    {:else if model.account}
-      <h2>Connected as {model.account}</h2>
-      <p>Notifications and dismissals are shared with the main shell. Changes appear within a few seconds.</p>
-      <p><a href="/auth/start" onclick={rememberRoute}>Switch account</a></p>
-      <Button variant="secondary" onclick={() => service.logout()}>Disconnect</Button>
-    {:else}
-      <h2>Your Sandstorm account</h2>
-      <p>Sign in through the main shell to see your real notifications.</p>
-    {/if}
-    <p>Create and open grains here. Installation and sharing management use the main shell.</p>
+    <div class="shell-links"><a href="/main-shell">Main shell ↗</a><small>Preview</small></div>
   </aside>
   <div class="route-content" bind:this={content} tabindex="-1">
   <p class="sr-only" aria-live="polite" aria-atomic="true">{pageTitle}</p>
@@ -105,51 +99,103 @@
 <style>
   header {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--ss-space-3);
-    padding: var(--ss-space-4) clamp(var(--ss-space-4), 4vw, var(--ss-space-7));
+    align-items: center;
+    min-height: 3rem;
+    padding: 0 var(--ss-space-3);
     background: var(--ss-brand-hover);
     color: white;
   }
 
-  header strong {
-    font-size: 1.5rem;
+  .brand {
+    font-size: 1.25rem;
+    font-weight: 700;
     letter-spacing: -.03em;
+    color: inherit;
+    text-decoration: none;
   }
 
-  header span {
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--ss-space-2);
+    min-width: 0;
+  }
+
+  .notifications {
+    display: flex;
+    align-items: center;
+    gap: var(--ss-space-2);
+    min-height: var(--ss-control-height);
+    padding: 0 var(--ss-space-3);
+    color: inherit;
+    text-decoration: none;
     font-size: var(--ss-text-small);
-    color: #e8dcef;
+  }
+
+  .notifications:hover, .notifications[aria-current=page] {
+    background: #ffffff18;
+  }
+
+  .unread {
+    width: .5rem;
+    height: .5rem;
+    border-radius: 50%;
+    background: white;
   }
 
   .shell-layout {
     display: grid;
-    grid-template-columns: 15rem minmax(0, 1fr);
-    gap: var(--ss-space-6);
-    max-width: 80rem;
-    margin: var(--ss-space-7) auto;
-    padding: 0 var(--ss-space-5);
+    grid-template-columns: 11rem minmax(0, 1fr);
+    min-height: calc(100dvh - 3rem);
+    --ss-workspace-height: calc(100dvh - 4.5rem);
   }
 
   aside {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--ss-border);
+    background: var(--ss-surface);
+    padding: var(--ss-space-3) var(--ss-space-2);
   }
 
-  h1 {
-    font-size: var(--ss-text-title);
-    margin: 0 0 var(--ss-space-3);
+  nav {
+    display: grid;
+    gap: var(--ss-space-1);
   }
 
-  h2 {
-    font-size: 1rem;
-    overflow-wrap: anywhere;
+  nav a {
+    display: flex;
+    align-items: center;
+    min-height: var(--ss-control-height);
+    padding: 0 var(--ss-space-3);
+    border-radius: var(--ss-radius-control);
+    color: var(--ss-text);
+    text-decoration: none;
+    font-weight: 600;
   }
 
-  aside p {
-    color: var(--ss-muted);
+  nav a:hover {
+    background: var(--ss-canvas);
+  }
+
+  nav a[aria-current=page] {
+    color: var(--ss-brand-hover);
+    background: var(--ss-brand-subtle);
+    box-shadow: inset 3px 0 var(--ss-brand);
+  }
+
+  .shell-links {
+    display: grid;
+    gap: var(--ss-space-1);
+    margin-top: auto;
+    padding: var(--ss-space-3);
     font-size: var(--ss-text-small);
+  }
+
+  small {
+    color: var(--ss-muted);
   }
 
   a {
@@ -159,64 +205,66 @@
 
   a:focus-visible {
     outline: 3px solid var(--ss-focus);
-    outline-offset: 3px;
+    outline-offset: -3px;
   }
 
-  nav {
-    display: grid;
-    gap: var(--ss-space-2);
-    margin: var(--ss-space-5) 0;
+  header a:focus-visible {
+    outline-color: white;
   }
 
-  nav a {
-    min-height: var(--ss-control-height);
-    padding: var(--ss-space-2) var(--ss-space-3);
-    display: flex;
-    align-items: center;
-    border: 1px solid transparent;
-    border-radius: var(--ss-radius-control);
-    text-decoration: none;
-    color: var(--ss-muted);
-    font-weight: 600;
-  }
-
-  nav a:hover {
-    background: var(--ss-surface);
-  }
-
-  nav a[aria-current=page] {
-    color: var(--ss-brand-hover);
-    background: var(--ss-brand-subtle);
-    border-color: var(--ss-border);
-    box-shadow: inset 3px 0 var(--ss-brand);
-  }
-
-  hr {
-    border: 0;
-    border-top: 1px solid var(--ss-border);
-    margin: var(--ss-space-5) 0;
+  h2 {
+    font-size: var(--ss-text-title);
   }
 
   .route-content {
     min-width: 0;
+    padding: var(--ss-space-3);
+  }
+
+  .route-content:focus {
+    outline: none;
   }
 
   .error {
-    padding: var(--ss-space-4);
-    margin-bottom: var(--ss-space-4);
+    padding: var(--ss-space-3);
+    margin: 0 0 var(--ss-space-3);
     color: var(--ss-danger);
     background: var(--ss-danger-subtle);
     border-radius: var(--ss-radius-control);
   }
 
-  @media (max-width: 760px) {
+  @media (max-width: 600px) {
     .shell-layout {
       grid-template-columns: minmax(0, 1fr);
-      margin: var(--ss-space-5) auto;
-      padding: 0 var(--ss-space-4);
+      grid-template-rows: auto 1fr;
+      --ss-workspace-height: calc(100dvh - 8rem);
+    }
+    aside {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      border-right: 0;
+      border-bottom: 1px solid var(--ss-border);
+      padding: var(--ss-space-1) var(--ss-space-2);
     }
     nav {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      display: flex;
+    }
+    .shell-links {
+      margin: 0;
+      padding: 0 var(--ss-space-2);
+    }
+    .shell-links small {
+      display: none;
+    }
+    .notifications > span:not(.unread) {
+      display: none;
+    }
+    .notifications {
+      padding: 0 var(--ss-space-2);
+    }
+    .route-content {
+      padding: var(--ss-space-2);
     }
   }
 </style>

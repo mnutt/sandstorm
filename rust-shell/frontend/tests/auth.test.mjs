@@ -168,15 +168,17 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
+    await page.getByRole('button', {name:'Account: Alice',exact:true}).click();
     await page.getByRole('link', {name:'Account',exact:true}).click();
     await expect(page).toHaveTitle('Account · Sandstorm');
+    await expect(page.locator('.route-content')).toBeFocused();
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice');
     await page.getByLabel('Display name', {exact:true}).fill('Alice renamed');
     await page.getByLabel('Handle', {exact:true}).fill('alice_renamed');
     await page.getByLabel('Pronouns', {exact:true}).selectOption('female');
     await page.getByRole('button', {name:'Save profile',exact:true}).click();
     await page.getByText('Profile saved.', {exact:true}).waitFor();
-    await page.getByRole('heading', {name:'Connected as Alice renamed',exact:true}).waitFor();
+    await page.getByRole('button', {name:'Account: Alice renamed',exact:true}).waitFor();
     assert.equal(profiles.bob.name,'Bob');
     await page.reload();
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice renamed');
@@ -225,6 +227,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.getByRole('link', { name: 'Bob grain', exact: true }).count(), 0);
     await page.locator('.grain-item').getByText('Owned by you', { exact: true }).waitFor();
     assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Zebra shared');
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-grains.png',fullPage:true});
     await page.getByLabel('Sort by').selectOption('title');
     assert.equal(await page.locator('.grain-item h3').first().innerText(), 'Alice grain');
     await page.getByLabel('Filter shown grains').fill('editor');
@@ -263,6 +266,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     const app = page.frames().find((frame) => frame.url().startsWith(grainOrigin));
     await app.evaluate(() => { window.renameFrameMarker = 'still here'; });
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-grain.png',fullPage:true});
     await page.getByRole('button', {name:'Rename grain',exact:true}).click();
     const dialog = page.getByRole('dialog', {name:'Rename grain',exact:true});
     await expect(dialog).toBeVisible();
@@ -548,6 +552,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await other.goto(proxy.origin);
     await other.getByRole('heading', { name: /Alice notification/ }).waitFor();
     activeMainAccount = 'bob';
+    await page.getByRole('button', {name:'Account: Alice',exact:true}).click();
     await page.getByRole('link', { name: 'Switch account' }).click();
     await page.getByRole('button', { name: 'Connect Bob' }).click();
     await page.getByRole('heading', { name: /Bob notification/ }).waitFor();
@@ -561,6 +566,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await other.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();
     await other.frameLocator('iframe').locator('body').evaluate(() => parent.postMessage({ getGrainTitle: {}, rpcId: 'shared-title' }, '*'));
     await expect.poll(() => other.frameLocator('iframe').locator('body').evaluate(() => window.reply?.grainTitle)).toBe('Owner title');
+    await page.getByRole('button', {name:'Account: Bob',exact:true}).click();
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await expect.poll(() => liveGrains.size).toBe(0);
     await expect.poll(() => other.locator('iframe').count()).toBe(0);

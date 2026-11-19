@@ -25,10 +25,9 @@
     {:else if model.fixture}
       <p class="empty">Connect to an installed Sandstorm server to see real grains.</p>
     {:else}
-      <p>Open a grain here using your Sandstorm identity. Sharing and Powerbox remain in the main shell.</p>
-      <label for="grain-search">Filter shown grains</label>
-      <TextInput id="grain-search" type="search" bind:value={search} placeholder="Search by title or app" />
       <div class="grain-controls">
+      <div class="search"><label for="grain-search">Filter shown grains</label>
+      <TextInput id="grain-search" type="search" bind:value={search} placeholder="Search by title or app" /></div>
         <div><label for="grain-ownership">Show</label><NativeSelect id="grain-ownership" bind:value={ownership}><option value="all">All shown grains</option><option value="owned">Owned by you</option><option value="shared">Shared with you</option></NativeSelect></div>
         <div><label for="grain-sort">Sort by</label><NativeSelect id="grain-sort" bind:value={sort}><option value="recent">Recent use</option><option value="title">Title</option></NativeSelect></div>
         <Button variant="secondary" onclick={() => service.reconnect()}>Refresh</Button>
@@ -50,7 +49,7 @@
   </Panel>
 <style>
   h2 {
-    margin: 0 0 var(--ss-space-4);
+    margin: 0;
     font-size: var(--ss-text-title);
     line-height: 1.3;
   }
@@ -86,12 +85,16 @@
     font-size: var(--ss-text-small);
   }
 
+  .search {
+    flex: 1 1 14rem;
+  }
+
   .grain-controls {
     display: flex;
     flex-wrap: wrap;
     gap: var(--ss-space-3);
     align-items: end;
-    margin: var(--ss-space-4) 0;
+    margin: var(--ss-space-3) 0;
   }
 
   ul {
@@ -106,7 +109,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--ss-space-4);
-    padding: var(--ss-space-5) 0;
+    padding: var(--ss-space-3) 0;
     border-top: 1px solid var(--ss-border);
   }
 
@@ -129,5 +132,14 @@
     margin-bottom: var(--ss-space-2);
     font-size: var(--ss-text-small);
     font-weight: 600;
+  }
+
+  @media (min-width: 1000px) {
+    li > div {
+      display: grid;
+      grid-template-columns: minmax(9rem, 1fr) minmax(9rem, 1fr) minmax(10rem, 1fr);
+      align-items: center;
+      gap: var(--ss-space-3);
+    }
   }
 </style>

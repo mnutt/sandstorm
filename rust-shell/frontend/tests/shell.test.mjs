@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { start, stop, serveProbe } from './harness.mjs';
 
 test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { timeout: 60000 }, async () => {
@@ -69,6 +69,14 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-mobile.png',fullPage:true});
+    assert.ok((await page.locator('#notifications-title').boundingBox()).y < 200, 'Mobile content starts below the compact navigation');
+    const account = page.getByRole('button', {name:'Account: Fixture mode',exact:true});
+    await account.click();
+    await expect(page.getByRole('link', {name:'Account',exact:true})).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('link', {name:'Account',exact:true})).toHaveCount(0);
+    await expect(account).toBeFocused();
+
     assert.deepEqual(errors, []);
   } finally {
     await browser?.close();

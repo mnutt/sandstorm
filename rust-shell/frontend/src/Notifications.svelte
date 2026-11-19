@@ -6,7 +6,7 @@
   let { model, service }: { model: ShellState; service: ShellService } = $props();
 </script>
   <Panel aria-labelledby="notifications-title">
-    <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{model.status}</span></div>
+    <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{model.status}</span>
     <div class="actions">
       {#if model.status === 'signed-out'}
         <a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a>
@@ -18,7 +18,7 @@
         {/if}
         <Button variant="secondary" onclick={() => service.reconnect()}>Reconnect</Button>
       {/if}
-    </div>
+    </div></div>
     {#if model.status === 'signed-out'}
       <p class="empty">Connect your account to load notifications.</p>
     {:else if model.status !== 'ready'}
@@ -44,11 +44,10 @@
       </ul>
     {/if}
     {#if model.total > model.entries.length && model.status === 'ready'}<p>Showing {model.entries.length} of {model.total} notifications. <a href="/main-shell">View all in the main shell.</a></p>{/if}
-    <footer>Rust / Axum · Svelte / TypeScript · Cap’n Proto RPC<br />Snapshot revision {model.revision}</footer>
   </Panel>
 <style>
   h2 {
-    margin: 0 0 var(--ss-space-4);
+    margin: 0;
     font-size: var(--ss-text-title);
     line-height: 1.3;
   }
@@ -73,22 +72,25 @@
   }
 
   .heading {
+    flex-wrap: wrap;
+    margin-bottom: var(--ss-space-3);
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: center;
     gap: var(--ss-space-3);
   }
 
-  .status, time, footer {
+  .status, time {
     color: var(--ss-muted);
     font-size: var(--ss-text-small);
   }
 
   .actions {
+    margin-left: auto;
     display: flex;
     flex-wrap: wrap;
     gap: var(--ss-space-3);
-    margin: var(--ss-space-5) 0;
+    margin: 0 0 0 auto;
   }
 
   ul {
@@ -104,7 +106,7 @@
     align-items: start;
     gap: var(--ss-space-4);
     border-top: 1px solid var(--ss-border);
-    padding: var(--ss-space-5) 0;
+    padding: var(--ss-space-3) 0;
   }
 
   li > div {
@@ -113,7 +115,7 @@
   }
 
   li p {
-    margin: var(--ss-space-2) 0;
+    margin: var(--ss-space-1) 0;
     color: var(--ss-muted);
   }
 
@@ -123,10 +125,5 @@
     background: var(--ss-brand-subtle);
     padding: var(--ss-space-1) var(--ss-space-2);
     border-radius: var(--ss-radius-control);
-  }
-
-  footer {
-    border-top: 1px solid var(--ss-border);
-    padding-top: var(--ss-space-4);
   }
 </style>

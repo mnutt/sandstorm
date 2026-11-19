@@ -40,8 +40,11 @@ not require page-specific overrides. Light mode is the current supported theme.
 Controls have a 44px minimum target height. Focus uses a visible 3px outline;
 selected navigation has a border/inset marker as well as color. The current
 foundation uses no motion; future transitions must honor reduced-motion settings.
-Preserve native links and browser modifiers for route navigation. At narrow widths
-the layout becomes one column and rows/actions wrap. Keep component content usable
+Preserve native links and browser modifiers for route navigation. Shell placement follows the main UI: Apps/Grains in the left rail, notifications
+and the account popover in the top bar, and grain actions immediately above the
+iframe. Explanatory preview copy stays out of the workspace. Panels use compact
+padding; desktop grain rows align their metadata in columns. At narrow widths
+the rail becomes a short horizontal navigation row and actions wrap. Keep component content usable
 at zoom and allow long account/grain names to wrap.
 
 ## Validation

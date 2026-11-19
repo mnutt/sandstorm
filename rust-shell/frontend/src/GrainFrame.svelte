@@ -2,7 +2,6 @@
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
-  import Panel from './components/ui/Panel.svelte';
   import { appPath } from './lib/router';
   import { onMount, untrack } from 'svelte';
   import { PowerboxChooser } from './lib/powerbox';
@@ -68,9 +67,12 @@
 </script>
 
 <svelte:window onmessage={message} />
-<Panel class="grain-view" aria-label="Open grain">
-  <div class="toolbar"><h2>{frameTitle || grain.title}</h2><Button variant="secondary" onclick={close}>Close grain</Button></div>
-  {#if frameTitle}<p>Grain: {grain.title}</p>{/if}
+<section class="grain-view" aria-label="Open grain">
+  <div class="toolbar">
+    <div class="grain-title"><h2>{frameTitle || grain.title}</h2>
+      {#if frameTitle}<p>{grain.title}</p>{/if}
+    </div>
+    <div class="grain-actions">
   <Modal bind:open={editing} title="Rename grain" triggerLabel="Rename grain"
     description="For a shared grain, this changes only your copy’s name." busy={renaming}
     onTrigger={() => { draftTitle = grain.title; renameError = ''; }}>
@@ -84,9 +86,12 @@
     </form>
     {#if renameError}<p role="alert">{renameError}</p>{/if}
   </Modal>
-  <p><a href={mainHref}>Open in main shell ↗</a>
+  <a href={mainHref}>Main shell ↗</a>
     <Button onclick={() => { sharing.request('share'); sharing.open(); }}>Share</Button>
-    <Button onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</Button></p>
+    <Button variant="secondary" onclick={() => { sharing.request('access'); sharing.open(); }}>Who has access</Button>
+    <Button variant="secondary" onclick={close}>Close grain</Button>
+    </div>
+  </div>
   {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
     {#if sharingState.status !== 'failed'}
       <Button onclick={() => sharing.open()}>Open sharing window</Button>
@@ -97,11 +102,40 @@
     <Button onclick={() => chooser.open()}>Choose in Sandstorm</Button>
     <Button onclick={() => chooser.cancel()}>Cancel request</Button></div>{/if}
   <iframe bind:this={frame} title={grain.title} src={grain.url} referrerpolicy="no-referrer"></iframe>
-</Panel>
+</section>
 
 <style>
+  .grain-view {
+    display: flex;
+    flex-direction: column;
+    height: var(--ss-workspace-height);
+    min-height: 24rem;
+  }
+
+  .grain-title {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+
+  .grain-title p {
+    margin: 0;
+    color: var(--ss-muted);
+    font-size: var(--ss-text-small);
+  }
+
+  .grain-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ss-space-2);
+  }
+
+  .grain-actions a {
+    font-size: var(--ss-text-small);
+  }
+
   h2 {
-    margin: 0 0 var(--ss-space-4);
+    margin: 0;
     font-size: var(--ss-text-title);
     line-height: 1.3;
   }
@@ -130,7 +164,7 @@
     justify-content: space-between;
     align-items: center;
     gap: var(--ss-space-3);
-    margin-bottom: var(--ss-space-4);
+    margin-bottom: var(--ss-space-2);
   }
 
   h2 {
@@ -152,8 +186,8 @@
 
   iframe {
     width: 100%;
-    height: 70vh;
-    min-height: 360px;
+    flex: 1;
+    min-height: 12rem;
     border: 1px solid var(--ss-border);
     border-radius: var(--ss-radius-control);
     background: var(--ss-surface);
