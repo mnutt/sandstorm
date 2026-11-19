@@ -1,3 +1,4 @@
+import { clearStoredTemplateOffers } from './template';
 import { ProfileService, type Profile } from './profile';
 import type { Shell$Client, Snapshot } from '../generated/shell';
 import { ShellConnection } from './connection';
@@ -19,9 +20,11 @@ export class ShellService {
   private notificationOperation = 0;
 
   constructor(private changed: (state: ShellState) => void) {
+    clearStoredTemplateOffers();
     this.connection = new ShellConnection({
       reset: () => {
         this.grains.reset();
+        clearStoredTemplateOffers();
         this.profile.reset();
         this.apps.interrupt();
         if (this.state.pending) this.update({ pending: false, notificationError: 'Connection changed. The action was not retried; its outcome may be unknown.' });

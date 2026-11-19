@@ -1,15 +1,17 @@
 import { templateRequest } from './protocol';
 const prefix = 'rustOfferTemplate:';
+// Page/authentication boundaries clear stale credentials even when no grain is
+// opened. Individual grain services must only remove their own live offers.
+export function clearStoredTemplateOffers() {
+  try { for (const key of Object.keys(sessionStorage)) if (key.startsWith(prefix)) sessionStorage.removeItem(key); }
+  catch { /* A template request reports disabled storage without breaking the shell. */ }
+}
 export class TemplateOffers {
   private keys = new Set<string>();
   private generation = 0;
   private reserved = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private tokens = new Map<string, { since: number; promise: Promise<{token: string; host: string}> }>();
-  constructor() {
-    try { for (const key of Object.keys(sessionStorage)) if (key.startsWith(prefix)) sessionStorage.removeItem(key); }
-    catch { /* A template request reports disabled storage without breaking the shell. */ }
-  }
   clear() {
     ++this.generation;
     this.reserved = 0;

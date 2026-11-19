@@ -581,8 +581,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const cookie = (await context.cookies()).find((cookie) => cookie.name === '__Host-sandstorm-rust-session');
     assert.equal(cookie.httpOnly, true); assert.equal(cookie.secure, true); assert.equal(cookie.sameSite, 'Lax');
     assert.equal(await page.evaluate(() => document.cookie.includes('__Host-sandstorm-rust-session')), false);
+    await page.evaluate(() => sessionStorage.setItem('rustOfferTemplate:orphaned-before-reload', 'stale credential'));
     await page.reload();
     await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
+    assert.equal(await page.evaluate(() => Object.keys(sessionStorage).filter(key => key.startsWith('rustOfferTemplate:')).length), 0,
+      'a shell reload must clear stale template credentials even without opening a grain');
     assert.equal((await context.cookies()).find((entry) => entry.name === cookie.name).value, cookie.value,
       'ordinary reload must preserve the linked session');
     await expect.poll(() => observers.size).toBe(1);

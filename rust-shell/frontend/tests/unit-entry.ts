@@ -8,3 +8,5 @@ export * from '../src/lib/shell';
 export * from '../src/lib/profile';
 
 export * from '../src/lib/workspace';
+
+export * from '../src/lib/template';

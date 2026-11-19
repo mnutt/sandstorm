@@ -10,7 +10,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
 const { runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
-  SharingWindow, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+  TemplateOffers, clearStoredTemplateOffers, SharingWindow, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -309,4 +309,36 @@ test('workspace isolates tab operations, preserves paths, and discards canceled 
   workspace.reset();
   assert.equal(state.openGrains.length,0);
   assert.throws(() => workspace.rename('a','Not live'),/closed/);
+});
+
+
+test('template credentials are isolated between grains and cleared at shell/session boundaries', async t => {
+  browserGlobals(t);
+  const storage = {};
+  Object.defineProperties(storage, {
+    setItem: {value: (key, value) => { storage[key] = value; }},
+    getItem: {value: key => storage[key] ?? null},
+    removeItem: {value: key => { delete storage[key]; }},
+  });
+  globalThis.sessionStorage = storage;
+  storage['rustOfferTemplate:stale'] = 'old credential';
+  storage['unrelated'] = 'keep me';
+  const shell = new ShellService(() => {});
+  assert.equal(storage['rustOfferTemplate:stale'], undefined, 'boot clears old offers without opening a grain');
+  assert.equal(storage.unrelated, 'keep me');
+  const first = new TemplateOffers();
+  const issue = async () => ({host:'api.test',token:'test-token'});
+  const firstUrl = await first.render({rpcId:'first',template:'$API_TOKEN'},'First',issue);
+  const firstKey = 'rustOfferTemplate:' + new URL(firstUrl).hash.slice(1);
+  const second = new TemplateOffers();
+  assert.ok(storage[firstKey], 'opening another grain must not delete a live offer');
+  const secondUrl = await second.render({rpcId:'second',template:'$API_TOKEN'},'Second',issue);
+  const secondKey = 'rustOfferTemplate:' + new URL(secondUrl).hash.slice(1);
+  second.clear();
+  assert.ok(storage[firstKey]);
+  assert.equal(storage[secondKey],undefined);
+  shell.connection.events.reset();
+  assert.equal(storage[firstKey],undefined, 'session reset clears offers, including orphaned keys');
+  assert.equal(storage.unrelated,'keep me');
+  clearStoredTemplateOffers();
 });

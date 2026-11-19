@@ -397,8 +397,9 @@ plain text on the Rust shell origin; the app cannot read its DOM or token. Only
 this static renderer allows HTTPS framing; the shell itself retains
 `frame-ancestors 'none'`. The renderer performs the existing token keepalive,
 expires unavailable/revoked offers, and never posts token contents to its parent.
-Closing the grain or losing the connection removes its stored offers. Reload
-clears leftovers. Direct top-level display is disabled. Clipboard permissions
+Closing a grain removes only its own stored offers. Shell initialization and
+every connection reset clear all leftover offers, even on routes that open no
+grain. Opening another workspace tab does not invalidate existing live offers. Direct top-level display is disabled. Clipboard permissions
 may require selecting/copying text manually in an embedded app.
 
 Browser tests check placeholder substitution, text-only rendering, origin
