@@ -79,6 +79,8 @@ export class ShellService {
     return this.grains.open(typeof requested === 'string' ? requested : requested.key, path, this.state.grains);
   }
   renameGrain(id: string, title: string) { return this.grains.rename(id, title); }
+  powerbox(id: string) { return this.grains.powerbox(id); }
+  sharing(id: string) { return this.grains.sharing(id); }
   renderTemplate(id: string, input: unknown) { return this.grains.renderTemplate(id, input); }
   loadProfile() { return this.profile.load(); }
   saveProfile(profile: Pick<Profile, 'name' | 'handle' | 'pronoun'>) { return this.profile.save(profile); }

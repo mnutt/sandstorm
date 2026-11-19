@@ -1,3 +1,5 @@
+import type { PowerboxActions, PowerboxState } from './powerbox-native';
+import type { SharingState, ShareChanges } from './sharing';
 import type { GrainSession$Client } from '../generated/shell';
 import type { ShellConnection } from './connection';
 import type { ActiveGrain, Grain } from './model';
@@ -108,6 +110,39 @@ export class GrainService {
       if (generation === this.generation) this.changed({ grainError: `Could not confirm rename. Check the current title before trying again. ${errorMessage(error)}` });
       throw error;
     } finally { if (generation === this.generation) this.renaming = false; }
+  }
+  async powerbox(request: string, operation: Parameters<PowerboxActions['call']>[1], input: Record<string, unknown> = {}): Promise<PowerboxState> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) throw new Error('No active grain.');
+    const result = await this.connection.run(session.powerbox(params => {
+      params.request = request; params.operation = operation; params.input = JSON.stringify(input);
+    }).promise(), 'Powerbox');
+    if (generation !== this.generation) throw new Error('Grain session changed.');
+    return JSON.parse(result.state) as PowerboxState;
+  }
+  async sharingState(): Promise<SharingState> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) throw new Error('No active grain.');
+    const result = await this.connection.run(session.getSharing().promise(), 'Load sharing');
+    if (generation !== this.generation) throw new Error('Grain session changed.');
+    return JSON.parse(result.state) as SharingState;
+  }
+  async createShare(label: string, role: string): Promise<string> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) throw new Error('No active grain.');
+    const result = await this.connection.run(session.createShare(params => { params.label = label; params.role = role; }).promise(), 'Create sharing link');
+    if (generation !== this.generation) throw new Error('Grain session changed. Check sharing links before trying again.');
+    return result.token;
+  }
+  async updateShare(id: string, changes: ShareChanges): Promise<void> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) throw new Error('No active grain.');
+    await this.connection.run(session.updateShare(params => { params.id = id; params.changes = JSON.stringify(changes); }).promise(), 'Update sharing');
+    if (generation !== this.generation) throw new Error('Grain session changed.');
   }
   async renderTemplate(input: unknown) {
     const session = this.session;

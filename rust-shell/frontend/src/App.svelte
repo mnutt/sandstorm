@@ -141,7 +141,7 @@
     {#each model.openGrains as grain (grain.url)}
       <GrainFrame {toolbarTarget} active={model.activeGrain?.grainId === grain.grainId}
         pathChanged={path => pathChanged(grain.grainId, path)} rename={title => service.renameGrain(grain.grainId, title)}
-        renderTemplate={input => service.renderTemplate(grain.grainId, input)} {grain} />
+        powerboxActions={service.powerbox(grain.grainId)} sharingActions={service.sharing(grain.grainId)} renderTemplate={input => service.renderTemplate(grain.grainId, input)} {grain} />
     {/each}
   {/if}
   {#if !model.activeGrain}

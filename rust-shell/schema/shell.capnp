@@ -62,6 +62,13 @@ interface GrainSession {
   close @0 () -> ();
   renderTemplate @1 (options :Text) -> (token :Text, host :Text);
   rename @2 (title :Text) -> (title :Text, ownerTitle :Text);
+  powerbox @6 (request :Text, operation :Text, input :Text) -> (state :Text);
+  # Request IDs identify child lifetimes, never authority outside this grain.
+  getSharing @3 () -> (state :Text);
+  createShare @4 (label :Text, role :Text) -> (token :Text);
+  updateShare @5 (id :Text, changes :Text) -> ();
+  # Bounded sharing projection and strictly validated changes, scoped to this grain.
+  # A freshly created webkey is returned only to trusted shell UI, never the app.
   # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.

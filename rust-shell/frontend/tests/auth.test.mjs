@@ -45,6 +45,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let bridgeOffline = false;
   const sessionStore = memorySessionStore();
   const profiles = {alice:{name:'Alice',handle:'alice',pronoun:'neutral'},bob:{name:'Bob',handle:'bob',pronoun:'neutral'}};
+  const sharingGrants = [];
+  let shareCreations = 0;
+  let providerComplete = false;
+  const nativeProviders = new Set();
   const bridgeOptions = {
     getProfile: async id => ({...profiles[id],mainHref:mainOrigin+'/account'}),
     updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = profile; users[id].name = profile.name; },
@@ -59,6 +63,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
     },
     now: () => Date.now() + leaseClockOffset,
     grains: {
+      powerbox: {
+        open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
+        select: async (request, input) => {
+          if (input.key === 'view') return {status:'complete',token:'native-view-token',descriptor:'view-descriptor'};
+          assert.equal(input.key,'provider'); providerComplete = false; nativeProviders.add(request);
+          return {status:'provider',title:'Test provider',origin:grainOrigin,url:grainOrigin+'/powerbox-provider'};
+        },
+        poll: async () => providerComplete ? {status:'complete',token:'native-provider-token',descriptor:'provider-descriptor'} : {status:'waiting'},
+        close: async request => { nativeProviders.delete(request); },
+      },
       open: async (id, grainId) => {
         if (![`${id}-grain`, `${id}-hidden`, `${id}-created`, `${id}-extra`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
@@ -68,6 +82,21 @@ test('authenticated notifications: handoff, shared writes, account switching and
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
       rename: async (_handle, title, beforeWrite) => { await beforeWrite(); grainTitles.alice = title; changed(); return { title, ownerTitle: title }; },
+      sharing: async () => ({roles:[{key:'0',title:'Viewer',description:'Read only'},{key:'1',title:'Editor',description:'Can edit'}],defaultRole:'0',private:true,owner:true,
+        grants:[...sharingGrants,{id:'downstream',kind:'person',recipient:'Bob',label:'Via project link',role:'0',editable:false,inherited:true,created:''}],limited:false}),
+      createShare: async (_handle, input, beforeWrite) => {
+        await beforeWrite(); ++shareCreations;
+        sharingGrants.push({id:'share-'+shareCreations,kind:'link',label:input.label,role:input.role,editable:true,inherited:false,created:'',recipient:'Anyone with the link'});
+        return {id:'share-'+shareCreations,token:'native-share-'+shareCreations};
+      },
+      updateShare: async (_handle, input, beforeWrite) => {
+        await beforeWrite();
+        const index = sharingGrants.findIndex(row => row.id === input.id);
+        assert.ok(index >= 0);
+        if (input.changes.revoked) sharingGrants.splice(index,1);
+        else Object.assign(sharingGrants[index],input.changes);
+        return {};
+      },
       template: async () => ({ id: ++templates, token: 'sensitive-template-token', host: new URL(grainOrigin).host }),
       revokeTemplate: async () => { --templates; },
     },
@@ -110,6 +139,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
   try {
     proxy = await httpsProxy(directory, socket);
     grainServer = httpsServer(proxy.tls, (_req, res) => {
+      if (_req.url === '/powerbox-complete') { providerComplete = true; res.end('ok'); return; }
+      if (_req.url === '/powerbox-provider') {
+        res.setHeader('Content-Type','text/html');
+        res.end(`<button onclick="fetch('/powerbox-complete')">Select test object</button>`); return;
+      }
       res.setHeader('Content-Type', 'text/html');
       res.end('<h1>Embedded test grain</h1><input aria-label="App state"><script>window.addEventListener("message", event => { window.reply = event.data; });</script>');
     });
@@ -122,18 +156,6 @@ test('authenticated notifications: handoff, shared writes, account switching and
     bridgeServer.listen(bridgeSocket); await once(bridgeServer, 'listening'); await chmod(bridgeSocket, 0o600);
     main = httpsServer(proxy.tls, async (req, res) => {
       try {
-        if (req.url === '/rust-shell-sharing') {
-          res.setHeader('Content-Type', 'text/html');
-          res.end(`<p>Sharing test window</p><script>
-            addEventListener('message', event => {
-              if (event.source !== opener || event.origin !== '${proxy.origin}' || event.data.type !== 'rust-sharing-request') return;
-              window.request = event.data;
-              opener.postMessage({type:'rust-sharing-result', nonce:request.nonce, opened:true}, '${proxy.origin}');
-            });
-            opener.postMessage({type:'rust-sharing-ready'}, '${proxy.origin}');
-          </script>`);
-          return;
-        }
         if (req.url === '/rust-shell-powerbox') {
           res.setHeader('Content-Type', 'text/html');
           res.end(`<button id="choose">Choose test capability</button><script>
@@ -551,46 +573,88 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(new Set(records.map(record => record.token)).size, 1);
     assert.equal(new Set(records.map(record => record.host)).size, 1);
 
-    // App requests only prompt; a user click opens the trusted sharing window.
-    await app.evaluate(() => parent.postMessage({startSharing:{pathname:'/folder',hash:'#document'}}, '*'));
-    await page.getByText('Open sharing in Sandstorm.', {exact:true}).waitFor();
-    const sharingOpened = page.waitForEvent('popup');
-    await page.getByRole('button', {name:'Open sharing window',exact:true}).click();
-    const sharingPopup = await sharingOpened;
-    await sharingPopup.waitForURL(mainOrigin + '/rust-shell-sharing');
-    await sharingPopup.waitForLoadState();
-    await expect.poll(() => sharingPopup.evaluate(() => window.request?.mode)).toBe('share');
-    const sharingRequest = await sharingPopup.evaluate(() => window.request);
-    assert.deepEqual(sharingRequest.shareData, {pathname:'/folder',hash:'#document'});
-    assert.equal(sharingPopup.url(), mainOrigin + '/rust-shell-sharing');
-    assert.equal(new URL(sharingPopup.url()).search + new URL(sharingPopup.url()).hash, '');
-    assert.equal(typeof sharingRequest.sessionId, 'string');
-    assert.ok(sharingRequest.sessionId);
-    await page.getByText('Sharing is open in Sandstorm.', {exact:true}).waitFor();
-    await sharingPopup.evaluate(origin => opener.postMessage({type:'rust-sharing-result',nonce:'forged',error:'Forged sharing error'}, origin), proxy.origin);
-    await page.evaluate(origin => dispatchEvent(new MessageEvent('message', {origin,source:window,
-      data:{type:'rust-sharing-result',nonce:'forged',error:'Forged sharing error'}})), mainOrigin);
-    assert.equal(await page.getByText('Forged sharing error').count(), 0);
-    await page.getByRole('button', {name:'Close sharing window',exact:true}).click();
-    await expect.poll(() => sharingPopup.isClosed()).toBe(true);
+    // Native sharing stays in the trusted shell, including app-supplied paths.
+    const pageCount = context.pages().length;
+    await app.evaluate(() => { window.sharingMessages = []; addEventListener('message', event => window.sharingMessages.push(event.data));
+      parent.postMessage({startSharing:{pathname:'/folder',hash:'#document'}}, '*'); });
+    const sharingDialog = page.getByRole('dialog', {name:'Sharing',exact:true});
+    await sharingDialog.getByLabel('Link label', {exact:true}).fill('Project team');
+    await sharingDialog.getByLabel('Permissions', {exact:true}).selectOption('1');
+    await sharingDialog.getByRole('button', {name:'Create link',exact:true}).click();
+    await expect(sharingDialog.getByLabel('New sharing link', {exact:true})).toHaveValue(proxy.origin + '/shared/native-share-1/folder#document');
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-sharing.png'});
+    assert.equal(shareCreations, 1);
+    assert.equal(context.pages().length,pageCount,'sharing must not open a legacy window');
+    assert.equal(JSON.stringify(await app.evaluate(() => window.sharingMessages)).includes('native-share-1'), false, 'bearer token stays out of app messages');
+    assert.equal(await page.evaluate(() => JSON.stringify({...sessionStorage,...localStorage}).includes('native-share-1')), false);
+    await expect(sharingDialog.getByRole('table')).toHaveCount(0);
+    await sharingDialog.getByRole('tab', {name:'Create link',exact:true}).focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(sharingDialog.getByRole('tab', {name:'Who has access',exact:true})).toHaveAttribute('aria-selected','true');
+    await expect(sharingDialog.getByRole('table', {name:'Current access'})).toBeVisible();
+    await sharingDialog.getByText('Bob',{exact:true}).waitFor();
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-access.png'});
+    await sharingDialog.getByRole('button', {name:'Edit',exact:true}).click();
+    await sharingDialog.getByLabel('Edit label', {exact:true}).fill('Renamed link');
+    await sharingDialog.getByLabel('Edit permissions', {exact:true}).selectOption('0');
+    await sharingDialog.getByRole('button', {name:'Save changes',exact:true}).click();
+    await sharingDialog.getByText('Renamed link',{exact:true}).waitFor();
+    assert.equal(sharingGrants[0].role,'0');
+    sharingGrants[0].role = 'custom';
+    await sharingDialog.getByRole('button', {name:'Refresh sharing',exact:true}).click();
+    await sharingDialog.getByText('Custom permissions',{exact:true}).waitFor();
+    await sharingDialog.getByRole('button', {name:'Edit',exact:true}).click();
+    await sharingDialog.getByLabel('Edit label', {exact:true}).fill('Custom grant renamed');
+    await expect(sharingDialog.getByLabel('Edit permissions', {exact:true})).toHaveValue('custom');
+    await sharingDialog.getByRole('button', {name:'Save changes',exact:true}).click();
+    await sharingDialog.getByText('Custom grant renamed',{exact:true}).waitFor();
+    assert.equal(sharingGrants[0].role,'custom','label edits preserve custom permission settings');
+    await sharingDialog.getByRole('button', {name:'Revoke',exact:true}).click();
+    assert.equal(sharingGrants.length,1,'revocation requires confirmation');
+    await sharingDialog.getByRole('button', {name:'Confirm revoke',exact:true}).click();
+    await expect(sharingDialog.getByRole('button', {name:'Revoke',exact:true})).toHaveCount(0);
+    assert.equal(sharingGrants.length,0);
+    await sharingDialog.getByRole('button', {name:'Done',exact:true}).click();
+    await expect(sharingDialog).toHaveCount(0);
     await app.evaluate(() => parent.postMessage({startSharing:{pathname:'/%2e%2e/escape'}}, '*'));
-    assert.equal(await page.getByRole('button', {name:'Open sharing window',exact:true}).count(), 0);
-    const accessOpened = page.waitForEvent('popup');
+    await expect(sharingDialog).toHaveCount(0);
     await page.getByRole('button', {name:'Who has access',exact:true}).click();
-    const accessPopup = await accessOpened;
-    await accessPopup.waitForURL(mainOrigin + '/rust-shell-sharing');
-    await accessPopup.waitForLoadState();
-    await expect.poll(() => accessPopup.evaluate(() => window.request?.mode)).toBe('access');
-    await accessPopup.close();
-    await expect(page.getByRole('button', {name:'Close sharing window',exact:true})).toHaveCount(0);
+    await sharingDialog.getByText('Bob',{exact:true}).waitFor();
+    await expect(sharingDialog.getByRole('button',{name:'Revoke',exact:true})).toHaveCount(0);
+    await sharingDialog.getByRole('button', {name:'Done',exact:true}).click();
+    await expect(sharingDialog).toHaveCount(0);
+
+    // Native selection and embedded provider completion do not open a popup.
+    const nativeDialog = page.getByRole('dialog',{name:'Connect an app',exact:true});
+    for (const mode of ['view','provider','cancel-provider']) {
+      await app.evaluate(mode => parent.postMessage({powerboxRequest:{rpcId:'native-'+mode,query:[]}},'*'), mode);
+      await nativeDialog.getByRole('button',{name:mode === 'view' ? 'Whole grain' : 'Test provider',exact:true}).click();
+      const pagesBefore = context.pages().length;
+      if (mode === 'view') await nativeDialog.getByRole('button',{name:'Connect grain',exact:true}).click();
+      else {
+        await nativeDialog.getByRole('button',{name:'Choose from app',exact:true}).click();
+        await nativeDialog.frameLocator('iframe').getByRole('button',{name:'Select test object'}).waitFor();
+        if (mode === 'cancel-provider') await nativeDialog.getByRole('button',{name:'Cancel request',exact:true}).click();
+        else {
+          await page.screenshot({path:'/tmp/sandstorm-rust-ui-powerbox.png'});
+          await nativeDialog.frameLocator('iframe').getByRole('button',{name:'Select test object'}).click();
+        }
+      }
+      await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('native-'+mode);
+      assert.equal(context.pages().length,pagesBefore);
+      if (mode === 'cancel-provider') assert.equal(await app.evaluate(() => window.reply.canceled),true);
+      else assert.equal(await app.evaluate(() => window.reply.token),mode === 'view' ? 'native-view-token' : 'native-provider-token');
+      await expect.poll(() => nativeProviders.size).toBe(0);
+      await expect(nativeDialog).toHaveCount(0);
+    }
 
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'powerbox' } }, '*'));
-    await page.getByRole('button', { name: 'Choose in Sandstorm' }).waitFor();
+    await page.getByRole('button', { name: 'More options in main shell' }).waitFor();
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'duplicate' } }, '*'));
     await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('duplicate');
     assert.match(await app.evaluate(() => window.reply.error), /already open/);
     const popupPromise = context.waitForEvent('page');
-    await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
+    await page.getByRole('button', { name: 'More options in main shell' }).click();
     const popup = await popupPromise;
     await popup.waitForURL(mainOrigin + '/rust-shell-powerbox');
     await popup.waitForLoadState('domcontentloaded');
@@ -612,7 +676,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await app.evaluate(() => window.reply.rpcId), 'cancel');
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'window-close' } }, '*'));
     const closedPopupPromise = context.waitForEvent('page');
-    await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
+    await page.getByRole('button', { name: 'More options in main shell' }).click();
     const closedPopup = await closedPopupPromise;
     await closedPopup.close();
     await expect.poll(() => app.evaluate(() => window.reply?.rpcId)).toBe('window-close');
@@ -625,7 +689,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await expect.poll(() => renewals, { timeout: 15000 }).toBeGreaterThan(0);
     await app.evaluate(() => parent.postMessage({ powerboxRequest: { rpcId: 'grain-close' } }, '*'));
     const grainClosePopupPromise = context.waitForEvent('page');
-    await page.getByRole('button', { name: 'Choose in Sandstorm' }).click();
+    await page.getByRole('button', { name: 'More options in main shell' }).click();
     const grainClosePopup = await grainClosePopupPromise;
     await page.locator('.open-grains li.current button').click();
     await expect.poll(() => grainClosePopup.isClosed()).toBe(true);
@@ -654,7 +718,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const restartApp = page.frames().find(frame => frame.url().startsWith(grainOrigin));
     await restartApp.evaluate(() => parent.postMessage({powerboxRequest:{rpcId:'restart'}}, '*'));
     const restartPopupPromise = context.waitForEvent('page');
-    await page.getByRole('button', {name:'Choose in Sandstorm'}).click();
+    await page.getByRole('button', {name:'More options in main shell'}).click();
     const restartPopup = await restartPopupPromise;
     bridgeOffline = true;
     changed();

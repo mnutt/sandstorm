@@ -9,10 +9,14 @@
   import { appPath } from './lib/router';
   import { onMount, untrack } from 'svelte';
   import { PowerboxChooser } from './lib/powerbox';
-  import { SharingWindow, type SharingState } from './lib/sharing';
+  import PowerboxDialog from './PowerboxDialog.svelte';
+  import type { PowerboxActions } from './lib/powerbox-native';
+  import { powerboxRequest, rpcId, type PowerboxRequest } from './lib/protocol';
+  import SharingDialog from './SharingDialog.svelte';
+  import { sharingRequest, type SharingRequest, type SharingActions } from './lib/sharing';
   import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, active, toolbarTarget, canManage = true, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
+  let { grain, active, toolbarTarget, canManage = true, sharingActions, powerboxActions, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; sharingActions?: SharingActions; powerboxActions?: PowerboxActions; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let frameTitle = $state('');
   const frameUrl = $derived(grain.url);
@@ -28,7 +32,11 @@
     return () => clearTimeout(timer);
   });
   let path = $state(untrack(() => grain.path));
-  let sharingState: SharingState = $state({ status: 'idle' });
+  let sharing = $state<SharingRequest>();
+  function showSharing(mode: 'share' | 'access', value: unknown = {}) {
+    if (active && canManage && sharingActions && !sharing) sharing = sharingRequest(mode, value);
+  }
+  $effect(() => { if (!active) sharing = undefined; });
   const titles = new GrainTitleSubscriptions(untrack(() => grain.ownerTitle),
     result => frame?.contentWindow?.postMessage(result, grain.origin));
   $effect(() => titles.update(grain.ownerTitle));
@@ -46,19 +54,31 @@
     catch (error) { renameError = `Could not confirm rename. Check the current title before trying again. ${String(error)}`; }
     finally { renaming = false; }
   }
+  let nativeRequest = $state<PowerboxRequest>();
+  function finishPowerbox(result: Record<string, unknown>) {
+    nativeRequest = undefined;
+    frame?.contentWindow?.postMessage(result, grain.origin);
+  }
+  function requestPowerbox(value: unknown) {
+    const data = record(value);
+    if (!data || !rpcId(data.rpcId)) return;
+    if (nativeRequest || choosing) { frame?.contentWindow?.postMessage({rpcId:data.rpcId,error:'A Powerbox request is already open.'}, grain.origin); return; }
+    const request = powerboxRequest(value);
+    if (!request) { frame?.contentWindow?.postMessage({rpcId:data.rpcId,error:'Invalid Powerbox request.'},grain.origin); return; }
+    if (!active) { frame?.contentWindow?.postMessage({rpcId:request.rpcId,canceled:true},grain.origin); return; }
+    if (powerboxActions) nativeRequest = request;
+    else chooser?.request(value);
+  }
+  $effect(() => { if (!active && nativeRequest) finishPowerbox({rpcId:nativeRequest.rpcId,canceled:true}); });
   let choosing = $state(false);
   let chooser: PowerboxChooser;
-  let sharing: SharingWindow;
   onMount(() => {
     chooser = new PowerboxChooser(new URL(grain.mainHref).origin, new URL(grain.url).searchParams.get('sessionid') || '',
       result => frame?.contentWindow?.postMessage(result, grain.origin), value => { choosing = value; });
-    sharing = new SharingWindow(new URL(grain.mainHref).origin, new URL(grain.url).searchParams.get('sessionid') || '',
-      value => { sharingState = value; });
-    return () => { titles.clear(); chooser.cancel(); sharing.cancel(); };
+    return () => { titles.clear(); chooser.cancel(); };
   });
   function message(event: MessageEvent) {
     chooser?.message(event);
-    sharing?.message(event);
     if (event.origin !== grain.origin || event.source !== frame?.contentWindow) return;
     const data = record(event.data);
     if (!data) return;
@@ -68,7 +88,7 @@
       if (next) { path = next; pathChanged(path); }
     }
     if (data.getGrainTitle) titles.request(data.rpcId, data.getGrainTitle, data.subscribe);
-    if (data.powerboxRequest && canManage) chooser?.request(data.powerboxRequest);
+    if (data.powerboxRequest && canManage) requestPowerbox(data.powerboxRequest);
     const template = record(data.renderTemplate);
     if (template && typeof template.rpcId === 'string' && template.rpcId.length <= 256) {
       const source = event.source as Window;
@@ -77,8 +97,8 @@
       renderTemplate(template).then(uri => source.postMessage({ rpcId, uri }, origin),
         error => source.postMessage({ rpcId, error: String(error) }, origin));
     }
-    if (data.startSharing && canManage) sharing?.request('share', data.startSharing);
-    if (data.showConnectionGraph && canManage) sharing?.request('access');
+    if (data.startSharing && canManage) showSharing('share', data.startSharing);
+    if (data.showConnectionGraph && canManage) showSharing('access');
   }
 </script>
 
@@ -108,16 +128,13 @@
       </div>{/if}
     </div>
     {#if canManage}<div class="grain-actions">
-      <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { sharing.request('share'); sharing.open(); }}><ShellIcon name="share" /></Button>
-      <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { sharing.request('access'); sharing.open(); }}><ShellIcon name="users" /></Button>
+      <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { showSharing('share'); }}><ShellIcon name="share" /></Button>
+      <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { showSharing('access'); }}><ShellIcon name="users" /></Button>
     </div>{/if}
   </div>
-  {#if sharingState.status !== 'idle'}<div role="status"><p>{sharingState.message}</p>
-    {#if sharingState.status !== 'failed'}
-      <Button onclick={() => sharing.open()}>Open sharing window</Button>
-      <Button onclick={() => sharing.cancel()}>Close sharing window</Button>
-    {:else}<Button onclick={() => sharing.cancel()}>Dismiss sharing error</Button>{/if}
-  </div>{/if}
+  {#if sharing && sharingActions}<SharingDialog request={sharing} actions={sharingActions} title={grain.title} onclose={() => { sharing = undefined; }} />{/if}
+  {#if nativeRequest && powerboxActions}<PowerboxDialog request={nativeRequest} actions={powerboxActions} title={grain.title} finish={finishPowerbox}
+    legacy={() => { const request = nativeRequest; nativeRequest = undefined; chooser.request(request); chooser.open(); }} />{/if}
   {#if choosing}<div role="status"><p>This app wants you to choose a capability.</p>
     <Button onclick={() => chooser.open()}>Choose in Sandstorm</Button>
     <Button onclick={() => chooser.cancel()}>Cancel request</Button></div>{/if}

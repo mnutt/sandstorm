@@ -117,7 +117,98 @@ struct Lease {
     lease: String,
     closed: Cell<bool>,
 }
+impl Lease {
+    async fn sharing_call(
+        &self,
+        operation: &str,
+        mut input: serde_json::Value,
+    ) -> capnp::Result<serde_json::Value> {
+        if self.closed.get() {
+            return Err(capnp::Error::failed("Grain session closed".into()));
+        }
+        input["scope"] = json!(self.scope.key);
+        input["lease"] = json!(self.lease);
+        self.scope
+            .session
+            .call(operation, input)
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))
+    }
+}
 impl grain_session::Server for Lease {
+    async fn powerbox(
+        self: Rc<Self>,
+        params: grain_session::PowerboxParams,
+        mut results: grain_session::PowerboxResults,
+    ) -> capnp::Result<()> {
+        let params = params.get()?;
+        let operation = params.get_operation()?.to_str()?;
+        let request = params.get_request()?.to_str()?;
+        let input = params.get_input()?.to_str()?;
+        if !matches!(operation, "begin" | "select" | "poll" | "cancel")
+            || request.len() != 64
+            || input.len() > 65536
+        {
+            return Err(capnp::Error::failed("Invalid Powerbox request".into()));
+        }
+        let input: serde_json::Value = serde_json::from_str(input)
+            .map_err(|_| capnp::Error::failed("Invalid Powerbox input".into()))?;
+        let value = self.sharing_call("powerbox", json!({"request": request, "operation": operation,
+            "query": input["query"], "key": input["key"], "mode": input["mode"], "role": input["role"], "url": input["url"]})).await?;
+        results.get().set_state(value.to_string());
+        Ok(())
+    }
+
+    async fn get_sharing(
+        self: Rc<Self>,
+        _: grain_session::GetSharingParams,
+        mut results: grain_session::GetSharingResults,
+    ) -> capnp::Result<()> {
+        let value = self.sharing_call("getSharing", json!({})).await?;
+        results.get().set_state(value.to_string());
+        Ok(())
+    }
+
+    async fn create_share(
+        self: Rc<Self>,
+        params: grain_session::CreateShareParams,
+        mut results: grain_session::CreateShareResults,
+    ) -> capnp::Result<()> {
+        let params = params.get()?;
+        let label = params.get_label()?.to_str()?;
+        let role = params.get_role()?.to_str()?;
+        if label.len() > 640 || role.len() > 16 {
+            return Err(capnp::Error::failed("Invalid sharing options".into()));
+        }
+        let value = self
+            .sharing_call("createShare", json!({"label": label, "role": role}))
+            .await?;
+        results.get().set_token(
+            value["token"]
+                .as_str()
+                .ok_or_else(|| capnp::Error::failed("Invalid sharing token".into()))?,
+        );
+        Ok(())
+    }
+
+    async fn update_share(
+        self: Rc<Self>,
+        params: grain_session::UpdateShareParams,
+        _: grain_session::UpdateShareResults,
+    ) -> capnp::Result<()> {
+        let params = params.get()?;
+        let id = params.get_id()?.to_str()?;
+        let changes = params.get_changes()?.to_str()?;
+        if id.len() > 128 || changes.len() > 2048 {
+            return Err(capnp::Error::failed("Invalid sharing update".into()));
+        }
+        let changes: serde_json::Value = serde_json::from_str(changes)
+            .map_err(|_| capnp::Error::failed("Invalid sharing update".into()))?;
+        self.sharing_call("updateShare", json!({"id": id, "changes": changes}))
+            .await?;
+        Ok(())
+    }
+
     async fn rename(
         self: Rc<Self>,
         params: grain_session::RenameParams,

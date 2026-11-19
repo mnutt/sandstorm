@@ -1,3 +1,5 @@
+import { rustPowerbox } from "/imports/server/rust-shell-powerbox";
+import { rustSharingState, createRustShare, updateRustShare } from "/imports/server/rust-shell-sharing";
 import { updateProfileForUser } from "/imports/server/accounts/accounts-ui-methods";
 import { Meteor } from "meteor/meteor";
 import { Mongo } from "meteor/mongo";
@@ -63,6 +65,7 @@ export const rustShellBridge = createRustShellBridge({
     close: handle => closeRustSharedGrainSession(globalDb, handle),
   },
   grains: {
+    powerbox: rustPowerbox(globalDb),
     async open(accountId, grainId) {
       const parentOrigin = Meteor.settings.public.rustShellOrigin;
       if (!parentOrigin) throw new Meteor.Error(503, "Rust grain sessions are not enabled.");
@@ -82,6 +85,9 @@ export const rustShellBridge = createRustShellBridge({
       const titles = await rustGrainTitles(globalDb, handle.accountId, handle.grainId);
       return { title: text(titles.title, 256), ownerTitle: text(titles.ownerTitle, 256) };
     },
+    sharing: handle => rustSharingState(globalDb, handle),
+    createShare: (handle, input, beforeWrite) => createRustShare(globalDb, handle, input, beforeWrite),
+    updateShare: (handle, input, beforeWrite) => updateRustShare(globalDb, handle, input, beforeWrite),
     revokeTemplate: result => globalDb.removeApiTokens({ _id: result.id }),
   },
   authorize: authorizeRustShellAccount,

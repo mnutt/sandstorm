@@ -163,6 +163,74 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
     browser.frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait);
     operation(browser, 'close');
   }
+  browser.frame(null).executeAsync(function (done) {
+    Meteor.call('testRustNativeSharing', location.pathname.split('/')[2], (error, ok) => done({error:error?.message,ok}));
+  }, [], result => {
+    browser.assert.equal(result.value.error, null, 'native sharing preserves roles, ownership, grain scope and revocation');
+    browser.assert.equal(result.value.ok, true, 'native links work anonymously and with identity');
+  });
+  // Exercise the native bridge against a real provider and redeem its capability
+  // in the requesting app. No Meteor chooser or popup participates in this path.
+  browser.frame(null).executeAsync(async function (done) {
+    try {
+      window.nativePowerboxGrain = location.pathname.split('/')[2];
+      const view = await Meteor.callAsync('testRustNativePowerbox','open',window.nativePowerboxGrain);
+      const frame = document.createElement('iframe'); frame.id = 'native-powerbox-requester'; frame.src = view.url;
+      frame.style = 'position:fixed;inset:0;width:100%;height:100%;z-index:99999;background:white';
+      document.body.appendChild(frame);
+      window.nativePowerboxListener = event => {
+        if (event.source === frame.contentWindow && event.data.powerboxRequest) window.nativePowerboxRequest = event.data.powerboxRequest;
+      };
+      addEventListener('message',window.nativePowerboxListener);
+      done({ok:true});
+    } catch (e) { done({error:e.message}); }
+  }, [], result => browser.assert.equal(result.value.ok,true,'native requesting session opened'))
+    .frameSelector('#native-powerbox-requester').waitForElementVisible('#do-powerbox-request',utils.medium_wait)
+    .click('#do-powerbox-request').frame(null)
+    .executeAsync(async function (done) {
+      try {
+        const deadline = Date.now()+10000;
+        while (!window.nativePowerboxRequest && Date.now()<deadline) await new Promise(resolve => setTimeout(resolve,50));
+        const state = await Meteor.callAsync('testRustNativePowerbox','begin',window.nativePowerboxGrain,{query:window.nativePowerboxRequest.query});
+        const candidate = state.candidates.find(row => row.hostedObject);
+        if (!candidate) throw new Error('Real provider missing from native query');
+        const selected = await Meteor.callAsync('testRustNativePowerbox','select',window.nativePowerboxGrain,{key:candidate.key,mode:'hosted'});
+        const frame = document.createElement('iframe'); frame.id = 'native-powerbox-provider'; frame.src = selected.url;
+        frame.style = 'position:fixed;inset:0;width:100%;height:100%;z-index:100000;background:white';
+        document.body.appendChild(frame);
+        done({ok:selected.status === 'provider'});
+      } catch (e) { done({error:e.message}); }
+    }, [], result => { browser.assert.equal(result.value.error,null,'native matcher and provider selection succeeded'); browser.assert.equal(result.value.ok,true); })
+    .frameSelector('#native-powerbox-provider').waitForElementVisible('#cap-text',utils.medium_wait)
+    .setValue('#cap-text','Native Powerbox capability round trip').click('#do-fulfill').frame(null)
+    .executeAsync(async function (done) {
+      try {
+        const deadline = Date.now()+10000;
+        let result;
+        do {
+          result = await Meteor.callAsync('testRustNativePowerbox','poll',window.nativePowerboxGrain);
+          if (result.status !== 'complete') await new Promise(resolve => setTimeout(resolve,100));
+        } while (result.status !== 'complete' && Date.now()<deadline);
+        if (result.status !== 'complete') throw new Error('Provider did not fulfill');
+        const requester = document.getElementById('native-powerbox-requester');
+        requester.contentWindow.postMessage({rpcId:window.nativePowerboxRequest.rpcId,token:result.token,descriptor:result.descriptor},new URL(requester.src).origin);
+        await Meteor.callAsync('testRustNativePowerbox','cancel',window.nativePowerboxGrain);
+        await Meteor.callAsync('testRustNativePowerbox','verifyProviderClosed',window.nativePowerboxGrain);
+        document.getElementById('native-powerbox-provider').remove();
+        done({ok:true});
+      } catch (e) { done({error:e.message}); }
+    }, [], result => { browser.assert.equal(result.value.error,null,'native fulfillment and provider cleanup succeeded'); browser.assert.equal(result.value.ok,true); })
+    .frameSelector('#native-powerbox-requester').waitForElementVisible('#result-text',utils.medium_wait)
+    .assert.textContains('#result-text','Native Powerbox capability round trip').frame(null)
+    .executeAsync(async function (done) {
+      try {
+        await Meteor.callAsync('testRustNativePowerbox','checkBuiltins',window.nativePowerboxGrain);
+        await Meteor.callAsync('testRustNativePowerbox','close',window.nativePowerboxGrain);
+        document.getElementById('native-powerbox-requester').remove();
+        removeEventListener('message',window.nativePowerboxListener);
+        done(true);
+      } catch (e) { done(e.message); }
+    }, [], result => browser.assert.equal(result.value,true,'native UiView, URL, replay protection and cleanup succeeded'));
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
   utils.callMeteorTestMethod(browser, "testRustProfile");
   browser.frame(null).executeAsync(function (done) {

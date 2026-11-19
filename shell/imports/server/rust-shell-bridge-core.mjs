@@ -150,7 +150,9 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
         } finally { creating.delete(record.accountId); }
       }
       if (action === "openGrain") return leases.open(input.token, record.accountId, input, signal);
+      if (action === "powerbox") return leases.powerbox(input.token, input, signal);
       if (action === "renderTemplate") return leases.template(input.token, input, signal);
+      if (["getSharing", "createShare", "updateShare"].includes(action)) return leases.sharing(input.token, input, signal, action);
       if (action === "renameGrain") return leases.rename(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
       if (action === "session") return { account: { name: account.name, key: hash(record.accountId) }, expires: record.expires };
@@ -229,14 +231,14 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|renameGrain|listApps|createGrain|getProfile|updateProfile)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];
       let bytes = 0;
       for await (const part of req) {
         bytes += part.length;
-        if (bytes > (req.url === "/renderTemplate" ? 8192 : 4096)) throw Object.assign(new Error("Request too large."), { status: 413 });
+        if (bytes > (req.url === "/powerbox" ? 69632 : req.url === "/renderTemplate" ? 8192 : 4096)) throw Object.assign(new Error("Request too large."), { status: 413 });
         parts.push(part);
       }
       let input;

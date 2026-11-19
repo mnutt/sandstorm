@@ -1,3 +1,4 @@
+import Capnp from "/imports/server/capnp";
 import { createRustShellBridge } from "./rust-shell-bridge-core.mjs";
 // Sandstorm - Personal Cloud Sandbox
 // Copyright (c) 2014 Sandstorm Development Group, Inc. and contributors
@@ -65,6 +66,7 @@ import Crypto from "crypto";
 import { EventEmitter } from "events";
 
 const rustGrainTestSessions = new Map();
+const rustNativePowerboxTests = new Map();
 
 async function clearUser(id) {
   await globalDb.collections.userActions.removeAsync({ userId: id });
@@ -1429,6 +1431,172 @@ if(isTesting) {
       } finally {
         if (token) await rustShellBridge.handle("logout", { token });
         await Meteor.users.removeAsync(accountId);
+      }
+    },
+
+    async testRustNativePowerbox(action, grainId, input = {}) {
+      check(action, String);
+      check(grainId, String);
+      const grain = await globalDb.collections.grains.findOneAsync({_id:grainId,userId:this.userId});
+      if (!grain || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const key = this.userId + ":" + grainId;
+      let record = rustNativePowerboxTests.get(key);
+      if (action === "open") {
+        if (record) throw new Error("Test request already open");
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
+        const {token} = await rustShellBridge.handle("exchange",{code,state});
+        record = {token,scope:Crypto.randomBytes(32).toString("hex"),request:Crypto.randomBytes(32).toString("hex"),
+          previousOrigin:Meteor.settings.public.rustShellOrigin};
+        rustNativePowerboxTests.set(key,record);
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        const view = await rustShellBridge.handle("openGrain",{token,scope:record.scope,grainId});
+        record.lease = view.lease;
+        record.requesterId = new URL(view.url).searchParams.get("sessionid");
+        return view;
+      }
+      if (!record) throw new Error("No native Powerbox test session");
+      if (action === "close") {
+        await rustShellBridge.handle("logout",{token:record.token});
+        Meteor.settings.public.rustShellOrigin = record.previousOrigin;
+        rustNativePowerboxTests.delete(key);
+        return true;
+      }
+      if (action === "checkBuiltins") {
+        const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
+        const UiView = Capnp.importSystem("sandstorm/grain.capnp").UiView;
+        const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
+        const call = (operation, extra = {}) => rustShellBridge.handle("powerbox", {...extra,token:record.token,
+          scope:record.scope,lease:record.lease,request:record.request,operation});
+        const query = type => [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:type.typeId}]}).toString("base64")];
+        for (const kind of ["view","url"]) {
+          let id;
+          try {
+            const state = await call("begin", {query:query(kind === "view" ? UiView : ApiSession)});
+            const candidate = state.candidates.find(row => kind === "view" ? row.uiView : row.urlInput);
+            if (!candidate) throw new Error("Missing native " + kind + " option");
+            const result = await call("select",{key:candidate.key,mode:kind === "view" ? "view" : "ref",role:"all",url:"https://example.com/"});
+            id = Crypto.createHash("sha256").update(result.token).digest("base64");
+            const token = await globalDb.collections.apiTokens.findOneAsync(id);
+            if (!token || token.owner?.clientPowerboxRequest?.sessionId !== record.requesterId ||
+                token.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Powerbox result has incorrect receiving authority");
+            if (kind === "url" && token.frontendRef?.http?.url !== "https://example.com/") throw new Error("URL capability differs from selected URL");
+            let replayed = false;
+            try { await call("select",{key:candidate.key,mode:"view",role:"all"}); replayed = true; } catch (_) {}
+            if (replayed) throw new Error("Completed Powerbox request replayed");
+          } finally { await call("cancel"); if (id) await globalDb.removeApiTokens({_id:id}); }
+        }
+        await call("begin",{query:query(UiView)});
+        let forged = false;
+        try { await call("select",{key:"grain-"+grainId,mode:"view",role:"all"}); forged = true; } catch (_) {}
+        if (forged) throw new Error("Powerbox accepted a forged option key");
+        return true;
+      }
+      if (action === "verifyProviderClosed") {
+        if (await globalDb.collections.sessions.findOneAsync(record.providerId)) throw new Error("Provider survived request close");
+        return true;
+      }
+      const result = await rustShellBridge.handle("powerbox",{...input,token:record.token,scope:record.scope,lease:record.lease,request:record.request,operation:action});
+      if (result.status === "provider") record.providerId = new URL(result.url).searchParams.get("sessionid");
+      return result;
+    },
+
+    async testRustNativeSharing(grainId) {
+      check(grainId, String);
+      const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!source || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const recipient = "rust-sharing-" + Random.id();
+      const otherGrain = "rust-sharing-other-" + Random.id();
+      const hash = Crypto.randomBytes(32).toString("hex");
+      const previousOrigin = Meteor.settings.public.rustShellOrigin;
+      const tokens = [];
+      const tokenIds = [];
+      const require = (condition, message) => { if (!condition) throw new Error(message); };
+      const denied = async (operation, message) => {
+        let failed = false;
+        try { await operation(); } catch (_) { failed = true; }
+        require(failed, message);
+      };
+      const link = async (accountId, loginHash) => {
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(accountId, loginHash, state);
+        const { token } = await rustShellBridge.handle("exchange", { code, state });
+        tokens.push(token);
+        const scope = Crypto.randomBytes(32).toString("hex");
+        const view = await rustShellBridge.handle("openGrain", { token, scope, grainId });
+        return (action, input = {}) => rustShellBridge.handle(action, { ...input, token, scope, lease: view.lease });
+      };
+      const remember = result => {
+        tokenIds.push(Crypto.createHash("sha256").update(result.token).digest("base64"));
+        return tokenIds[tokenIds.length - 1];
+      };
+      try {
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        await Meteor.users.insertAsync({ _id: recipient, type: "account", loginCredentials: [], nonloginCredentials: [],
+          profile: { name: "Native sharing recipient", handle: "recipient", pronoun: "neutral" },
+          services: { resume: { loginTokens: [{ hashedToken: hash, when: new Date() }] } } });
+        const owner = await link(this.userId, Accounts._getLoginToken(this.connection.id));
+        const share = await owner("createShare", {label:"Native sharing",role:"all"});
+        const shareId = remember(share);
+        const stored = await globalDb.collections.apiTokens.findOneAsync(shareId);
+        require(stored.forSharing && stored.grainId === grainId && stored.accountId === this.userId && !stored.expiresIfUnused,
+          "Native sharing created incorrect authority or an expiring API token");
+        await inspectRustSharedGrain(globalDb, share.token);
+        for (const accountId of [null, this.userId]) {
+          const session = await createRustSharedGrainSession(globalDb, share.token, accountId, process.env.ROOT_URL);
+          await closeRustSharedGrainSession(globalDb, {sessionId:session._id,hashedToken:session.hashedToken});
+        }
+        const redeemed = await SandstormPermissions.createNewApiToken(globalDb, {rawParentToken:share.token}, grainId,
+          "Recipient copy", {allAccess:null}, {user:{accountId:recipient,title:source.title}});
+        tokenIds.push(redeemed.id);
+        const recipientCall = await link(recipient, hash);
+        const onward = await recipientCall("createShare", {label:"Onward share",role:"all"});
+        const onwardId = remember(onward);
+        const snapshot = await owner("getSharing");
+        require(snapshot.grants.some(row => row.id === shareId && row.editable), "Own link missing");
+        require(snapshot.grants.some(row => row.id === redeemed.id && row.inherited && !row.editable && row.recipient === "Native sharing recipient"), "Redeemed access was not projected safely");
+        require(snapshot.grants.some(row => row.id === onwardId && !row.editable), "Downstream share incorrectly editable");
+        require(!JSON.stringify(snapshot).includes(share.token), "Sharing projection exposed raw bearer token");
+        await denied(() => owner("updateShare",{id:onwardId,changes:{revoked:true}}), "Owner changed another account's token");
+        await denied(() => recipientCall("updateShare",{id:shareId,changes:{revoked:true}}), "Recipient changed owner's token");
+        await denied(() => owner("updateShare",{id:redeemed.id,changes:{revoked:true}}), "Derived grant was edited as an independent source");
+        await globalDb.collections.grains.insertAsync({_id:otherGrain,userId:this.userId,private:true,packageId:source.packageId,title:"Other grain"});
+        const foreign = await SandstormPermissions.createNewApiToken(globalDb, {accountId:this.userId}, otherGrain,
+          "Foreign grain", {allAccess:null}, {webkey:{forSharing:true}});
+        tokenIds.push(foreign.id);
+        await denied(() => owner("updateShare",{id:foreign.id,changes:{revoked:true}}), "Grain-scoped capability changed another grain");
+        await globalDb.collections.apiTokens.updateAsync(shareId, {$unset:{owner:1}});
+        require((await owner("getSharing")).grants.some(row => row.id === shareId && row.editable), "Legacy ownerless link was omitted");
+        await globalDb.collections.apiTokens.updateAsync(shareId, {$set:{owner:{webkey:null}}});
+        await denied(() => owner("createShare",{label:"Invalid",role:"999"}), "Invalid role accepted");
+        await denied(() => owner("updateShare",{id:shareId,changes:{accountId:recipient}}), "Unrecognized mutation fields accepted");
+        const direct = await SandstormPermissions.createNewApiToken(globalDb, {accountId:this.userId}, grainId,
+          "Direct grant", {allAccess:null}, {user:{accountId:recipient,title:source.title}});
+        tokenIds.push(direct.id);
+        require((await owner("getSharing")).grants.some(row => row.id === direct.id && row.editable && !row.inherited), "Direct grant not editable");
+        await globalDb.collections.apiTokens.updateAsync(direct.id, {$set:{roleAssignment:{allAccess:null,removePermissions:[true]}}});
+        require((await owner("getSharing")).grants.find(row => row.id === direct.id).role === "custom", "Custom grant was mislabeled as a full role");
+        await owner("updateShare",{id:direct.id,changes:{label:"Custom grant renamed"}});
+        require((await globalDb.collections.apiTokens.findOneAsync(direct.id)).roleAssignment.removePermissions[0], "Label edit overwrote custom restrictions");
+        await owner("updateShare",{id:direct.id,changes:{role:"none"}});
+        await owner("updateShare",{id:direct.id,changes:{revoked:true}});
+        await getMethodHandler("updateApiToken").call({userId:this.userId,connection:{sandstormDb:globalDb}}, shareId, {petname:"Legacy edit"});
+        require((await owner("getSharing")).grants.find(row => row.id === shareId).label === "Legacy edit", "Legacy token updates diverged");
+        await owner("updateShare",{id:shareId,changes:{label:"Edited link",role:"none"}});
+        const edited = await globalDb.collections.apiTokens.findOneAsync(shareId);
+        require(edited.petname === "Edited link" && Object.hasOwn(edited.roleAssignment,"none"), "Permission or label edit was not canonical");
+        await owner("updateShare",{id:shareId,changes:{revoked:true}});
+        require(!(await owner("getSharing")).grants.some(row => row.id === shareId), "Revoked link remains active in listing");
+        await denied(() => inspectRustSharedGrain(globalDb, share.token), "Revoked webkey still opens");
+        await denied(() => recipientCall("createShare",{label:"Revoked",role:"all"}), "Revoked recipient created a share");
+        await denied(() => recipientCall("getSharing"), "Revoked recipient read sharing metadata");
+        return true;
+      } finally {
+        for (const token of tokens) await rustShellBridge.handle("logout", {token});
+        for (const id of tokenIds) await globalDb.removeApiTokens({_id:id});
+        await Meteor.users.removeAsync(recipient);
+        await globalDb.collections.grains.removeAsync(otherGrain);
+        Meteor.settings.public.rustShellOrigin = previousOrigin;
       }
     },
 

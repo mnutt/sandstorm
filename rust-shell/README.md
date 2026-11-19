@@ -282,26 +282,39 @@ source window. The first slice supports display-only `setTitle`, local `setPath`
 and `getGrainTitle` replies with optional `subscribe: true` updates. The app
 receives the owner title, never the recipient’s personal alias; up to 32 title
 subscriptions live with the frame. Live updates currently cover grains in the
-loaded menu. Sharing requests use a main-shell dialog handoff;
+loaded menu. Sharing requests open a native shell dialog;
 `renderTemplate` uses an isolated shell-origin display (below). Powerbox requests
-use the main-shell chooser handoff.
+use the native chooser described below.
 This is not full postMessage API parity,
 an incognito/sharing-link flow, or live-session restoration across reconnects.
 
-The grain toolbar's **Share** and **Who has access** buttons open a dedicated
-Meteor window. App `startSharing` and `showConnectionGraph` messages instead
-show a prompt requiring a user click. The handoff checks exact origin, popup
-window, and nonce; session IDs and share metadata travel only in messages.
-Meteor validates the same-account Rust lease and grain permissions, opens its
-ordinary grain view, and shows the existing dialog. Share path/fragment hints
-are bounded and validated. Existing Meteor methods retain all sharing mutation
-authority; no sharing tokens are returned to Rust or to the app.
+The grain toolbar's **Share** and **Who has access** buttons open a native Bits UI
+modal. App `startSharing` and `showConnectionGraph` requests open the same modal
+only for the active, account-owned UI session after exact origin/source checks.
+Paths and fragments are validated independently of the shell origin. Creating a
+link requires an explicit user action; the new webkey is shown only in the trusted
+shell, held in component memory until close, and never sent to the embedded app.
+Links point at the Rust shell's existing anonymous/identity-aware shared viewer.
 
-One sharing window is allowed per Rust grain frame. Closing the frame or losing
-the connection closes that window. Meteor rechecks the lease every five seconds
-and closes on expiry, revocation, or account change. An unopened handoff expires
-after a minute. The window runs its own ordinary Meteor grain UI session; it is
-not a new sharing implementation or support for anonymous links in the Rust shell.
+`GrainSession.getSharing`, `createShare`, and `updateShare` reach narrowly scoped
+private bridge operations. Meteor rechecks the linked account, grain lease and
+canonical grain authorization before and after operations. Creation uses
+`SandstormPermissions.createNewApiToken`; edits share `updateApiTokenForAccount`
+with the legacy Meteor method. A canceled creation removes its late token. Calls
+are serialized per lease and issuance is capped at 32 links per lease. Mutations
+are never automatically replayed; an uncertain outcome asks the user to inspect
+existing links before retrying.
+
+The dialog supports labels, roles, copy, and confirmed revocation of the current
+account's root sharing links and direct user grants. The access view projects the
+canonical downstream graph, including link-derived recipients, without exporting
+raw database documents. Other accounts' grants and child tokens are read-only;
+revoking a source link explicitly warns that downstream recipients are affected.
+This does not implement selective revocation of a person who can reuse a webkey.
+Metadata loads on open, after mutations, and with **Refresh sharing**; it is not a
+live subscription. Responses show at most 100 grants and 64 role definitions.
+The old Meteor sharing route remains for compatibility, but the Rust UI no longer
+opens it. Public `SharedSession` capabilities still expose only `close`.
 
 Validation includes capability release, close/reopen, late creation cancellation,
 source-login revocation, logout with an active iframe, lease renewal/expiry,
@@ -354,29 +367,41 @@ Browser coverage includes page and app-path reload, fresh session IDs, history
 navigation, direct links beyond the menu, denied grain access, login return paths,
 and navigation away during an in-flight grain opening.
 
-### Powerbox chooser handoff
+### Native Powerbox chooser
 
-An embedded app's `powerboxRequest` shows **Choose in Sandstorm** and **Cancel
-request**. The button opens the existing Meteor Powerbox chooser in a separate
-window; the requesting iframe stays alive in the Rust shell. This reuses the
-existing providers, permission choices, provider-grain sessions, and capability
-issuance rather than introducing a second Powerbox authority.
+An embedded app's `powerboxRequest` opens a native Bits UI dialog after exact
+iframe origin/source validation. It offers a searchable list of matching grains
+and built-in capabilities. Users can grant a UiView with selected permissions,
+open a provider app inside the dialog to choose an object, use an existing
+verified email/network capability, or enter an HTTP(S) URL. Newly verified email,
+OAuth authorization, pasted capability links, and provider flows needing nested
+shell interactions retain **More options in main shell** as an explicit fallback.
 
-The opener and chooser check both message origin and source window. A random
-request nonce correlates the reply. Request data, session IDs, and returned tokens
-travel in messages, never in popup URLs. Meteor derives the requesting grain from
-an owned, marked Rust UI session, checks its lease and current grain access, and
-requires the same signed-in account. The chooser revalidates while open and before
-returning a capability. Only one request is accepted per frame at a time; requests
-expire after five minutes. Canceling, closing either view, changing accounts, or
-losing the grain session ends the handoff and disposes provider UI sessions.
+`GrainSession.powerbox` exposes only begin/select/poll/cancel operations. Each
+request is bound to its account, grain lease, and random request ID, expires in
+five minutes, and serializes operations. Meteor holds the candidate records and
+provider session; the browser receives only bounded display metadata and option
+keys. Clients cannot supply a frontendRef object, provider grain ID, receiving
+grain ID, or session ID. Matching and issuance reuse the same exported functions
+as the legacy publication and methods. At most 64 candidates/32 roles per grain
+are projected, with a 160 KB projection budget.
 
-This is a migration bridge, not a native Svelte Powerbox chooser. A user click is
-required to open the chooser window. Sharing controls and incognito flows still
-need the main shell. Browser tests cover a successful reply,
-duplicate requests, forged replies, explicit cancellation, and window closure.
-The real-grain integration test checks account/expiry/revocation scoping and drives
-the Meteor chooser through an embedded provider to return a capability to an app.
+Provider sessions use the normal gateway's `powerboxRequest` machinery and the
+Rust shell's parent origin. The trusted shell polls for fulfillment once a second
+and posts the result only to the requesting iframe, preserving its rpcId. No
+provider `postMessage` can inject a result. The provider closes after completion,
+cancellation, expiry, disconnect, or parent-lease revocation. Undelivered tokens
+are removed. Native provider fulfillment is conditional on a live, unclosed
+session and can be published only once; a late or duplicate save removes its
+new token. Mutations are never replayed automatically. Public shared-grain
+capabilities do not expose Powerbox authority.
+
+The fallback retains its exact origin/window/nonce checks. Tests cover native
+UiView and hosted-provider selection, cancellation, duplicate requests, forged
+candidate keys, late-result cleanup, lease/account isolation, and the explicit
+legacy fallback. The isolated package test fulfills a real app request in a
+provider iframe, then redeems and calls the returned capability from the original
+requesting app. It also checks UiView/HTTP token ownership and one-shot completion.
 
 ### API instruction templates
 
@@ -652,7 +677,8 @@ owns authentication, the transport, subscriptions, and reconnect policy.
 account-scoped creation outcomes. `navigation.ts` owns route intent, separately
 from connection recovery. `protocol.ts` validates untrusted message payloads;
 frame/popup owners still enforce exact origin, source window, and popup nonce.
-`sharing.ts` reports explicit pending, blocked, open, and failed states.
+`sharing.ts` defines sharing DTOs and validates app-requested link paths;
+`SharingDialog.svelte` owns modal state and temporary bearer URLs.
 
 Ordinary RPCs have a ten-second browser deadline and are aborted locally when
 the connection changes. A timeout reconnects that connection, never replays the

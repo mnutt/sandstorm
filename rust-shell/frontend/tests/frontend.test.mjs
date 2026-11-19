@@ -10,7 +10,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
 const { runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
-  TemplateOffers, clearStoredTemplateOffers, SharingWindow, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+  TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -181,29 +181,12 @@ test('owner title subscriptions update once, are bounded, and clear at frame tea
   assert.equal(replies.length, 32);
 });
 
-test('blocked sharing can retry; terminal errors have no pending popup action', t => {
-  browserGlobals(t);
-  const states = [];
-  let sent;
-  let closed = false;
-  const popup = { postMessage: value => { sent = value; }, close: () => { closed = true; } };
-  window.open = () => null;
-  const sharing = new SharingWindow('https://main.test', 'session', state => states.push(state));
-  sharing.request('share');
-  sharing.open();
-  assert.equal(states.at(-1).status, 'blocked');
-  window.open = () => popup;
-  sharing.open();
-  sharing.message({ source: {}, origin: 'https://main.test', data: { type: 'rust-sharing-ready' } });
-  assert.equal(sent, undefined);
-  sharing.message({ source: popup, origin: 'https://main.test', data: { type: 'rust-sharing-ready' } });
-  assert.equal(sent.sessionId, 'session');
-  sharing.message({ source: popup, origin: 'https://main.test', data: { type: 'rust-sharing-result', nonce: sent.nonce, error: 'Denied' } });
-  assert.equal(states.at(-1).status, 'failed');
-  assert.equal(closed, true);
-  sharing.open();
-  assert.equal(states.at(-1).status, 'failed');
-  sharing.cancel();
+test('native sharing paths cannot escape the shared route', () => {
+  assert.deepEqual(sharingRequest('share', {pathname:'/folder',hash:'#document'}), {mode:'share',path:'/folder#document'});
+  for (const pathname of ['//evil.test', 'https://evil.test', '/%2e%2e/escape', '/a/../escape', '/\\evil.test', '/?query']) {
+    assert.equal(sharingRequest('share', {pathname}), undefined, pathname);
+  }
+  assert.equal(sharingRequest('share', {roleAssignment:{allAccess:null}}), undefined);
 });
 
 test('repeated navigation preserves pending cleanup before opening a replacement', async t => {

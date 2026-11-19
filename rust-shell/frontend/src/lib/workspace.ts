@@ -1,3 +1,5 @@
+import type { PowerboxActions } from './powerbox-native';
+import type { SharingActions } from './sharing';
 import { GrainService } from './grains';
 import type { ShellConnection } from './connection';
 import type { ActiveGrain, Grain, ShellState } from './model';
@@ -60,6 +62,15 @@ export class GrainWorkspace {
     tab?.service.pathChanged(path);
   }
   rename(id: string, title: string) { return this.service(id).rename(title); }
+  powerbox(id: string): PowerboxActions {
+    const service = this.service(id);
+    return { call: (request, operation, input) => service.powerbox(request, operation, input) };
+  }
+  sharing(id: string): SharingActions {
+    const service = this.service(id);
+    return { load: () => service.sharingState(), create: (label, role) => service.createShare(label, role),
+      update: (key, changes) => service.updateShare(key, changes) };
+  }
   renderTemplate(id: string, input: unknown) { return this.service(id).renderTemplate(input); }
   private service(id: string) {
     const tab = this.tabs.get(id);

@@ -4,10 +4,18 @@ const valid = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(valu
 const failure = (status, message) => Object.assign(new Error(message), { status });
 
 // UI-session lifetime only. Closing a lease never shuts down the grain.
-export function createGrainLeases({ open, keep, close, template, rename, revokeTemplate, validate, now = Date.now }) {
+export function createGrainLeases({ open, keep, close, template, rename, powerbox, sharing, createShare, updateShare, revokeTemplate, validate, now = Date.now }) {
   const leases = new Map();
+  const closePowerbox = async record => {
+    const request = record.powerbox;
+    if (!request) return;
+    request.closed = true;
+    record.powerbox = null;
+    if (request.handle) await powerbox.close(request.handle);
+  };
   const dispose = async (record) => {
     record.closed = true;
+    await closePowerbox(record);
     if (leases.get(record.scope) === record) leases.delete(record.scope);
     if (record.handle) {
       const handle = record.handle;
@@ -52,6 +60,7 @@ export function createGrainLeases({ open, keep, close, template, rename, revokeT
         await validate(token);
         await keep(record.handle);
         if (record.closed) throw failure(410, "Grain session closed.");
+        if (record.powerbox?.expires <= now()) await closePowerbox(record);
         record.expires = now() + 45000;
         return {};
       } catch (error) { await dispose(record); throw error; }
@@ -74,6 +83,77 @@ export function createGrainLeases({ open, keep, close, template, rename, revokeT
         await beforeWrite();
         return result;
       } finally { record.renaming = false; }
+    },
+    async powerbox(token, input, signal) {
+      const record = get(token, input.scope, input.lease);
+      if (!powerbox || !valid(input.lease) || !valid(input.request) || !record?.handle || record.closed || record.expires <= now()) throw failure(410, "Grain session expired.");
+      if (!["begin", "select", "poll", "cancel"].includes(input.operation)) throw failure(400, "Invalid Powerbox operation.");
+      if (input.operation === "cancel") {
+        if (record.powerbox?.id === input.request) await closePowerbox(record);
+        return {};
+      }
+      let request = record.powerbox;
+      if (input.operation === "begin") {
+        if (request) throw failure(409, "A Powerbox request is already open.");
+        request = {id:input.request,expires:now()+300000,closed:false,handle:null,busy:false,complete:false};
+        record.powerbox = request;
+      }
+      if (!request || request.id !== input.request || request.closed || request.complete) throw failure(410, "Powerbox request ended.");
+      if (request.busy) throw failure(409, "A Powerbox operation is already pending.");
+      request.busy = true;
+      const handle = record.handle;
+      const checkLive = async () => {
+        await validate(token);
+        await keep(handle);
+        if (record.closed || request.closed || signal.aborted || record.expires <= now() || request.expires <= now()) throw failure(410, "Powerbox request ended.");
+      };
+      try {
+        await checkLive();
+        let result;
+        if (input.operation === "begin") {
+          const opened = await powerbox.open(handle, input, checkLive);
+          request.handle = opened.handle;
+          result = opened.view;
+        } else result = await powerbox[input.operation](request.handle, input, checkLive);
+        await checkLive();
+        if (result.status === "complete") {
+          request.complete = true;
+          request.handle.delivered = true;
+        }
+        return result;
+      } catch (error) {
+        request.closed = true;
+        if (record.powerbox === request) record.powerbox = null;
+        if (request.handle) await powerbox.close(request.handle);
+        throw error;
+      } finally { request.busy = false; }
+    },
+    async sharing(token, input, signal, operation) {
+      const record = get(token, input.scope, input.lease);
+      if (!valid(input.lease) || !record?.handle || record.closed || record.expires <= now()) throw failure(410, "Grain session expired.");
+      const callback = { getSharing: sharing, createShare, updateShare }[operation];
+      if (!callback) throw failure(503, "Sharing is unavailable.");
+      if (record.sharing) throw failure(409, "A sharing operation is already pending.");
+      if (operation === "createShare" && (record.shares || 0) >= 32) throw failure(429, "Too many sharing links. Reopen the grain to create more.");
+      record.sharing = true;
+      const handle = record.handle;
+      const beforeWrite = async () => {
+        await validate(token);
+        await keep(handle);
+        if (record.closed || signal.aborted || record.expires <= now()) throw failure(410, "Grain session closed.");
+      };
+      let result;
+      try {
+        await beforeWrite();
+        if (operation === "createShare") record.shares = (record.shares || 0) + 1;
+        result = await callback(handle, input, beforeWrite);
+        await beforeWrite();
+        return operation === "createShare" ? { token: result.token } : result;
+      } catch (error) {
+        // A canceled issuance must not leave an undisclosed working bearer token.
+        if (operation === "createShare" && result) await revokeTemplate(result);
+        throw error;
+      } finally { record.sharing = false; }
     },
     async template(token, input, signal) {
       const record = get(token, input.scope, input.lease);
