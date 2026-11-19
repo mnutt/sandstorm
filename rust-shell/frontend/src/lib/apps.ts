@@ -42,7 +42,7 @@ export class AppService {
   async list(): Promise<{ actions: AppAction[]; limited: boolean }> {
     const result = await this.connection.run(this.connection.shell.listApps().promise(), 'Load apps');
     const actions: AppAction[] = [];
-    for (const action of result.actions) actions.push({ key: action.key, title: action.title, appTitle: action.appTitle });
+    for (const action of result.actions) actions.push({ key: action.key, title: action.title, appTitle: action.appTitle, shortDescription: action.shortDescription, appId: action.appId, iconSrc: action.iconSrc, lastUsed: action.lastUsed });
     return { actions, limited: result.limited };
   }
   async create(actionId: string, title: string): Promise<string> {

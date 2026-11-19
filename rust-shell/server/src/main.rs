@@ -198,6 +198,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route_service("/notifications", index.clone())
         .route_service("/grains", index.clone())
         .route_service("/apps", index.clone())
+        .route_service("/apps/{id}", index.clone())
+        .route_service("/apps/{id}/", index.clone())
         .route_service("/account", index.clone())
         .route_service("/grain/{id}", index.clone())
         .route_service("/grain/{id}/", index.clone())

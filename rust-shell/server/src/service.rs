@@ -267,6 +267,10 @@ impl shell::Server for Shell {
             out.set_key(&action.key);
             out.set_title(&action.title);
             out.set_app_title(&action.app_title);
+            out.set_short_description(&action.short_description);
+            out.set_app_id(&action.app_id);
+            out.set_icon_src(&action.icon_src);
+            out.set_last_used(&action.last_used);
         }
         Ok(())
     }
@@ -395,6 +399,7 @@ impl shell::Server for Shell {
                             out.set_owned(grain.owned);
                             out.set_last_used(&grain.last_used);
                             out.set_app_title(&grain.app_title);
+                            out.set_app_id(&grain.app_id);
                             out.set_icon_src(&grain.icon_src);
                         }
                     }

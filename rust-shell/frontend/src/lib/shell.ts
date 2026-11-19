@@ -63,7 +63,7 @@ export class ShellService {
     const grains: Grain[] = [];
     for (const grain of snapshot.grains) grains.push({
       key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
-      href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle, iconSrc: grain.iconSrc,
+      href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
     });
     this.update({ status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
       revision: snapshot.revision, total: snapshot.total, connectionError: '' });

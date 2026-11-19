@@ -1,14 +1,26 @@
 <script lang="ts">
+  import Grains from './Grains.svelte';
+  import { isPlainNavigation } from './lib/navigation';
+  import AppIcon from './components/ui/AppIcon.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import NativeSelect from './components/ui/NativeSelect.svelte';
   import Panel from './components/ui/Panel.svelte';
-  import { onDestroy } from 'svelte';
-  import type { CreationState } from './lib/apps';
-  import { rememberRoute } from './lib/router';
+  import { onDestroy, tick } from 'svelte';
+  import { rememberRoute, appRoute } from './lib/router';
   import type { ShellService, ShellState, AppAction } from './lib/shell';
-  let { service, status, fixture, creation, created, checkGrains }: { service: ShellService; status: ShellState['status']; fixture: boolean; creation: CreationState;
-    created: (id: string) => void; checkGrains: () => void } = $props();
+  let { service, model, appId, navigate, created, checkGrains }: { service: ShellService; model: ShellState; appId?: string;
+    navigate: (path: string) => void; created: (id: string) => void; checkGrains: () => void } = $props();
+  const status = $derived(model.status);
+  const fixture = $derived(model.fixture);
+  const creation = $derived(model.creation);
+  const appGrains = $derived({ ...model, grains: model.grains.filter(grain => grain.appId === appId) });
+  function openApp(event: MouseEvent, id: string) {
+    if (!isPlainNavigation(event)) return;
+    event.preventDefault();
+    navigate(appRoute(id));
+  }
+  $effect(() => { appId; selected = ''; });
   let actions: AppAction[] = $state([]);
   let limited = $state(false);
   let loading = $state(false);
@@ -17,6 +29,27 @@
   const uncertain = $derived(creation.status === 'unknown');
   let selected = $state('');
   let title = $state('New grain');
+  let search = $state('');
+  let createForm = $state<HTMLFormElement>();
+  const apps = $derived.by(() => {
+    const grouped = new Map<string, { id: string; title: string; description: string; iconSrc: string; lastUsed: string; actions: AppAction[] }>();
+    for (const action of actions) {
+      const id = action.appId || action.key;
+      const app = grouped.get(id);
+      if (app) app.actions.push(action);
+      else grouped.set(id, { id, title: action.appTitle, description: action.shortDescription, iconSrc: action.iconSrc, lastUsed: action.lastUsed, actions: [action] });
+    }
+    return [...grouped.values()].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+  });
+  const visibleApps = $derived(apps.filter(app => app.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
+  const recentApps = $derived(visibleApps.filter(app => app.lastUsed).sort((a, b) => b.lastUsed.localeCompare(a.lastUsed) || a.title.localeCompare(b.title)).slice(0, 6));
+  const selectedApp = $derived(apps.find(app => app.id === appId));
+  function choose(app: typeof apps[number]) {
+    if (creation.status !== 'idle') return;
+    selected = app.actions[0].key;
+    title = app.actions[0].title || 'New grain';
+    void tick().then(() => createForm?.querySelector<HTMLInputElement>('input')?.focus());
+  }
   let epoch = 0;
   let alive = true;
   async function load() {
@@ -46,28 +79,53 @@
     }
   }
 </script>
-<Panel aria-labelledby="apps-title">
-  <h2 id="apps-title">Apps</h2>
-  <p>Create a grain using an app installed for your account.</p>
+<Panel aria-label="Apps">
   {#if status === 'signed-out'}<p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your installed apps.</p>
   {:else if status !== 'ready'}<p>Connecting to Sandstorm…</p>
   {:else if fixture}<p>App creation requires an installed Sandstorm server.</p>
   {:else}
-    <Button disabled={creating || loading} onclick={() => { if (!uncertain) error = ''; void load(); }}>Refresh apps</Button>
+    {#if !appId}<div class="app-controls"><div class="search"><label class="sr-only" for="app-search">Search apps</label><TextInput id="app-search" type="search" bind:value={search} placeholder="Search installed apps" /></div>
+      <Button variant="secondary" disabled={creating || loading} onclick={() => { if (!uncertain) error = ''; void load(); }}>Refresh apps</Button></div>{/if}
     {#if loading}<p role="status">Loading apps…</p>
     {:else if !actions.length}<p>No installed app actions to show. Install apps in the main shell.</p>
     {:else}
-      <form onsubmit={create}>
+      {#snippet tiles(items: typeof apps)}
+        <div class="app-grid">
+          {#each items as app (app.id)}
+            <a class="app-tile" href={appRoute(app.id)} aria-label={`Open ${app.title}`} onclick={event => openApp(event, app.id)}>
+              <AppIcon src={app.iconSrc} /><span class="app-name" title={app.title}>{app.title}</span>
+              <span class="app-hint" title={app.description}>{app.description}</span>
+            </a>
+          {/each}
+        </div>
+      {/snippet}
+      {#if !appId}
+      {#if recentApps.length}<section aria-labelledby="recent-apps-title"><h2 id="recent-apps-title">Recently used</h2>{@render tiles(recentApps)}</section>{/if}
+      <section aria-labelledby="installed-apps-title"><h2 id="installed-apps-title">Installed apps <span class="count">{apps.length}</span></h2>
+        {#if visibleApps.length}{@render tiles(visibleApps)}{:else}<p>No apps match your search.</p>{/if}
+      </section>
+      {:else if selectedApp}
+        <div class="app-detail-heading">
+          <div class="app-summary"><AppIcon src={selectedApp.iconSrc} /><div><h2>{selectedApp.title}</h2><p>{selectedApp.description}</p></div></div>
+          <Button disabled={creation.status !== 'idle'} onclick={() => choose(selectedApp)}>New grain</Button>
+        </div>
+      {:else}<p>This app is not in the loaded installed-app list.</p><Button variant="secondary" onclick={() => navigate('/apps')}>Back to apps</Button>{/if}
+      {#if appId && (selected || uncertain)}
+      <form bind:this={createForm} onsubmit={create} aria-label="Create a grain">
+        <h2>{selectedApp ? `Create with ${selectedApp.title}` : 'Create a grain'}</h2>
         <label for="app-action">Installed app action</label>
         <NativeSelect id="app-action" bind:value={selected} disabled={creating || uncertain} required>
-          <option value="">Choose an app</option>
-          {#each actions as action (action.key)}<option value={action.key}>{action.appTitle} — {action.title}</option>{/each}
+          <option value="">Choose an action</option>
+          {#each selectedApp?.actions || actions as action (action.key)}<option value={action.key}>{action.title}</option>{/each}
         </NativeSelect>
         <label for="new-grain-title">Grain title</label>
         <TextInput id="new-grain-title" bind:value={title} maxlength={160} required disabled={creating || uncertain} />
-        <Button type="submit" disabled={creation.status !== 'idle' || !selected || !title.trim()}>{creating ? 'Creating grain…' : 'Create grain'}</Button>
+        <div class="form-actions"><Button type="submit" disabled={creation.status !== 'idle' || !selected || !title.trim()}>{creating ? 'Creating grain…' : 'Create grain'}</Button>
+        <Button variant="secondary" disabled={creating || uncertain} onclick={() => { selected = ''; }}>Cancel</Button></div>
       </form>
+      {/if}
     {/if}
+    {#if appId && selectedApp}<div class="app-grains"><Grains model={appGrains} {service} {navigate} /></div>{/if}
     {#if limited}<p>Showing the first 100 installed actions. Use the main shell for the full list.</p>{/if}
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
@@ -75,39 +133,30 @@
   {#if uncertain}<p role="alert">{creation.status === 'unknown' ? creation.error : ''}</p><p>The request was not retried. Check your grains before creating another.</p><Button onclick={checkGrains}>Check grains</Button><Button onclick={() => service.acknowledgeCreation()}>I checked my grains</Button>{/if}
 </Panel>
 <style>
-  h2 {
-    margin: 0 0 var(--ss-space-4);
-    font-size: var(--ss-text-title);
-    line-height: 1.3;
-  }
-
-  a {
-    color: var(--ss-brand);
-    text-underline-offset: .2em;
-  }
-
-  a:focus-visible {
-    outline: 3px solid var(--ss-focus);
-    outline-offset: 3px;
-  }
-
-  p {
-    overflow-wrap: anywhere;
-  }
-
-  [role=alert] {
-    color: var(--ss-danger);
-  }
-
-  form {
-    display: grid;
-    gap: var(--ss-space-3);
-    max-width: 32rem;
-    margin-top: var(--ss-space-5);
-  }
-
-  label {
-    font-weight: 600;
-    font-size: var(--ss-text-small);
-  }
+  h2 { margin: 0 0 var(--ss-space-3); font-size: .875rem; font-weight: 600; color: var(--ss-muted); }
+  a { color: var(--ss-brand); text-underline-offset: .2em; }
+  a:focus-visible, .app-tile:focus-visible { outline: 3px solid var(--ss-focus); outline-offset: 3px; }
+  p { overflow-wrap: anywhere; }
+  [role=alert] { color: var(--ss-danger); }
+  .app-controls { display: flex; gap: var(--ss-space-3); align-items: center; margin-bottom: var(--ss-space-4); --ss-control-height: 2.375rem; font-size: var(--ss-text-small); }
+  .search { flex: 1; max-width: 32rem; }
+  section + section { border-top: 1px solid var(--ss-border); padding-top: var(--ss-space-3); margin-top: var(--ss-space-3); }
+  .count { font-weight: 400; margin-left: .35rem; font-variant-numeric: tabular-nums; }
+  .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: var(--ss-space-2); }
+  .app-tile { display: flex; flex-direction: column; align-items: center; gap: var(--ss-space-1); padding: var(--ss-space-1); min-width: 0; border: 1px solid transparent; border-radius: var(--ss-radius-panel); background: transparent; color: var(--ss-text); font: inherit; text-decoration: none; cursor: pointer; }
+  .app-tile:hover { background: var(--ss-brand-subtle); border-color: var(--ss-border); }
+  .app-name { font-size: var(--ss-text-small); font-weight: 600; }
+  .app-hint { font-size: .75rem; color: var(--ss-muted); min-height: 1.5em; }
+  .app-name, .app-hint { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+  .app-detail-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ss-space-4); margin-bottom: var(--ss-space-4); }
+  .app-summary { display: flex; align-items: center; gap: var(--ss-space-4); min-width: 0; flex: 1; }
+  .app-summary > div { min-width: 0; }
+  .app-summary h2 { color: var(--ss-text); font-size: var(--ss-text-title); overflow-wrap: anywhere; }
+  .app-summary p { color: var(--ss-muted); margin: 0; font-size: var(--ss-text-small); }
+  .app-grains { margin-top: var(--ss-space-4); }
+  form { display: grid; gap: var(--ss-space-2); max-width: 32rem; margin-top: var(--ss-space-5); padding-top: var(--ss-space-4); border-top: 1px solid var(--ss-border); }
+  form h2 { color: var(--ss-text); font-size: 1rem; }
+  .form-actions { display: flex; flex-wrap: wrap; gap: var(--ss-space-2); margin-top: var(--ss-space-2); }
+  label { font-weight: 600; font-size: var(--ss-text-small); }
+  @media (max-width: 450px) { .app-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

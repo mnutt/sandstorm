@@ -8,10 +8,18 @@ pub type Error = (StatusCode, String);
 
 #[derive(Deserialize)]
 pub struct AppAction {
+    #[serde(default, rename = "shortDescription")]
+    pub short_description: String,
     pub key: String,
     pub title: String,
     #[serde(rename = "appTitle")]
     pub app_title: String,
+    #[serde(default, rename = "appId")]
+    pub app_id: String,
+    #[serde(default, rename = "iconSrc")]
+    pub icon_src: String,
+    #[serde(default, rename = "lastUsed")]
+    pub last_used: String,
 }
 #[derive(Deserialize)]
 pub struct AppList {
@@ -140,6 +148,8 @@ pub struct Entry {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Grain {
+    #[serde(default, rename = "appId")]
+    pub app_id: String,
     pub key: String,
     pub title: String,
     #[serde(default, rename = "ownerTitle")]

@@ -24,6 +24,7 @@ struct Grain {
   appTitle @5 :Text;
   ownerTitle @6 :Text;
   iconSrc @7 :Text;
+  appId @8 :Text;
 }
 
 struct Snapshot {
@@ -69,6 +70,10 @@ struct AppAction {
   key @0 :Text;
   title @1 :Text;
   appTitle @2 :Text;
+  appId @3 :Text;
+  iconSrc @4 :Text;
+  lastUsed @5 :Text;
+  shortDescription @6 :Text;
 }
 struct AccountProfile {
   name @0 :Text;

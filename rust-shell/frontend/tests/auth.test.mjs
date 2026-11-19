@@ -49,7 +49,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     getProfile: async id => ({...profiles[id],mainHref:mainOrigin+'/account'}),
     updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = profile; users[id].name = profile.name; },
     sessionStore,
-    listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app'}],limited:false}),
+    listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
     createGrain: async (id, action, title, beforeCreate) => {
       assert.equal(action,id+'-action');
       assert.equal(title,'Created in Rust');
@@ -79,7 +79,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     snapshot: async (id) => {
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
       return { entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
-        href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
+        href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', appId: 'test-app', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
     },
@@ -236,12 +236,20 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button', {name:'Save profile',exact:true}).click();
     await page.getByText('Profile saved.', {exact:true}).waitFor();
     await page.getByRole('link', {name:'Apps',exact:true}).click();
-    await page.getByLabel('Installed app action').waitFor();
+    await page.getByRole('heading', {name:'Installed apps'}).waitFor();
     assert.equal(new URL(page.url()).pathname,'/apps');
     await expect(page).toHaveTitle('Apps · Sandstorm');
     await expect(page.locator('.route-content')).toBeFocused();
     await expect(page.getByRole('link', {name:'Apps',exact:true})).toHaveAttribute('aria-current','page');
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-apps.png',fullPage:true});
     await page.reload();
+    await page.getByRole('link', {name:'Open Test app',exact:true}).first().click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/apps/test-app');
+    await expect(page.locator('.grain-item')).toHaveCount(1);
+    await page.screenshot({path:'/tmp/sandstorm-rust-ui-app-detail.png',fullPage:true});
+    await page.reload();
+    await expect(page.locator('.grain-item')).toHaveCount(1);
+    await page.getByRole('button', {name:'New grain',exact:true}).click();
     await page.getByLabel('Installed app action').selectOption('alice-action');
     await page.getByLabel('Grain title').fill('Created in Rust');
     await page.getByRole('button', {name:'Create grain',exact:true}).click();
@@ -267,6 +275,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('link', {name:'Apps',exact:true}).click();
     await page.getByText('Grain created.', {exact:true}).waitFor();
     await page.getByRole('button', {name:'Create another grain',exact:true}).click();
+    await page.getByRole('link', {name:'Open Test app',exact:true}).first().click();
+    await page.getByRole('button', {name:'New grain',exact:true}).click();
     await page.getByLabel('Installed app action').selectOption('alice-action');
     await page.getByLabel('Grain title').fill('Created in Rust');
     await page.getByRole('button', {name:'Create grain',exact:true}).click();
@@ -278,7 +288,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     failCreation = false;
     await page.getByRole('link', {name:'Apps',exact:true}).click();
     await page.getByText('The request was not retried. Check your grains before creating another.').waitFor();
-    await expect(page.getByRole('button', {name:'Create grain',exact:true})).toBeDisabled();
+    await expect(page.getByRole('button', {name:'Create grain',exact:true})).toHaveCount(0);
     await page.getByRole('link', { name: 'Grains', exact: true }).click();
     await page.getByRole('link', { name: 'Alice grain', exact: true }).waitFor();
     await page.reload();

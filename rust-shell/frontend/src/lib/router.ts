@@ -1,4 +1,4 @@
-export type Route = { page: 'notifications' | 'grains' | 'apps' | 'account' | 'missing' } | { page: 'grain'; grainId: string; path: string } | { page: 'shared'; webkey: string; path: string };
+export type Route = { page: 'apps'; appId?: string } | { page: 'notifications' | 'grains' | 'account' | 'missing' } | { page: 'grain'; grainId: string; path: string } | { page: 'shared'; webkey: string; path: string };
 export function appPath(value: string): string | null {
   if (!value || value.length > 2048 || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) return null;
   const url = new URL(value, 'https://app.invalid');
@@ -9,6 +9,8 @@ export function readRoute(url = new URL(location.href)): Route {
   if (url.pathname === '/grains') return { page: 'grains' };
   if (url.pathname === '/account') return { page: 'account' };
   if (url.pathname === '/apps') return { page: 'apps' };
+  const app = url.pathname.match(/^\/apps\/([a-zA-Z0-9_-]{1,128})\/?$/);
+  if (app) return { page: 'apps', appId: app[1] };
   const shared = url.pathname.match(/^\/shared\/([a-zA-Z0-9_-]{1,256})(\/.*)?$/);
   if (shared) {
     const path = appPath((shared[2] || '/') + url.search + url.hash);
@@ -25,7 +27,8 @@ export function readRoute(url = new URL(location.href)): Route {
 }
 export function grainRoute(id: string, path = '/') { return '/grain/' + encodeURIComponent(id) + (path === '/' ? '' : path); }
 export function sharedRoute(webkey:string,path='/') { return '/shared/' + encodeURIComponent(webkey) + (path === '/' ? '' : path); }
-export function routeKey(route: Route) { return route.page === 'shared' ? sharedRoute(route.webkey,route.path) : route.page === 'grain' ? grainRoute(route.grainId, route.path) : '/' + route.page; }
+export function appRoute(id: string) { return '/apps/' + encodeURIComponent(id); }
+export function routeKey(route: Route) { return route.page === 'apps' && route.appId ? appRoute(route.appId) : route.page === 'shared' ? sharedRoute(route.webkey,route.path) : route.page === 'grain' ? grainRoute(route.grainId, route.path) : '/' + route.page; }
 const returnKey = 'rustShellReturnRoute';
 export function rememberRoute() {
   const route = readRoute();

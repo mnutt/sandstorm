@@ -12,6 +12,7 @@ export interface Notification {
   senderName: string;
 }
 export interface Grain {
+  appId: string;
   key: string;
   title: string;
   ownerTitle: string;
@@ -22,6 +23,10 @@ export interface Grain {
   appTitle: string;
 }
 export interface AppAction {
+  shortDescription: string;
+  appId: string;
+  iconSrc: string;
+  lastUsed: string;
   key: string;
   title: string;
   appTitle: string;

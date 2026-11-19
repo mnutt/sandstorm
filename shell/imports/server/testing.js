@@ -1508,6 +1508,11 @@ if(isTesting) {
         if (!list.actions.some(row => row.key === action._id) || list.actions.some(row => row.key === foreignId)) {
           throw new Error("Installed actions leaked or omitted account data");
         }
+        const projected = list.actions.find(row => row.key === action._id);
+        if (projected.appId !== source.appId || !projected.iconSrc ||
+            !projected.lastUsed || !Number.isFinite(Date.parse(projected.lastUsed))) {
+          throw new Error("App gallery metadata is missing its icon or usage timestamp");
+        }
         let denied = false;
         try { await call("createGrain", { actionId: foreignId, title: "Must not create" }); }
         catch (error) { denied = error.error === 404; }

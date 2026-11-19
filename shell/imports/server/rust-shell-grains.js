@@ -30,7 +30,7 @@ export async function grainMenu(db, accountId, mainUrl) {
   const owned = await db.collections.grains.find({ userId: accountId,
     trashed: { $exists: false }, suspended: { $exists: false } }, {
     sort: { lastUsed: -1, _id: 1 }, limit: LIMIT + 1,
-    fields: { title: 1, packageId: 1, lastUsed: 1, created: 1 },
+    fields: { title: 1, appId: 1, packageId: 1, lastUsed: 1, created: 1 },
   }).fetchAsync();
   const shared = await db.collections.apiTokens.rawCollection().aggregate([
     { $match: { "owner.user.accountId": accountId, grainId: { $type: "string" },
@@ -64,6 +64,7 @@ export async function grainMenu(db, accountId, mainUrl) {
       ? iconSrcForDenormalizedGrainMetadata(metadata, "grain", staticPrefix) : "";
   };
   const entry = (row, isOwned) => ({ key: row._id,
+    appId: isOwned ? row.appId || "" : row.owner.denormalizedGrainMetadata?.appId || "",
     title: text(isOwned ? row.title : computeTitleFromTokenOwnerUser(row.owner).title),
     ownerTitle: text(isOwned ? row.title : row.owner.upstreamTitle || row.owner.title),
     appTitle: Buffer.from(String(appName(row, isOwned))).subarray(0, 160).toString(),

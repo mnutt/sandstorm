@@ -88,7 +88,7 @@
   <div class="brand-group">
     <a class="brand" href="/grains" onclick={event => navigation.link(event, '/grains')}><img src="/sandstorm-logo.svg" width="28" height="30" alt="" /><span>Sandstorm</span></a>
   </div>
-  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'grains'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
+  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'apps' || route.page === 'grains'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
   <div class="topbar-actions">
     <a class="notifications" href="/notifications" aria-label="Notifications" title="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
@@ -163,7 +163,7 @@
   {:else if view === 'account'}
     <Account {model} {service} />
   {:else if view === 'apps'}
-    <Apps service={service} status={model.status} fixture={model.fixture} creation={model.creation}
+    <Apps {service} {model} {navigate} appId={route.page === 'apps' ? route.appId : undefined}
       created={id => navigate(grainRoute(id))} checkGrains={() => navigate('/grains')} />
   {:else if view === 'grains'}
     <Grains {model} {service} {navigate} />
