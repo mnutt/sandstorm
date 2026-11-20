@@ -36,3 +36,8 @@ export type ProfileUploadPayload = Assert<Equal<Account_PreparePictureUpload$Res
 
 import type { GrainSession_RenderTemplate$Results, TemplateToken } from '../src/generated/shell';
 export type TemplatePayload = Assert<Equal<GrainSession_RenderTemplate$Results['result']['value'],TemplateToken>>;
+
+import type { NotificationHandle_Dismiss$Results, NotificationHandle_MarkRead$Results, Shell_MarkAllRead$Results, Empty } from '../src/generated/shell';
+export type NoticeDismissPayload = Assert<Equal<NotificationHandle_Dismiss$Results['result']['value'],Empty>>;
+export type NoticeReadPayload = Assert<Equal<NotificationHandle_MarkRead$Results['result']['value'],Empty>>;
+export type AllNoticesReadPayload = Assert<Equal<Shell_MarkAllRead$Results['result']['value'],Empty>>;

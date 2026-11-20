@@ -173,6 +173,15 @@ total count. Mongo observers wake a pending Rust request when notifications,
 owned/shared grain titles, referenced sender names, or account authority change. Rust pushes changed snapshots
 over Cap'n Proto. Dismiss, cancel ongoing activity, and mark-all-read delegate to the
 same Meteor functions used by the main UI, including ownership and cleanup checks.
+Dismiss and mark-as-read use the scoped `NotificationHandle`, returning typed
+`Result(Empty)` failures. The root `Shell.markAllRead` explicitly marks the whole
+account; an empty notice selector cannot select all notices. Foreign/missing
+single-notice reads remain harmless no-ops, as in Meteor, while dismissal retains
+canonical ownership checks. Handles are released on completion, timeout, or
+connection change. Expected failures display their safe application message;
+transport failures display an uncertain-outcome message and are never replayed.
+The former root `dismissReal` and ID-taking `markRead` methods are removed.
+
 Opening a notification marks only that account’s selected notice as read; the
 explicit mark-all action remains separate. Rows share date and action columns,
 so longer cancellation buttons do not shift the dates.

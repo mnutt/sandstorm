@@ -117,11 +117,10 @@ interface Shell {
   interop @8 () -> (fixture :Fixture);
   # Available only when the operator sets RUST_SHELL_FIXTURE_SOCKET.
   # The browser never chooses a socket or receives Sandstorm Backend authority.
-  dismissReal @9 (key :Text) -> ();
-  markRead @10 (key :Text) -> ();
-  openGrain @11 (grainId :Text) -> (view :GrainView, session :GrainSession);
-  listApps @12 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
-  createGrain @13 (actionId :Text, title :Text) -> (grainId :Text);
+  markAllRead @9 () -> (result :Result(Empty));
+  openGrain @10 (grainId :Text) -> (view :GrainView, session :GrainSession);
+  listApps @11 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
+  createGrain @12 (actionId :Text, title :Text) -> (grainId :Text);
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
 
@@ -401,7 +400,8 @@ interface Sharing {
 
 
 # An account-bound notice handle is a selector, not an enduring permission grant.
-# Every read/write rechecks notice ownership, type, and administrator authority.
+# Every call rechecks the linked account and applies Meteor's notice policy.
+# Details and reporting preferences also check notice type and administrator authority.
 enum ReportingPreference { unset @0; disabled @1; enabled @2; }
 struct StatisticsDetails {
   preference @0 :ReportingPreference;
@@ -426,6 +426,10 @@ interface NotificationHandle {
   setStatisticsReporting @1 (enabled :Bool) -> (result :Result(StatisticsDetails));
   # Only valid for a statistics notice owned by a current administrator.
   # Success deletes reporting notices. Never replay an uncertain write.
+  dismiss @2 () -> (result :Result(Empty));
+  markRead @3 () -> (result :Result(Empty));
+  # These act only on this notice. Missing/foreign markRead is a harmless no-op,
+  # matching Meteor; an empty selector never means all notices.
 }
 
 # Options for app-requested API credentials. Pointer presence preserves optional

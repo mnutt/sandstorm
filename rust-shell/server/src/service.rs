@@ -141,18 +141,6 @@ impl Shell {
             });
         }
     }
-
-    async fn mutate_real(&self, action: &str, input: serde_json::Value) -> capnp::Result<()> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Not connected to a real account".into()))?;
-        session
-            .call(action, input)
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        Ok(())
-    }
 }
 
 impl shell::Server for Shell {
@@ -407,30 +395,27 @@ impl shell::Server for Shell {
         Ok(())
     }
 
-    async fn dismiss_real(
+    async fn mark_all_read(
         self: Rc<Self>,
-        params: shell::DismissRealParams,
-        _: shell::DismissRealResults,
+        _: shell::MarkAllReadParams,
+        mut results: shell::MarkAllReadResults,
     ) -> capnp::Result<()> {
-        let key = params.get()?.get_key()?.to_str()?;
-        let key = key.to_owned();
-        self.mutate_real("dismiss", serde_json::json!({ "id": key }))
-            .await
-    }
-
-    async fn mark_read(
-        self: Rc<Self>,
-        params: shell::MarkReadParams,
-        _: shell::MarkReadResults,
-    ) -> capnp::Result<()> {
-        let input = params.get()?;
-        let key = input.get_key()?.to_str()?;
-        let payload = if key.is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::json!({"key":key})
+        let outcome = match self.session.as_ref() {
+            Some(session) => session.call("read", serde_json::json!({})).await,
+            None => Err((
+                axum::http::StatusCode::UNAUTHORIZED,
+                "Sign in to update notifications".into(),
+            )),
         };
-        self.mutate_real("read", payload).await
+        match outcome {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
     }
 
     async fn interop(
@@ -524,7 +509,7 @@ impl shell::Server for Shell {
     ) -> capnp::Result<()> {
         if self.session.is_some() {
             return Err(capnp::Error::failed(
-                "Use dismissReal for real notifications".into(),
+                "Use a notification handle for real notifications".into(),
             ));
         }
         let id = params.get()?.get_id();

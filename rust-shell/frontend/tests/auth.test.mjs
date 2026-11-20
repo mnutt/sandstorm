@@ -192,6 +192,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       return snapshot;
     },
     dismiss: async (id, key) => {
+      if (!rows.has(key)) throw Object.assign(new Error('Notification not found.'), {status:404});
       if (rows.get(key)?.user !== id) throw Object.assign(new Error('Not your notification'), { status: 403 });
       rows.delete(key); changed();
     },
@@ -371,7 +372,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button',{name:'Close',exact:true}).click();
     await serveProbe(page, './notification-probe.ts', 'notification-probe.js');
     assert.deepEqual(await page.evaluate(() => import('/notification-probe.js').then(probe => probe.checkAuthority())),
-      {referrals:true,wrongKind:true,missing:true,otherAccount:true});
+      {referrals:true,wrongKind:true,missing:true,otherAccount:true,foreignDismiss:true,foreignRead:true,emptyRead:true,missingDismiss:true});
     await page.getByRole('button',{name:'Referral update',exact:true}).click();
     await page.getByText('Completed person',{exact:true}).waitFor();
     await expect.poll(() => rows.get('referrals').unread).toBe(false);

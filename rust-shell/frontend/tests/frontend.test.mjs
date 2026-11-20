@@ -443,3 +443,27 @@ test('template options reject fields that cannot be represented without losing r
     assert.throws(() => parse({unauthenticated}), /Invalid template request/);
   }
 });
+
+test('notification writes release scoped handles and separate policy failures from uncertain outcomes', async t => {
+  browserGlobals(t);
+  let state, releases = 0, calls = 0, pending = false;
+  const service = new ShellService(value => { state = value; });
+  const response = {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'This notification belongs to another account.'}}};
+  const notice = {client:{close:()=>{++releases;}},dismiss:()=>({promise:async()=>{++calls;return pending ? new Promise(()=>{}) : response;}})};
+  service.connection = {
+    shell:{notification:fill=>{const params={};fill(params);assert.equal(params.key,'notice');return {getNotice:()=>notice};}},
+    run:promise=>promise,
+  };
+  service.update({status:'ready',fixture:false});
+  await service.dismiss('notice');
+  assert.equal(state.notificationError,'This notification belongs to another account.');
+  assert.equal(releases,1);
+  assert.equal(state.pending,false);
+  pending = true;
+  service.connection.run=()=>Promise.reject(new Error('CAPNP internal details'));
+  await service.dismiss('notice');
+  assert.match(state.notificationError,/outcome may be unknown/);
+  assert.doesNotMatch(state.notificationError,/CAPNP/);
+  assert.equal(releases,2,'timed-out operations release the handle without waiting for RPC completion');
+  assert.equal(calls,2,'neither failure is replayed');
+});

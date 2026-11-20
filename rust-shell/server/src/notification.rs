@@ -73,6 +73,34 @@ fn write(details: Details, mut out: api::notification_details::Builder<'_>) {
     }
 }
 impl api::notification_handle::Server for Notice {
+    async fn dismiss(
+        self: Rc<Self>,
+        _: api::notification_handle::DismissParams,
+        mut results: api::notification_handle::DismissResults,
+    ) -> capnp::Result<()> {
+        match self.session.call("dismiss", json!({"id":self.key})).await {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => failure(error, results.get().init_result().init_failure()),
+        }
+    }
+    async fn mark_read(
+        self: Rc<Self>,
+        _: api::notification_handle::MarkReadParams,
+        mut results: api::notification_handle::MarkReadResults,
+    ) -> capnp::Result<()> {
+        // Always supply the selector, including an invalid empty one. Omission
+        // is reserved for Shell.markAllRead and has account-wide authority.
+        match self.session.call("read", json!({"key":self.key})).await {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => failure(error, results.get().init_result().init_failure()),
+        }
+    }
     async fn read(
         self: Rc<Self>,
         _: api::notification_handle::ReadParams,

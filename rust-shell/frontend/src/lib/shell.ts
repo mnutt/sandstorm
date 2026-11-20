@@ -4,12 +4,13 @@ import { NotificationView } from './notification-details';
 import { InstallService } from './install';
 import { clearStoredTemplateOffers } from './template';
 import { ProfileService, type Profile } from './profile';
-import type { Shell$Client, Snapshot } from '../generated/shell';
+import type { Shell$Client, Snapshot, NotificationHandle$Client } from '../generated/shell';
 import { ShellConnection } from './connection';
 import { GrainWorkspace } from './workspace';
 import { AppService } from './apps';
 import { initialShellState, type ShellState, type Grain, type Notification } from './model';
 import { errorMessage } from './operations';
+import { unwrap, applicationErrorMessage } from './results';
 export { initialShellState } from './model';
 export type { ShellState, Grain, Notification, AppAction, ActiveGrain } from './model';
 
@@ -111,31 +112,40 @@ export class ShellService {
     try { await this.connection.logout(); }
     catch (error) { this.update({ connectionError: errorMessage(error) }); }
   }
+  private async withNotice(shell: Shell$Client, key: string, operation: (notice: NotificationHandle$Client) => PromiseLike<unknown>) {
+    const notice = shell.notification(params => { params.key = key; }).getNotice();
+    try { return await this.connection.run(operation(notice), 'Update notification'); }
+    finally { notice.client.close(); }
+  }
   dismiss(id: string) {
     return this.mutate(shell => this.state.fixture
-      ? shell.dismiss(params => { params.id = Number(id); }).promise()
-      : shell.dismissReal(params => { params.key = id; }).promise());
+      ? this.connection.run(shell.dismiss(params => { params.id = Number(id); }).promise(), 'Dismiss notification')
+      : this.withNotice(shell, id, async notice => unwrap((await notice.dismiss().promise()).result)));
   }
-  addFixture() { return this.mutate(shell => shell.addFixture().promise()); }
+  addFixture() { return this.mutate(shell => this.connection.run(shell.addFixture().promise(), 'Add notification')); }
   openNotification(key: string) { return new NotificationView(this.connection, key); }
   async readNotification(key: string) {
     if (this.state.fixture || this.state.status !== 'ready') return;
     const account = this.accountKey;
     try {
-      await this.connection.run(this.connection.shell.markRead(params => { params.key = key; }).promise(), 'Mark notification as read');
+      await this.withNotice(this.connection.shell, key, async notice => {
+        const response = await notice.markRead().promise();
+        unwrap(response.result);
+      });
     } catch (error) {
-      if (account === this.accountKey) this.update({ notificationError: `${errorMessage(error)}. Could not confirm that the notification was marked as read.` });
+      if (account === this.accountKey) this.update({ notificationError: applicationErrorMessage(error,
+        'Could not confirm that the notification was marked as read. The action was not retried.') });
     }
   }
-  markRead() { return this.mutate(shell => shell.markRead().promise()); }
+  markRead() { return this.mutate(async shell => unwrap((await this.connection.run(shell.markAllRead().promise(), 'Mark all notifications as read')).result)); }
   private async mutate(operation: (shell: Shell$Client) => PromiseLike<unknown>) {
     if (this.state.status !== 'ready' || this.state.pending) return;
     const id = ++this.notificationOperation;
     this.update({ pending: true, notificationError: '' });
-    try { await this.connection.run(operation(this.connection.shell), 'Update notification'); }
+    try { await operation(this.connection.shell); }
     catch (error) {
       if (id === this.notificationOperation) this.update({
-        notificationError: `${errorMessage(error)}. The action was not retried; its outcome may be unknown.`,
+        notificationError: applicationErrorMessage(error, 'Could not confirm the notification update. The action was not retried; its outcome may be unknown.'),
       });
     } finally { if (id === this.notificationOperation) this.update({ pending: false }); }
   }
