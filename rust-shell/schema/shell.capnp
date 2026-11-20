@@ -52,8 +52,9 @@ interface Subscription {
   cancel @0 () -> ();
   # Dropping this capability also cancels observation.
   whenClosed @1 () -> ();
-  # Pending while observation is healthy. Resolves on explicit cancellation;
-  # rejects on delivery failure. Reconnect for a fresh authorized snapshot.
+  # Pending while observation is healthy. Resolves on explicit cancellation or
+  # after a terminal application failure has been delivered to the observer.
+  # Rejects on delivery/transport failure. Reconnect for a fresh authorized snapshot.
 }
 
 struct GrainView {
@@ -119,7 +120,7 @@ interface Shell {
   # The browser never chooses a socket or receives Sandstorm Backend authority.
   markAllRead @9 () -> (result :Result(Empty));
   openGrain @10 (grainId :Text) -> (result :Result(OpenedGrain));
-  listApps @11 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
+  listApps @11 (page :UInt32, appId :Text) -> (result :Result(AppPage));
   createGrain @12 (actionId :Text, title :Text) -> (result :Result(CreatedGrain));
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
@@ -136,8 +137,8 @@ interface SharedSession {
   close @0 () -> ();
 }
 interface SharedShell {
-  inspect @0 (webkey :Text) -> (info :SharedInfo);
-  open @1 (webkey :Text, revealIdentity :Bool) -> (view :GrainView, session :SharedSession);
+  inspect @0 (webkey :Text) -> (result :Result(SharedInfo));
+  open @1 (webkey :Text, revealIdentity :Bool) -> (result :Result(OpenedSharedGrain));
 }
 
 # Expected application failures are values. Transport/internal failures remain
@@ -149,7 +150,8 @@ enum FailureCode {
   notFound @3;
   conflict @4;
   rateLimited @5;
-  unavailable @6;
+  expired @6;
+  quotaExceeded @7;
 }
 struct Failure {
   code @0 :FailureCode;
@@ -255,9 +257,6 @@ interface Account {
 }
 
 
-
-
-
 struct PowerboxRole { key @0 :Text; title @1 :Text; }
 struct PowerboxCandidate {
   key @0 :Text;
@@ -341,8 +340,8 @@ struct GrainQuery {
 }
 struct GrainPage { grains @0 :List(Grain); hasMore @1 :Bool; page @2 :UInt32; }
 struct NotificationPage { entries @0 :List(Notification); total @1 :UInt32; page @2 :UInt32; }
-interface GrainObserver { replace @0 (page :GrainPage) -> (); }
-interface NotificationObserver { replace @0 (page :NotificationPage) -> (); }
+interface GrainObserver { replace @0 (result :Result(GrainPage)) -> (); }
+interface NotificationObserver { replace @0 (result :Result(NotificationPage)) -> (); }
 
 # Sharing authority is restricted to the parent grain lease. Closing that lease
 # invalidates retained Sharing capabilities. Grant IDs are scoped selectors,
@@ -444,7 +443,8 @@ struct TemplateRole {
   union {
     none @0 :Void;
     allAccess @1 :Void;
-    roleId @2 :UInt16;
+    roleId @2 :Int32;
+    # Matches Meteor roleAssignmentPattern (Match.Integer).
   }
   addPermissions @3 :List(Bool);
   removePermissions @4 :List(Bool);
@@ -475,3 +475,6 @@ struct OpenedGrain {
   view @0 :GrainView;
   session @1 :GrainSession;
 }
+
+struct AppPage { actions @0 :List(AppAction); limited @1 :Bool; }
+struct OpenedSharedGrain { view @0 :GrainView; session @1 :SharedSession; }

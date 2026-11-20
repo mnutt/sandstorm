@@ -29,3 +29,19 @@ export async function attack(kind: 'reply' | 'flood') {
   }
   return closed;
 }
+
+export async function checkResults() {
+  const {SharedShell, FailureCode} = await import('../src/generated/shell');
+  const ws=new WebSocket(location.origin.replace('https:','wss:')+'/shared-rpc');
+  await new Promise<void>((resolve,reject)=>{ws.onopen=()=>resolve();ws.onerror=()=>reject(new Error('connect'));});
+  const conn=new Conn(new WebSocketTransport(ws,()=>{}));
+  conn.onError=()=>{};
+  try {
+    const shared=conn.bootstrap(SharedShell);
+    const denied=(await shared.inspect(p=>{p.webkey='invalid-share';}).promise()).result;
+    const valid=(await shared.inspect(p=>{p.webkey='valid-share';}).promise()).result;
+    const open=(await shared.open(p=>{p.webkey='invalid-share';}).promise()).result;
+    return denied._isFailure && denied.failure.code===FailureCode.PERMISSION_DENIED &&
+      valid._isValue && valid.value.title==='Shared test grain' && open._isFailure && open.failure.code===FailureCode.PERMISSION_DENIED;
+  } finally {conn.shutdown();ws.close();}
+}

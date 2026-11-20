@@ -76,12 +76,16 @@ impl GrainScope {
                 json!({ "scope": self.key, "grainId": grain_id }),
             )
             .await?;
-        let view: View = serde_json::from_value(value).map_err(|_| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Invalid grain session".into(),
-            )
-        })?;
+        let view: View = match serde_json::from_value(value) {
+            Ok(view) => view,
+            Err(_) => {
+                self.close_all().await;
+                return Err((
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid grain session".into(),
+                ));
+            }
+        };
         *self.active.borrow_mut() = Some(view.lease.clone());
         let client = capnp_rpc::new_client(Lease {
             scope: self.clone(),

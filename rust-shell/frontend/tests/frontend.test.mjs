@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
@@ -432,9 +432,10 @@ test('denied upload authorization reports the reason without sending the image',
 test('template options reject fields that cannot be represented without losing restrictions', () => {
   const parse = extra => tokenOptions(templateRequest({rpcId:'test',template:'$API_TOKEN',...extra}));
   assert.deepEqual(parse({}).roleAssignment, {allAccess:null});
+  assert.deepEqual(parse({roleAssignment:{roleId:65536}}).roleAssignment, {roleId:65536});
   assert.deepEqual(parse({roleAssignment:{roleId:2,addPermissions:[false,true],removePermissions:[true]}}).roleAssignment,
     {roleId:2,addPermissions:[false,true],removePermissions:[true]});
-  for (const roleAssignment of [{allAccess:null,roleId:1},{roleId:-1},{roleId:65536},
+  for (const roleAssignment of [{allAccess:null,roleId:1},{roleId:1.5},{roleId:2147483648},
     {addPermissions:[1]},{removePermissions:'all'},{unexpected:true}]) {
     assert.throws(() => parse({roleAssignment}), /Invalid template request/);
   }
@@ -539,4 +540,55 @@ test('malformed grain URLs release the issued session', async t => {
   assert.equal(closed,1);
   assert.equal(released,1);
   assert.equal(grains.active,null);
+});
+
+
+test('app list errors show policy reasons and hide protocol details', async () => {
+  let transport=false;
+  const apps=new AppService({run:promise=>promise,shell:{listApps:()=>({promise:async()=>{
+    if(transport)throw new Error('CAPNP private details');
+    return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'App list denied.'}}};
+  }})}},()=>{});
+  await assert.rejects(apps.list(), /App list denied/);
+  transport=true;
+  await assert.rejects(apps.list(), error=>!error.message.includes('CAPNP') && /Could not load installed apps/.test(error.message));
+});
+
+test('closed Powerbox results terminate rather than becoming a waiting loop', async () => {
+  let released=0,canceled=0;
+  const request={cancel:()=>({promise:async()=>{++canceled;}}),client:{close:()=>{++released;}}};
+  const session={beginPowerbox:()=>({promise:async()=>({request,...valueResult({_isClosed:true})})})};
+  const requests=new PowerboxRequests({run:promise=>promise});
+  await assert.rejects(requests.call(session,'id','begin'), /Connection request closed/);
+  await turn();
+  assert.equal(canceled,1);
+  assert.equal(released,1);
+});
+
+
+test('query failures survive terminal signals and cancellation releases an unresponsive subscription', async () => {
+  const failures=[];
+  let releases=0,cancels=0;
+  const subscription={
+    whenClosed:()=>({promise:async()=>{}}),
+    cancel:()=>({promise:()=>{++cancels;return new Promise(()=>{});}}),
+    client:{close:()=>{++releases;}},
+  };
+  const connection={
+    run:(promise,label,options)=>runOperation(promise,label,{...options,timeoutMs:label==='Stop list observation'?5:1000}),
+    shell:{watchGrains:fill=>{
+      const params={_initQuery:()=>({})};fill(params);
+      return {promise:async()=>{
+        await params.observer.replace(p=>{const failure=p._initResult()._initFailure();failure.code=FailureCode.PERMISSION_DENIED;failure.message='Query denied.';}).promise();
+        return {subscription};
+      }};
+    }},
+  };
+  const stop=watchGrains(connection,{search:'',appId:'',sort:'recent',ownership:'all',page:0},()=>{assert.fail('denied query must not publish rows');},error=>failures.push(error.message));
+  await turn();await turn();
+  assert.deepEqual(failures,['Query denied.']);
+  stop();
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(cancels,1);
+  assert.equal(releases,1,'a stuck cancel must not keep the client capability alive');
 });

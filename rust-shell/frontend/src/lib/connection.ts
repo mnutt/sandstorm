@@ -1,7 +1,7 @@
 import { Conn } from 'capnp-es';
 import { Observer, Shell, type Shell$Client, type Installer$Client, type Account$Client, type Subscription$Client, type Snapshot } from '../generated/shell';
 import type { ConnectionStatus } from './model';
-import { runOperation, type OperationOptions, errorMessage } from './operations';
+import { runOperation, type OperationOptions } from './operations';
 import { WebSocketTransport } from './transport';
 
 interface SessionInfo { fixture: boolean; account: { name: string; key: string; pictureUrl?: string } | null }
@@ -101,8 +101,8 @@ export class ShellConnection {
     socket.onopen = async () => {
       if (generation !== this.generation) return;
       try {
-        const conn = this.conn = new Conn(new WebSocketTransport(socket, fail));
-        conn.onError = error => fail(new Error(errorMessage(error)));
+        const conn = this.conn = new Conn(new WebSocketTransport(socket, () => fail(new Error('Connection interrupted. Reconnecting…'))));
+        conn.onError = () => fail(new Error('Connection interrupted. Reconnecting…'));
         const shell = this.client = conn.bootstrap(Shell);
         const observer = new Observer.Server({ replace: async params => {
           if (generation !== this.generation) return;
@@ -118,7 +118,7 @@ export class ShellConnection {
           () => fail(new Error('Live updates stopped. Reconnecting…')),
           () => fail(new Error('Live updates failed. Reconnecting…')),
         );
-      } catch (error) { fail(new Error(errorMessage(error))); }
+      } catch { fail(new Error('Live updates could not start. Retrying…')); }
     };
   }
   reconnect() {

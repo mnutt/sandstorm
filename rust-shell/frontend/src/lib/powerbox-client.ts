@@ -1,5 +1,6 @@
 import type { GrainSession$Client, PowerboxRequest$Client, PowerboxState as WireState } from '../generated/shell';
-import { unwrap } from './results';
+import { unwrap, ApplicationError } from './results';
+import { FailureCode } from '../generated/shell';
 import type { ShellConnection } from './connection';
 import type { PowerboxActions, PowerboxState } from './powerbox-native';
 
@@ -12,7 +13,9 @@ function state(value: WireState): PowerboxState {
   if (value._isOauth) return {status:'oauth',request:value.oauth.request,url:value.oauth.url};
   if (value._isEmail) return {status:'email',address:value.email};
   if (value._isComplete) return {status:'complete',token:value.complete.token,descriptor:value.complete.descriptor};
-  return {status:'waiting'};
+  if (value._isWaiting) return {status:'waiting'};
+  if (value._isClosed) throw new ApplicationError(FailureCode.EXPIRED, 'Connection request closed.');
+  throw new Error('Unsupported connection request state.');
 }
 
 /** UI correlation IDs stay local. Remote authority is carried by request capabilities. */
@@ -26,7 +29,7 @@ export class PowerboxRequests {
     this.requests.clear();
   }
   private release(client:PowerboxRequest$Client) {
-    void client.cancel().promise().catch(()=>{}).finally(()=>client.client.close());
+    void this.connection.run(client.cancel().promise(),'Cancel connection request').catch(()=>{}).finally(()=>client.client.close());
   }
   async call(session:GrainSession$Client,id:string,operation:Parameters<PowerboxActions['call']>[1],input:Record<string,unknown>={},parent?:string):Promise<PowerboxState> {
     if (operation==='select' && input.mode==='nested') {

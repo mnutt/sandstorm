@@ -3,6 +3,7 @@ import {
   type Subscription$Client,
 } from '../generated/shell';
 import type { ShellConnection } from './connection';
+import { unwrap, applicationErrorMessage } from './results';
 import type { Grain, Notification } from './model';
 
 export interface GrainQuery {
@@ -22,7 +23,7 @@ function observation<T extends {subscription: Subscription$Client}>(
   let closed = false;
   let subscription: Subscription$Client | undefined;
   const release = (value: Subscription$Client) => {
-    void value.cancel().promise().catch(() => {}).finally(() => value.client.close());
+    void connection.run(value.cancel().promise(), 'Stop list observation').catch(() => {}).finally(() => value.client.close());
   };
   void connection.run(request, 'Observe list', {
     onLateResult: result => release(result.subscription),
@@ -50,13 +51,23 @@ export function watchGrains(
   changed: (grains: Grain[], more: boolean) => void,
   failed: (error: unknown) => void,
 ) {
+  let stopped = false;
+  const fail = (error: unknown) => {
+    if (stopped) return;
+    stopped = true;
+    failed(new Error(applicationErrorMessage(error, 'Could not update the grain list. Please reconnect.')));
+  };
   const observer = new GrainObserver.Server({replace: async params => {
-    const grains = [...params.page.grains].map(grain => ({
-      key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
-      href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed,
-      appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
-    }));
-    changed(grains, params.page.hasMore);
+    if (stopped) return;
+    try {
+      const page = unwrap(params.result);
+      const grains = [...page.grains].map(grain => ({
+        key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
+        href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed,
+        appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
+      }));
+      changed(grains, page.hasMore);
+    } catch (error) { fail(error); }
   }}).client();
   const request = connection.shell.watchGrains(params => {
     const value = params._initQuery();
@@ -67,7 +78,8 @@ export function watchGrains(
     value.ownership = {owned: GrainOwnership.OWNED, shared: GrainOwnership.SHARED, all: GrainOwnership.ALL}[query.ownership];
     params.observer = observer;
   });
-  return observation(connection, request.promise(), () => observer.client.close(), failed);
+  const stop = observation(connection, request.promise(), () => observer.client.close(), fail);
+  return () => { stopped = true; stop(); };
 }
 
 export function watchNotifications(
@@ -76,18 +88,29 @@ export function watchNotifications(
   changed: (entries: Notification[], total: number) => void,
   failed: (error: unknown) => void,
 ) {
+  let stopped = false;
+  const fail = (error: unknown) => {
+    if (stopped) return;
+    stopped = true;
+    failed(new Error(applicationErrorMessage(error, 'Could not update notifications. Please reconnect.')));
+  };
   const observer = new NotificationObserver.Server({replace: async params => {
-    const entries = [...params.page.entries].map(entry => ({
-      id: entry.key, title: entry.title, body: entry.body, href: entry.href,
-      nativePath: entry.nativePath, nativeAction: entry.nativeAction,
-      unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp,
-      senderName: entry.senderName, senderPictureUrl: entry.senderPictureUrl,
-    }));
-    changed(entries, params.page.total);
+    if (stopped) return;
+    try {
+      const page = unwrap(params.result);
+      const entries = [...page.entries].map(entry => ({
+        id: entry.key, title: entry.title, body: entry.body, href: entry.href,
+        nativePath: entry.nativePath, nativeAction: entry.nativeAction,
+        unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp,
+        senderName: entry.senderName, senderPictureUrl: entry.senderPictureUrl,
+      }));
+      changed(entries, page.total);
+    } catch (error) { fail(error); }
   }}).client();
   const request = connection.shell.watchNotifications(params => {
     params.page = page;
     params.observer = observer;
   });
-  return observation(connection, request.promise(), () => observer.client.close(), failed);
+  const stop = observation(connection, request.promise(), () => observer.client.close(), fail);
+  return () => { stopped = true; stop(); };
 }

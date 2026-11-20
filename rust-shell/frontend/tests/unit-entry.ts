@@ -18,3 +18,7 @@ export { ShellConnection } from '../src/lib/connection';
 export { ProfilePronoun, FailureCode } from '../src/generated/shell';
 
 export * from '../src/lib/template-options';
+
+export { PowerboxRequests } from '../src/lib/powerbox-client';
+
+export { watchGrains } from '../src/lib/queries';

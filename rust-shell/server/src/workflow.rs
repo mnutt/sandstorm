@@ -23,9 +23,11 @@ pub(crate) fn failure(
     let code = match status.as_u16() {
         400 | 413 | 422 => api::FailureCode::InvalidInput,
         401 => api::FailureCode::SignInRequired,
+        402 => api::FailureCode::QuotaExceeded,
         403 => api::FailureCode::PermissionDenied,
         404 => api::FailureCode::NotFound,
         409 => api::FailureCode::Conflict,
+        410 => api::FailureCode::Expired,
         429 => api::FailureCode::RateLimited,
         _ => {
             return Err(capnp::Error::failed(
@@ -148,9 +150,6 @@ impl api::installer::Server for Installer {
         let input = params.get()?;
         let id = input.get_package_id()?.to_str()?;
         let url = input.get_url()?.to_str()?;
-        if id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
-            return Err(capnp::Error::failed("Invalid package".into()));
-        }
         results
             .get()
             .set_installation(capnp_rpc::new_client(Installation {
@@ -382,6 +381,12 @@ struct Installation {
 }
 impl Installation {
     async fn call(&self, operation: &str) -> Result<Value, bridge::Error> {
+        if self.id.len() != 32 || !self.id.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                "Invalid package".into(),
+            ));
+        }
         self.session
             .call(
                 "install",
@@ -479,9 +484,14 @@ mod tests {
         for (status, code) in [
             (StatusCode::BAD_REQUEST, api::FailureCode::InvalidInput),
             (StatusCode::UNAUTHORIZED, api::FailureCode::SignInRequired),
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                api::FailureCode::QuotaExceeded,
+            ),
             (StatusCode::FORBIDDEN, api::FailureCode::PermissionDenied),
             (StatusCode::NOT_FOUND, api::FailureCode::NotFound),
             (StatusCode::CONFLICT, api::FailureCode::Conflict),
+            (StatusCode::GONE, api::FailureCode::Expired),
             (StatusCode::TOO_MANY_REQUESTS, api::FailureCode::RateLimited),
         ] {
             let mut message = capnp::message::Builder::new_default();

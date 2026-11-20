@@ -4,7 +4,8 @@
   import { Conn } from 'capnp-es';
   import { SharedShell, type SharedShell$Client, type SharedSession$Client } from './generated/shell';
   import { WebSocketTransport } from './lib/transport';
-  import { runOperation, errorMessage } from './lib/operations';
+  import { runOperation } from './lib/operations';
+  import { unwrap, applicationErrorMessage } from './lib/results';
   import type { ActiveGrain } from './lib/model';
   import { rememberRoute } from './lib/router';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
@@ -58,21 +59,23 @@
       connection = new Conn(new WebSocketTransport(ws,failed));
       connection.onError = failed;
       client = connection.bootstrap(SharedShell);
-      const result = await runOperation(client.inspect(params => {params.webkey=webkey;}).promise(), 'Check sharing link', {signal:lifetime.signal});
+      const response = await runOperation(client.inspect(params => {params.webkey=webkey;}).promise(), 'Check sharing link', {signal:lifetime.signal});
       if (current !== generation) return;
-      info = {title:result.info.title,signedIn:result.info.signedIn,guestsAllowed:result.info.guestsAllowed,accountName:result.info.accountName,accountPictureUrl:result.info.accountPictureUrl};
+      const result = unwrap(response.result);
+      info = {title:result.title,signedIn:result.signedIn,guestsAllowed:result.guestsAllowed,accountName:result.accountName,accountPictureUrl:result.accountPictureUrl};
       metadataChanged(info.title, '');
       phase = 'choice';
       if (!info.signedIn && info.guestsAllowed) await open(false);
-    } catch (err) { if (current === generation) fail(errorMessage(err)); }
+    } catch (err) { if (current === generation) fail(applicationErrorMessage(err, 'Could not load this sharing link. Reopen it to check access again.')); }
   }
   async function open(revealIdentity:boolean) {
     if (phase !== 'choice' || !client) return;
     phase = 'opening';
     const current = generation;
     try {
-      const result = await runOperation(client.open(params => {params.webkey=webkey;params.revealIdentity=revealIdentity;}).promise(),
-        'Open shared grain', {signal:lifetime.signal,onLateResult:result => {result.session.client.close();}});
+      const response = await runOperation(client.open(params => {params.webkey=webkey;params.revealIdentity=revealIdentity;}).promise(),
+        'Open shared grain', {signal:lifetime.signal,onLateResult:response => {if (response.result._isValue) response.result.value.session.client.close();}});
+      const result = unwrap(response.result);
       if (current !== generation) {result.session.client.close();return;}
       session = result.session;
       const url = new URL(result.view.url);
@@ -82,7 +85,7 @@
         ownerTitle:result.view.ownerTitle,iconSrc:result.view.iconSrc,mainHref:result.view.mainHref};
       metadataChanged(grain.title, grain.iconSrc);
       phase = 'open';
-    } catch (err) {if (current === generation) fail(errorMessage(err));}
+    } catch (err) {if (current === generation) fail(applicationErrorMessage(err, 'Could not load this sharing link. Reopen it to check access again.'));}
   }
   onMount(() => {void start();return clear;});
 </script>

@@ -22,7 +22,7 @@
   $effect(()=>{
     if(status!=='ready' || fixture){entries=null;return;}
     let active=true;pending=true;queryError='';
-    const stop=service.watchNotifications(page,(value,count)=>{if(active){entries=value;total=count;pending=false;}},()=>{if(active){pending=false;queryError='Could not update notifications. Please reconnect.';}});
+    const stop=service.watchNotifications(page,(value,count)=>{if(active){entries=value;total=count;pending=false;}},(error)=>{if(active){pending=false;queryError=error instanceof Error ? error.message : 'Could not update notifications. Please reconnect.';}});
     return ()=>{active=false;stop();};
   });
   let selected = $state<{key:string; title:string; account:string|null; trigger:HTMLElement}>();

@@ -48,3 +48,12 @@ export type GrainTitlePayload = Assert<Equal<GrainSession_Rename$Results['result
 
 import type { Shell_OpenGrain$Results, OpenedGrain } from '../src/generated/shell';
 export type OpenedGrainPayload = Assert<Equal<Shell_OpenGrain$Results['result']['value'],OpenedGrain>>;
+
+import type { Shell_ListApps$Results, AppPage, SharedShell_Inspect$Results, SharedInfo, SharedShell_Open$Results, OpenedSharedGrain } from '../src/generated/shell';
+export type AppPagePayload = Assert<Equal<Shell_ListApps$Results['result']['value'],AppPage>>;
+export type SharedInfoPayload = Assert<Equal<SharedShell_Inspect$Results['result']['value'],SharedInfo>>;
+export type SharedOpenPayload = Assert<Equal<SharedShell_Open$Results['result']['value'],OpenedSharedGrain>>;
+
+import type { GrainObserver_Replace$Params, GrainPage, NotificationObserver_Replace$Params, NotificationPage } from '../src/generated/shell';
+export type GrainPagePayload = Assert<Equal<GrainObserver_Replace$Params['result']['value'],GrainPage>>;
+export type NotificationPagePayload = Assert<Equal<NotificationObserver_Replace$Params['result']['value'],NotificationPage>>;

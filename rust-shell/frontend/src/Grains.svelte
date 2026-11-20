@@ -27,7 +27,7 @@
     if(status!=='ready' || fixture){rows=null;return;}
     const query={page,search,appId,sort:sort==='title'?'title' as const:'recent' as const,ownership:ownership==='owned'?'owned' as const:ownership==='shared'?'shared' as const:'all' as const};
     let active=true;pending=true;queryError='';
-    const stop=service.watchGrains(query,(grains,limited)=>{if(active){rows=grains;more=limited;pending=false;}},()=>{if(active){pending=false;queryError='Could not update the grain list. Please reconnect.';}});
+    const stop=service.watchGrains(query,(grains,limited)=>{if(active){rows=grains;more=limited;pending=false;}},(error)=>{if(active){pending=false;queryError=error instanceof Error ? error.message : 'Could not update the grain list. Please reconnect.';}});
     return ()=>{active=false;stop();};
   });
   const visibleGrains = $derived(model.grains.filter((grain) =>

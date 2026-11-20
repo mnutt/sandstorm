@@ -39,15 +39,12 @@ impl SharedShell {
             signed_in: Rc::new(Cell::new(false)),
         })
     }
-    async fn call(&self, action: &str, mut input: Value) -> capnp::Result<Value> {
+    async fn call(&self, action: &str, mut input: Value) -> Result<Value, crate::bridge::Error> {
         input["scope"] = json!(self.key);
         if let Some(account) = &self.account {
             input["accountToken"] = json!(account.token);
         }
-        self.bridge
-            .call(action, input)
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))
+        self.bridge.call(action, input).await
     }
     pub async fn close(&self) {
         self.active.set(false);
@@ -79,16 +76,28 @@ impl shared_shell::Server for SharedShell {
         mut results: shared_shell::InspectResults,
     ) -> capnp::Result<()> {
         if self.busy.replace(true) {
-            return Err(capnp::Error::failed("Request already pending".into()));
+            return crate::workflow::failure(
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    "Request already pending".into(),
+                ),
+                results.get().init_result().init_failure(),
+            );
         }
         let _busy = Busy(&self.busy);
         let webkey = params.get()?.get_webkey()?.to_str()?;
-        let info = self
+        let info = match self
             .call("inspectSharedGrain", json!({"webkey":webkey}))
-            .await?;
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
         self.signed_in
             .set(info["signedIn"].as_bool().unwrap_or(false));
-        let mut out = results.get().init_info();
+        let mut out = results.get().init_result().init_value();
         out.set_title(info["title"].as_str().unwrap_or("Shared grain"));
         out.set_guests_allowed(info["guestsAllowed"].as_bool().unwrap_or(false));
         out.set_signed_in(info["signedIn"].as_bool().unwrap_or(false));
@@ -102,24 +111,47 @@ impl shared_shell::Server for SharedShell {
         mut results: shared_shell::OpenResults,
     ) -> capnp::Result<()> {
         if self.busy.replace(true) {
-            return Err(capnp::Error::failed("Request already pending".into()));
+            return crate::workflow::failure(
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    "Request already pending".into(),
+                ),
+                results.get().init_result().init_failure(),
+            );
         }
         let _busy = Busy(&self.busy);
         if self.closed.get() || self.opened.replace(true) {
-            return Err(capnp::Error::failed("Shared grain already open".into()));
+            return crate::workflow::failure(
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    "Reopen this sharing link to start a new session".into(),
+                ),
+                results.get().init_result().init_failure(),
+            );
         }
         let input = params.get()?;
         let webkey = input.get_webkey()?.to_str()?;
-        let value = self
+        let value = match self
             .call(
                 "openSharedGrain",
                 json!({"webkey":webkey,"revealIdentity":input.get_reveal_identity()}),
             )
-            .await?;
-        let view: View = serde_json::from_value(value)
-            .map_err(|_| capnp::Error::failed("Invalid shared session".into()))?;
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
+        let view: View = match serde_json::from_value(value) {
+            Ok(view) => view,
+            Err(_) => {
+                self.close().await;
+                return Err(capnp::Error::failed("Invalid shared session".into()));
+            }
+        };
         self.active.set(true);
-        let mut out = results.get();
+        let mut out = results.get().init_result().init_value();
         out.set_session(capnp_rpc::new_client(SharedLease(self.clone())));
         let mut out = out.init_view();
         out.set_grain_id(&view.grain_id);

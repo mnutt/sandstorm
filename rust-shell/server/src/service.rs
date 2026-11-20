@@ -181,8 +181,21 @@ impl shell::Server for Shell {
                             serde_json::json!({"grains":page}),
                             Some(filter.clone()),
                         )
-                        .await
-                        .map_err(|(_, e)| capnp::Error::failed(e))?;
+                        .await;
+                    let snapshot = match snapshot {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let mut request = observer.replace_request();
+                            crate::workflow::failure(
+                                error,
+                                request.get().init_result().init_failure(),
+                            )?;
+                            tokio::time::timeout(Duration::from_secs(10), request.send().promise)
+                                .await
+                                .map_err(|_| capnp::Error::failed("Observer timed out".into()))??;
+                            return Ok(());
+                        }
+                    };
                     version = snapshot.version.clone();
                     let signature = (snapshot.grains.clone(), snapshot.grains_limited);
                     if previous.as_ref() == Some(&signature) {
@@ -190,7 +203,7 @@ impl shell::Server for Shell {
                     }
                     let mut request = observer.replace_request();
                     {
-                        let mut out = request.get().init_page();
+                        let mut out = request.get().init_result().init_value();
                         out.set_page(page);
                         out.set_has_more(snapshot.grains_limited);
                         let mut list = out.init_grains(snapshot.grains.len() as u32);
@@ -228,8 +241,21 @@ impl shell::Server for Shell {
                 loop {
                     let snapshot = session
                         .watch_query(&version, serde_json::json!({"notifications":page}), None)
-                        .await
-                        .map_err(|(_, e)| capnp::Error::failed(e))?;
+                        .await;
+                    let snapshot = match snapshot {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let mut request = observer.replace_request();
+                            crate::workflow::failure(
+                                error,
+                                request.get().init_result().init_failure(),
+                            )?;
+                            tokio::time::timeout(Duration::from_secs(10), request.send().promise)
+                                .await
+                                .map_err(|_| capnp::Error::failed("Observer timed out".into()))??;
+                            return Ok(());
+                        }
+                    };
                     version = snapshot.version.clone();
                     let signature = (snapshot.entries.clone(), snapshot.total);
                     if previous.as_ref() == Some(&signature) {
@@ -237,7 +263,7 @@ impl shell::Server for Shell {
                     }
                     let mut request = observer.replace_request();
                     {
-                        let mut out = request.get().init_page();
+                        let mut out = request.get().init_result().init_value();
                         out.set_page(page);
                         out.set_total(snapshot.total);
                         let mut list = out.init_entries(snapshot.entries.len() as u32);
@@ -314,23 +340,33 @@ impl shell::Server for Shell {
         params: shell::ListAppsParams,
         mut results: shell::ListAppsResults,
     ) -> capnp::Result<()> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Apps require a signed-in account".into()))?;
+        let Some(session) = self.session.as_ref() else {
+            return crate::workflow::failure(
+                (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "Sign in to browse apps".into(),
+                ),
+                results.get().init_result().init_failure(),
+            );
+        };
         let input = params.get()?;
         let page = input.get_page();
         let app_id = input.get_app_id()?.to_str()?;
-        let value = session
+        let value = match session
             .call("listApps", serde_json::json!({"page":page,"appId":app_id}))
             .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
         let list: crate::bridge::AppList = serde_json::from_value(value)
             .map_err(|_| capnp::Error::failed("Invalid app list".into()))?;
-        let mut out = results.get();
-        out.set_limited(list.limited || list.actions.len() > 100);
-        let mut actions = out.init_actions(list.actions.len().min(100) as u32);
-        for (i, action) in list.actions.iter().take(100).enumerate() {
+        let mut out = results.get().init_result().init_value();
+        out.set_limited(list.limited);
+        let mut actions = out.init_actions(list.actions.len() as u32);
+        for (i, action) in list.actions.iter().enumerate() {
             let mut out = actions.reborrow().get(i as u32);
             out.set_key(&action.key);
             out.set_title(&action.title);

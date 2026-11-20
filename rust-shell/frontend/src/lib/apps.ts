@@ -1,6 +1,6 @@
 import type { ShellConnection } from './connection';
 import type { AppAction } from './model';
-import { ApplicationError, unwrap } from './results';
+import { ApplicationError, unwrap, applicationErrorMessage } from './results';
 
 export type CreationState =
   | { status: 'idle' }
@@ -45,11 +45,16 @@ export class AppService {
     this.changed({ status: 'idle' });
   }
   async list(page = 0, appId = ''): Promise<{ actions: AppAction[]; limited: boolean }> {
-    const result = await this.connection.run(this.connection.shell.listApps(params => { params.page=page; params.appId=appId; }).promise(), 'Load apps');
-    const actions: AppAction[] = [];
-    for (const action of result.actions) actions.push({ grainCount: action.grainCount, key: action.key, title: action.title, appTitle: action.appTitle, shortDescription: action.shortDescription, appId: action.appId, iconSrc: action.iconSrc, lastUsed: action.lastUsed });
-    return { actions, limited: result.limited };
+    try {
+      const response = await this.connection.run(this.connection.shell.listApps(params => { params.page=page; params.appId=appId; }).promise(), 'Load apps');
+      const result = unwrap(response.result);
+      const actions = [...result.actions].map(action => ({grainCount:action.grainCount,key:action.key,title:action.title,appTitle:action.appTitle,shortDescription:action.shortDescription,appId:action.appId,iconSrc:action.iconSrc,lastUsed:action.lastUsed}));
+      return {actions,limited:result.limited};
+    } catch (error) {
+      throw new Error(applicationErrorMessage(error, 'Could not load installed apps. Please try again.'));
+    }
   }
+
   async create(actionId: string, title: string): Promise<string> {
     const account = this.account;
     if (!account) throw new Error('Connect to Sandstorm first.');

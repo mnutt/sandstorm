@@ -91,7 +91,7 @@ export class InstallationView {
     }}).client();
     this.stopObserver=()=>observer.client.close();
     void this.connection.run(this.client.watch(p=>{p.observer=observer;}).promise(),'Observe installation',{
-      onLateResult:r=>{void r.subscription.cancel().promise().catch(()=>{}).finally(()=>r.subscription.client.close());},
+      onLateResult:r=>{void this.connection.run(r.subscription.cancel().promise(),'Stop installation observation').catch(()=>{}).finally(()=>r.subscription.client.close());},
     }).then(result=>{
       this.subscription=result.subscription;
       if(this.closed){this.releaseSubscription();return;}
@@ -100,7 +100,7 @@ export class InstallationView {
   }
   private releaseSubscription() {
     const subscription=this.subscription;this.subscription=undefined;
-    if(subscription) void subscription.cancel().promise().catch(()=>{}).finally(()=>subscription.client.close());
+    if(subscription) void this.connection.run(subscription.cancel().promise(),'Stop installation observation').catch(()=>{}).finally(()=>subscription.client.close());
   }
   close() {
     if(this.closed)return;

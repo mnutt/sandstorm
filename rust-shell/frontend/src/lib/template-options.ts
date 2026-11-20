@@ -21,7 +21,7 @@ export function tokenOptions(call: TemplateRequest): TokenOptions {
   if (['none', 'allAccess', 'roleId'].filter(key => role[key] !== undefined).length > 1 ||
       (role.none !== undefined && role.none !== null) ||
       (role.allAccess !== undefined && role.allAccess !== null) ||
-      (role.roleId !== undefined && (!Number.isInteger(role.roleId) || (role.roleId as number) < 0 || (role.roleId as number) > 65535))) invalid();
+      (role.roleId !== undefined && (!Number.isInteger(role.roleId) || (role.roleId as number) < -2147483648 || (role.roleId as number) > 2147483647))) invalid();
   for (const key of ['addPermissions', 'removePermissions']) {
     const value = role[key];
     if (value !== undefined && (!Array.isArray(value) || value.some(item => typeof item !== 'boolean'))) invalid();

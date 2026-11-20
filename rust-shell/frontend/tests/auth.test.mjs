@@ -99,7 +99,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     getProfile: async id => ({...profiles[id],version:profileVersion(id)}),
     updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); if (profile.handle === 'reserved_handle') throw Object.assign(new Error('That handle cannot be used.'), {status:400}); profiles[id] = {...profiles[id],...profile}; users[id].name = profile.name; changed(); },
     sessionStore,
-    listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
+    listApps: async (id, _page, appId) => { if(appId==='denied-test') throw Object.assign(new Error('App list denied.'),{status:403}); return {actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}; },
     createGrain: async (id, action, title, beforeCreate) => {
       assert.equal(action,id+'-action');
       if (title === 'Denied creation') throw Object.assign(new Error('You must be invited to create grains.'), {status:403});
@@ -177,6 +177,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     },
     observe: async (_id, notify, pages, query) => { ++observationStarts; observers.set(notify, {pages, query}); return () => observers.delete(notify); },
     snapshot: async (id, pages = {}, query) => {
+      if (query?.search === 'denied-test' || pages.notifications===99) throw Object.assign(new Error('List access denied.'),{status:403});
       if (paginated) return {entries:[{key:'paged-'+(pages.notifications || 0),title:pages.notifications ? laterTitle : 'First page',body:'',href:'',unread:false,ongoing:false,timestamp:''}],total:101,notificationPage:pages.notifications || 0,grainPage:pages.grains || 0,hasUnread:true};
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
       const snapshot = { hasUnread:entries.some(entry=>entry.unread), accountPictureUrl:profiles[id].pictureUrl || '', profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
@@ -301,6 +302,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await guest.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
     await serveProbe(guest, './shared-probe.ts', 'shared-probe.js');
     assert.equal(await guest.evaluate(async ()=>(await import('/shared-probe.js')).probe()),true,'public shared bootstrap cannot be cast to account Shell');
+    assert.equal(await guest.evaluate(async ()=>(await import('/shared-probe.js')).checkResults()),true,'shared policy failures are typed without issuing a lease');
     for (const kind of ['reply', 'flood']) {
       assert.equal(await guest.evaluate(async kind => (await import('/shared-probe.js')).attack(kind), kind), kind === 'reply',
         `only malformed replies are disconnected (${kind})`);
@@ -371,6 +373,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('button',{name:'Disable reporting',exact:true}).click();
     await page.getByText('Reporting preference saved.',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Close',exact:true}).click();
+    await serveProbe(page, './result-probe.ts', 'result-probe.js');
+    assert.equal(await page.evaluate(async ()=>(await import('/result-probe.js')).checkResults()),true,'catalog, factory validation and query denials are typed');
     await serveProbe(page, './notification-probe.ts', 'notification-probe.js');
     assert.deepEqual(await page.evaluate(() => import('/notification-probe.js').then(probe => probe.checkAuthority())),
       {referrals:true,wrongKind:true,missing:true,otherAccount:true,foreignDismiss:true,foreignRead:true,emptyRead:true,missingDismiss:true});
