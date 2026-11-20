@@ -1124,7 +1124,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await deep.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
     await deep.getByRole('heading', {name:'Hidden grain', exact:true}).waitFor();
     await deep.goto(proxy.origin + '/grain/bob-grain');
-    await expect(deep.getByRole('alert')).toContainText('Unable to open grain');
+    await expect(deep.getByRole('alert')).toContainText('Denied');
+    await expect(deep.getByRole('alert')).not.toContainText('CAPNP');
     assert.equal(await deep.locator('iframe').count(), 0);
     await deep.close();
     const racing = await context.newPage();

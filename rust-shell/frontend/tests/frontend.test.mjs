@@ -202,7 +202,7 @@ test('repeated navigation preserves pending cleanup before opening a replacement
   const session = { whenClosed: () => ({promise: () => new Promise(() => {})}), close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
   const connection = { run: promise => promise, shell: { openGrain: () => {
     ++opened;
-    return { promise: async () => ({ session, view: { url: 'https://grain.test/init', origin: 'https://grain.test', ownerTitle: 'Owner' } }) };
+    return { promise: async () => valueResult({ session, view: { url: 'https://grain.test/init', origin: 'https://grain.test', ownerTitle: 'Owner' } }) };
   } } };
   const grains = new GrainService(connection, () => {});
   grains.session = session;
@@ -270,7 +270,7 @@ test('workspace isolates tab operations, preserves paths, and discards canceled 
     return { promise: () => request.promise };
   } } };
   const workspace = new GrainWorkspace(connection, patch => { state = {...state,...patch}; });
-  const result = id => ({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
+  const result = id => valueResult({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
     whenClosed: () => ({promise: () => new Promise(() => {})}),
     close: () => ({promise:async () => { closed.push(id); }}), client:{close:()=>{}},
     rename: fill => { const params = {}; fill(params); renamed.push([id,params.title]);
@@ -489,4 +489,54 @@ test('creation distinguishes policy rejection from unknown outcomes without repl
   assert.equal(apps.state.status,'unknown');
   assert.doesNotMatch(apps.state.error,/CAPNP/);
   assert.equal(calls,2);
+});
+
+test('typed grain-open failures remain readable and do not replay', async t => {
+  browserGlobals(t);
+  let state, calls = 0, failTransport = false;
+  const grains = new GrainService({run:promise=>promise,shell:{openGrain:()=>({promise:async()=>{
+    ++calls;
+    if (failTransport) throw new Error('CAPNP secret protocol detail');
+    return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'This grain is not shared with you.'}}};
+  }})}}, patch=>{state={...state,...patch};});
+  await grains.open('foreign','/',[]);
+  assert.equal(state.grainError,'This grain is not shared with you.');
+  assert.equal(state.openingGrain,false);
+  assert.equal(grains.active,null);
+  failTransport = true;
+  await grains.open('foreign','/',[]);
+  assert.match(state.grainError,/Unable to open grain/);
+  assert.doesNotMatch(state.grainError,/CAPNP/);
+  assert.equal(calls,2);
+});
+
+test('late typed grain-open results release only successful leases', async t => {
+  browserGlobals(t);
+  for (const success of [true,false]) {
+    const request = deferred();
+    let closed = 0, released = 0, state;
+    const session={close:()=>({promise:async()=>{++closed;}}),client:{close:()=>{++released;}}};
+    const connection={run:(promise,label,options)=>runOperation(promise,label,{...options,timeoutMs:5}),
+      shell:{openGrain:()=>({promise:()=>request.promise})}};
+    const grains=new GrainService(connection,patch=>{state={...state,...patch};});
+    await grains.open('grain','/',[]);
+    assert.match(state.grainError,/Unable to open grain/);
+    request.resolve(success ? valueResult({session}) : {result:{_isValue:false,_isFailure:true}});
+    await turn();
+    assert.equal(closed,success ? 1 : 0);
+    assert.equal(released,success ? 1 : 0);
+    assert.equal(grains.active,null);
+  }
+});
+
+test('malformed grain URLs release the issued session', async t => {
+  browserGlobals(t);
+  let closed=0,released=0;
+  const session={close:()=>({promise:async()=>{++closed;}}),client:{close:()=>{++released;}}};
+  const grains=new GrainService({run:promise=>promise,shell:{openGrain:()=>({promise:async()=>valueResult({session,view:{url:'invalid URL',origin:'https://grain.test'}})})}},()=>{});
+  await grains.open('grain','/',[]);
+  await turn();
+  assert.equal(closed,1);
+  assert.equal(released,1);
+  assert.equal(grains.active,null);
 });

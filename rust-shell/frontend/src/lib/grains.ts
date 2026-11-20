@@ -8,7 +8,7 @@ import type { GrainSession$Client, Sharing$Client } from '../generated/shell';
 import type { ShellConnection } from './connection';
 import type { ActiveGrain, Grain } from './model';
 import { TemplateOffers } from './template';
-import { errorMessage, runOperation } from './operations';
+import { runOperation } from './operations';
 
 interface GrainState { activeGrain: ActiveGrain | null; openingGrain: boolean; grainError: string }
 export class GrainService {
@@ -62,14 +62,22 @@ export class GrainService {
     try {
       await this.cleanup;
       if (generation !== this.generation) return;
-      const result = await this.connection.run(this.connection.shell.openGrain(params => {
+      const response = await this.connection.run(this.connection.shell.openGrain(params => {
         params.grainId = grainId;
-      }).promise(), 'Open grain', { onLateResult: result => this.release(result.session, false) });
+      }).promise(), 'Open grain', { onLateResult: response => {
+        if (response.result._isValue) return this.release(response.result.value.session, false);
+      } });
+      const result = unwrap(response.result);
       if (generation !== this.generation) { void this.release(result.session, false); return; }
-      const url = new URL(result.view.url);
-      if (url.origin !== result.view.origin || !['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+      let url: URL;
+      try {
+        url = new URL(result.view.url);
+        if (url.origin !== result.view.origin || !['https:', 'http:'].includes(url.protocol) || url.username || url.password) {
+          throw new Error('Invalid grain session origin');
+        }
+      } catch (error) {
         void this.release(result.session);
-        throw new Error('Invalid grain session origin');
+        throw error;
       }
       url.searchParams.set('path', path);
       const known = menu.find(grain => grain.key === grainId);
@@ -88,7 +96,7 @@ export class GrainService {
       };
       void result.session.whenClosed().promise().then(ended, ended);
     } catch (error) {
-      if (generation === this.generation) this.changed({ grainError: `Unable to open grain: ${errorMessage(error)}` });
+      if (generation === this.generation) this.changed({ grainError: applicationErrorMessage(error, 'Unable to open grain. Please try opening it again.') });
     } finally {
       if (generation === this.generation) {
         this.opening = false;

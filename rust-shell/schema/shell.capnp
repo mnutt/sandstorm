@@ -118,7 +118,7 @@ interface Shell {
   # Available only when the operator sets RUST_SHELL_FIXTURE_SOCKET.
   # The browser never chooses a socket or receives Sandstorm Backend authority.
   markAllRead @9 () -> (result :Result(Empty));
-  openGrain @10 (grainId :Text) -> (view :GrainView, session :GrainSession);
+  openGrain @10 (grainId :Text) -> (result :Result(OpenedGrain));
   listApps @11 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
   createGrain @12 (actionId :Text, title :Text) -> (result :Result(CreatedGrain));
   # Never replay creation after a transport failure. The outcome may be unknown.
@@ -468,3 +468,10 @@ struct TemplateToken {
 
 struct CreatedGrain { grainId @0 :Text; }
 struct GrainTitle { title @0 :Text; ownerTitle @1 :Text; }
+
+# The view and its lease are issued together only on success. Release late
+# successes after cancellation; a failure carries no session capability.
+struct OpenedGrain {
+  view @0 :GrainView;
+  session @1 :GrainSession;
+}

@@ -389,14 +389,23 @@ impl shell::Server for Shell {
         params: shell::OpenGrainParams,
         mut results: shell::OpenGrainResults,
     ) -> capnp::Result<()> {
-        let scope = self
-            .grain
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Grains require a signed-in account".into()))?;
-        let grain_id = params.get()?.get_grain_id()?.to_str()?;
-        let grain_id = grain_id.to_owned();
-        let (view, session) = scope.open(grain_id).await?;
-        let mut out = results.get();
+        let Some(scope) = self.grain.as_ref() else {
+            return crate::workflow::failure(
+                (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "Sign in to open a grain".into(),
+                ),
+                results.get().init_result().init_failure(),
+            );
+        };
+        let grain_id = params.get()?.get_grain_id()?.to_str()?.to_owned();
+        let (view, session) = match scope.open(grain_id).await {
+            Ok(opened) => opened,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
+        let mut out = results.get().init_result().init_value();
         out.set_session(session);
         let mut out = out.init_view();
         out.set_grain_id(&view.grain_id);

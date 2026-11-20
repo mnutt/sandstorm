@@ -45,3 +45,6 @@ export type AllNoticesReadPayload = Assert<Equal<Shell_MarkAllRead$Results['resu
 import type { Shell_CreateGrain$Results, GrainSession_Rename$Results, CreatedGrain, GrainTitle } from '../src/generated/shell';
 export type CreatedGrainPayload = Assert<Equal<Shell_CreateGrain$Results['result']['value'],CreatedGrain>>;
 export type GrainTitlePayload = Assert<Equal<GrainSession_Rename$Results['result']['value'],GrainTitle>>;
+
+import type { Shell_OpenGrain$Results, OpenedGrain } from '../src/generated/shell';
+export type OpenedGrainPayload = Assert<Equal<Shell_OpenGrain$Results['result']['value'],OpenedGrain>>;

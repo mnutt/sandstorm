@@ -1,5 +1,6 @@
 import { Conn } from 'capnp-es';
 import { Shell, type GrainSession$Client } from '../src/generated/shell';
+import { unwrap } from '../src/lib/results';
 import { WebSocketTransport } from '../src/lib/transport';
 let conn: Conn | undefined;
 let session: GrainSession$Client | undefined;
@@ -9,7 +10,7 @@ export async function open() {
   const connection = new Conn(new WebSocketTransport(socket, (error) => connection.shutdown(error)));
   connection.onError = () => {};
   conn = connection;
-  session = (await conn.bootstrap(Shell).openGrain((params) => { params.grainId = 'alice-grain'; }).promise()).session;
+  session = unwrap((await conn.bootstrap(Shell).openGrain((params) => { params.grainId = 'alice-grain'; }).promise()).result).session;
 }
 export function release() { session?.client.close(); session = undefined; }
 export function disconnect() { conn?.shutdown(); conn = undefined; session = undefined; }

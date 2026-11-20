@@ -390,7 +390,12 @@ The initialization URL goes only into the iframe and is not persisted in shell
 history or storage. The shell CSP permits HTTPS frames; only Meteor's authorized
 session response supplies the frame URL.
 
-`openGrain()` returns a `GrainSession` capability. Explicit close, capability
+`openGrain()` returns `Result(OpenedGrain)`: a successful value contains both the
+view and its `GrainSession` capability. Expected access denials carry typed
+failures and no capability. The UI displays their application message and hides
+transport exception details. Late successes release their session; late failures
+have nothing to release. Malformed iframe URLs also release the issued session.
+There is no compatibility wrapper for the previous unwrapped result. Explicit close, capability
 release and WebSocket disconnect close the UI session. Navigation hides established
 iframes without unloading them; their independent sessions and app state stay live.
 Each tab has its own Meteor scope. Rust

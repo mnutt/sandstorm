@@ -55,13 +55,19 @@ impl GrainScope {
     pub async fn open(
         self: &Rc<Self>,
         grain_id: String,
-    ) -> capnp::Result<(View, grain_session::Client)> {
+    ) -> Result<(View, grain_session::Client), crate::bridge::Error> {
         if self.busy.replace(true) {
-            return Err(capnp::Error::failed("A grain is already opening".into()));
+            return Err((
+                axum::http::StatusCode::CONFLICT,
+                "A grain is already opening".into(),
+            ));
         }
         let _opening = Opening(&self.busy);
         if self.active.borrow().is_some() {
-            return Err(capnp::Error::failed("Close the current grain first".into()));
+            return Err((
+                axum::http::StatusCode::CONFLICT,
+                "Close the current grain first".into(),
+            ));
         }
         let value = self
             .session
@@ -69,10 +75,13 @@ impl GrainScope {
                 "openGrain",
                 json!({ "scope": self.key, "grainId": grain_id }),
             )
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        let view: View = serde_json::from_value(value)
-            .map_err(|_| capnp::Error::failed("Invalid grain session".into()))?;
+            .await?;
+        let view: View = serde_json::from_value(value).map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Invalid grain session".into(),
+            )
+        })?;
         *self.active.borrow_mut() = Some(view.lease.clone());
         let client = capnp_rpc::new_client(Lease {
             scope: self.clone(),
@@ -278,8 +287,13 @@ impl Scope {
     pub async fn open(
         self: &Rc<Self>,
         grain_id: String,
-    ) -> capnp::Result<(View, grain_session::Client)> {
-        let grain = GrainScope::new(self.session.clone())?;
+    ) -> Result<(View, grain_session::Client), crate::bridge::Error> {
+        let grain = GrainScope::new(self.session.clone()).map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not create grain scope".into(),
+            )
+        })?;
         {
             let mut grains = self.grains.borrow_mut();
             grains.retain(|grain| grain.busy.get() || grain.active.borrow().is_some());
