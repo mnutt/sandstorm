@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { authorizeOAuth, oauthProviders, type OAuthProviderName } from './lib/oauth';
+  import { authorizePopup, signInProviders, type SignInProviderName } from './lib/oauth';
   import type { AccountService, AccountState } from './lib/account';
   import Avatar from './components/ui/Avatar.svelte';
   import Button from './components/ui/Button.svelte';
@@ -15,23 +15,23 @@
   $effect(() => { if (ready) void settings.call(); });
   const lifetime = new AbortController();
   onDestroy(() => lifetime.abort());
-  let oauthPending = $state<OAuthProviderName | null>(null);
+  let oauthPending = $state<SignInProviderName | null>(null);
   let oauthError = $state('');
-  async function oauth(provider:OAuthProviderName) {
+  async function oauth(provider:SignInProviderName) {
     if (oauthPending) return;
     oauthPending=provider; oauthError='';
     try {
-      await authorizeOAuth(async () => {
-        const result = await settings.call('oauthStart',{provider});
+      await authorizePopup(async () => {
+        const result = await settings.call(provider === 'saml' ? 'samlStart' : 'oauthStart',{provider});
         if (!result) throw new Error('Could not start authorization.');
-        const oauth = result.oauth;
+        const oauth = result.authorization;
         if (!oauth?.url) throw new Error('No authorization URL returned.');
         return {request:oauth.request,url:oauth.url};
       }, async request => {
-        const result = await settings.call('oauthFinish',{provider,request});
+        const result = await settings.call(provider === 'saml' ? 'samlFinish' : 'oauthFinish',{provider,request});
         if (!result) throw new Error('Could not finish authorization.');
-        return result.oauth?.pending ? null : true;
-      }, request => settings.call('oauthCancel',{provider,request}), lifetime.signal, provider);
+        return result.authorization?.pending ? null : true;
+      }, request => settings.call(provider === 'saml' ? 'samlCancel' : 'oauthCancel',{provider,request}), lifetime.signal, provider);
     } catch (failure) { if (!lifetime.signal.aborted) oauthError=String(failure); }
     finally { if (!lifetime.signal.aborted) oauthPending=null; }
   }
@@ -66,10 +66,10 @@
         </li>
       {/each}
     </ul>
-    {#each oauthProviders as provider}
-      {#if model.value[provider.key + 'Enabled' as 'githubEnabled' | 'googleEnabled' | 'oidcEnabled']}<Button variant="secondary" disabled={model.pending || !!oauthPending} onclick={() => oauth(provider.key)}>Link {provider.label} account</Button>{/if}
+    {#each signInProviders as provider}
+      {#if model.value[provider.key + 'Enabled' as 'githubEnabled' | 'googleEnabled' | 'oidcEnabled' | 'samlEnabled']}<Button variant="secondary" disabled={model.pending || !!oauthPending} onclick={() => oauth(provider.key)}>Link {provider.label} account</Button>{/if}
     {/each}
-    {#if oauthPending}<p role="status">Waiting for {oauthProviders.find(provider => provider.key === oauthPending)?.label} authorization…</p>{/if}
+    {#if oauthPending}<p role="status">Waiting for {signInProviders.find(provider => provider.key === oauthPending)?.label} authorization…</p>{/if}
     {#if oauthError}<p role="alert">{oauthError}</p>{/if}
     <p class="hint">Keep at least one login method so you can sign in again.</p>
     <h3>Email addresses</h3>

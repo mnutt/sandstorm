@@ -6,6 +6,7 @@ module.exports['Native Rust authentication and account settings'] = function (br
   utils.callMeteorTestMethod(browser, "testRustEmailDeliveryFailure");
   utils.callMeteorTestMethod(browser, "testRustDevAccountIdentity");
   utils.callMeteorTestMethod(browser, 'testRustOAuth');
+  utils.callMeteorTestMethod(browser, "testRustSaml");
   utils.callMeteorTestMethod(browser, 'testRegressionOidcSigninAndIndexMigration');
   utils.callMeteorTestMethod(browser, 'testRustProfile');
   utils.callMeteorTestMethod(browser, 'testRegressionEmailCredentialLinkAwaitsFailure');

@@ -1,7 +1,10 @@
 import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { appInstallPermissions } from "/imports/server/install-server";
 import { grainMenu } from "/imports/server/rust-shell-grains";
-import { rustNativeAuth } from "/imports/server/rust-shell-auth";
+import { SAML } from "/imports/server/accounts/saml-utils";
+import Zlib from "node:zlib";
+import { handleSamlRequest, finishNativeSaml, cancelNativeSaml } from "/imports/server/accounts/saml/saml-server";
+import { rustNativeAuth, loginWithSaml } from "/imports/server/rust-shell-auth";
 import { finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
 import { OAuth } from "meteor/oauth";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
@@ -1419,6 +1422,101 @@ if(isTesting) {
       }
     },
 
+    async testRustSaml() {
+      const originalEnabled = Accounts.loginServices.saml.isEnabled;
+      const originalOrigin = Meteor.settings.public.rustShellOrigin;
+      const originalValidate = SAML.prototype.validateResponse;
+      const settings = globalDb.collections.settings;
+      const settingIds = ['samlEntryPoint','samlPublicCert','samlEntityId'];
+      const saved = await settings.find({_id:{$in:settingIds}}).fetchAsync();
+      const flow = Crypto.randomBytes(32).toString('hex');
+      const identity = 'rust-saml-'+Random.id();
+      let pending, linked, linkPending, accountId;
+      const require = (value,message) => { if (!value) throw new Error(message); };
+      const native = (operation,data={}) => rustShellBridge.handle('nativeAuth',{operation,data,flow});
+      const requestId = pending => {
+        const url = new URL(pending.url);
+        require(url.origin === 'https://idp.example','Unexpected SAML endpoint');
+        const xml = Zlib.inflateRawSync(Buffer.from(url.searchParams.get('SAMLRequest'),'base64')).toString();
+        require(xml.includes('/_saml/validate/default'),'SAML callback changed');
+        const id = xml.match(/ ID="([^"]+)"/)[1];
+        require(id !== pending.request && !xml.includes(pending.request),'Browser polling key leaked into SAML request');
+        return id;
+      };
+      const complete = async (id,name=identity) => {
+        SAML.prototype.validateResponse = (_response,callback) => callback(null,{inResponseToId:id,nameID:name,email:name+'@example.invalid',displayName:'SAML test'});
+        let status,headers,body;
+        await handleSamlRequest({url:'/_saml/validate/default/unsigned-token',body:{SAMLResponse:'fixture'}},
+          {writeHead(code,value){status=code;headers=value;},end(value){body=value;}},()=>{throw new Error('Callback was not handled');});
+        return {status,headers,body};
+      };
+      try {
+        Accounts.loginServices.saml.isEnabled = () => true;
+        Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+        for (const [id,value] of [['samlEntryPoint','https://idp.example/sso'],['samlPublicCert','TEST_CERT'],['samlEntityId','rust-test']]) {
+          await settings.upsertAsync({_id:id},{$set:{value}});
+        }
+        pending = await native('samlStart');
+        const id = requestId(pending);
+        let denied=false;
+        try { finishNativeSaml('login:foreign',pending.request); } catch(error) {denied=error.error===403;}
+        require(denied,'Foreign flow consumed SAML request');
+        cancelNativeSaml('login:foreign',pending.request);
+        require((await native('samlFinish',{request:pending.request})).pending,'Uncompleted SAML request was accepted');
+        await Meteor.users.insertAsync({_id:identity,type:'credential',services:{saml:{id:identity,email:identity+'@example.invalid'}},profile:{name:'SAML test'}});
+        const response=await complete(id);
+        require(response.status===303 && response.headers.Location==='https://rust.example.test/oauth-complete','SAML completion did not return to native shell');
+        for (const credentialToken of [id,pending.request,'unsigned-token']) {
+          denied=false;
+          try {await loginWithSaml({credentialToken});} catch (_) {denied=true;}
+          require(denied,'Public SAML identifier was redeemable as a credential');
+        }
+        linked=await native('samlFinish',{request:pending.request});
+        require(!!linked.token,'SAML login did not issue a session');
+        denied=false;
+        try {await native('samlFinish',{request:pending.request});} catch (_) {denied=true;}
+        require(denied,'SAML request was reused');
+        require((await complete(id)).status!==303,'Consumed SAML response was replayed');
+        accountId=(await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
+        const account=(operation,data={})=>rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
+        linkPending=(await account('samlStart')).authorization;
+        await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{saml:{id:identity+'-linked',email:identity+'-linked@example.invalid'}},profile:{name:'Linked SAML test'}});
+        require((await complete(requestId(linkPending),identity+'-linked')).status===303,'SAML link callback failed');
+        const result=await account('samlFinish',{request:linkPending.request});
+        require(result.credentials.some(item=>item.id===identity+'-linked' && item.login),'SAML credential was not linked');
+        pending=await native('samlStart');
+        const canceledId=requestId(pending);
+        await native('samlCancel',{request:pending.request});
+        require((await complete(canceledId)).status!==303,'Canceled SAML response was accepted');
+        pending=await native('samlStart');
+        const realNow=Date.now;
+        const expiredTime=realNow()+300001;
+        denied=false;
+        try {
+          Date.now=()=>expiredTime;
+          try {finishNativeSaml('login:'+flow,pending.request);} catch (_) {denied=true;}
+        } finally {Date.now=realNow;}
+        require(denied,'Expired SAML request completed');
+        pending=await native('samlStart');
+        Accounts.loginServices.saml.isEnabled=()=>false;
+        denied=false;
+        try {await native('samlFinish',{request:pending.request});} catch (_) {denied=true;}
+        require(denied,'Disabled SAML request completed');
+      } finally {
+        if(pending) cancelNativeSaml('login:'+flow,pending.request);
+        if(linkPending) cancelNativeSaml('link:'+accountId,linkPending.request);
+        SAML.prototype.validateResponse=originalValidate;
+        Accounts.loginServices.saml.isEnabled=originalEnabled;
+        Meteor.settings.public.rustShellOrigin=originalOrigin;
+        if(linked?.token) await rustShellBridge.handle('logout',{token:linked.token});
+        await Meteor.users.removeAsync({'loginCredentials.id':identity});
+        await Meteor.users.removeAsync({_id:{$in:[identity,identity+'-linked']}});
+        await settings.removeAsync({_id:{$in:settingIds}});
+        for(const doc of saved) await settings.insertAsync(doc);
+      }
+      return true;
+    },
+
     async testRustOAuth() {
       for (const provider of ['github','google','oidc']) {
         const originalEnabled = Accounts.loginServices[provider].isEnabled;
@@ -1475,7 +1573,7 @@ if(isTesting) {
           require(denied,'OAuth result could be reused');
           accountId = (await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
           const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
-          linkPending = (await settings('oauthStart',{provider})).oauth;
+          linkPending = (await settings('oauthStart',{provider})).authorization;
           await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{[provider]:serviceData(identity+'-linked')},profile:{name:'Linked OAuth test'}});
           const linkSecret = Random.secret();
           await OAuth._storePendingCredential(linkPending.request,{serviceName:provider,serviceData:serviceData(identity+'-linked'),options:{}},linkSecret);

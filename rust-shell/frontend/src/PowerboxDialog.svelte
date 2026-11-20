@@ -2,7 +2,7 @@
   import { applicationErrorMessage } from './lib/results';
   import NestedPowerbox from './PowerboxDialog.svelte';
   import { record, powerboxRequest, rpcId } from './lib/protocol';
-  import { authorizeOAuth } from './lib/oauth';
+  import { authorizePopup } from './lib/oauth';
   import { onMount } from 'svelte';
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
@@ -123,7 +123,7 @@
     const key = selected.key;
     busy=true;
     try {
-      const result = await authorizeOAuth(async () => {
+      const result = await authorizePopup(async () => {
         const result = await actions.call(id,'select',{key,mode:'githubStart'});
         if (result.status !== 'oauth') throw new Error('Could not start GitHub authorization.');
         return result;

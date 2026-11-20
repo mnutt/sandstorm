@@ -1,5 +1,6 @@
 import Url from "url";
 import zlib from "zlib";
+import Crypto from "node:crypto";
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
@@ -100,7 +101,78 @@ const generateService = async function () {
   return service;
 };
 
-const middleware = async function (req, res, next) {
+// Native flows keep the browser request key, AuthnRequest ID, and DDP
+// login credential separate. Knowing the ID sent to the IdP cannot redeem login.
+const nativeRequests = new Map();
+const nativeIds = new Map();
+const nativePrefix = "_rust_";
+const nativeLifetime = 300000;
+export const samlEnabled = () => !!Accounts.loginServices.saml?.isEnabled();
+function discardNative(key) {
+  const request = nativeRequests.get(key);
+  if (!request) return;
+  clearTimeout(request.timer);
+  nativeIds.delete(request.id);
+  nativeRequests.delete(key);
+}
+export async function startNativeSaml(binding) {
+  if (!samlEnabled()) throw new Meteor.Error(403, "SAML service is disabled.");
+  const origin = Meteor.settings.public.rustShellOrigin;
+  if (!origin || new URL(origin).protocol !== "https:") throw new Meteor.Error(503, "Rust shell is unavailable.");
+  const key = Crypto.randomBytes(32).toString("hex");
+  const id = nativePrefix + Crypto.randomBytes(32).toString("hex");
+  const service = await generateService();
+  service.callbackUrl = Meteor.absoluteUrl("_saml/validate/default");
+  service.id = id;
+  const url = new URL(await new Promise((resolve, reject) => {
+    new SAML(service).getAuthorizeUrl({}, (error, value) => error ? reject(error) : resolve(value));
+  }));
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new Meteor.Error(400, "Invalid SAML authorization endpoint.");
+  }
+  for (const [previous, request] of nativeRequests) {
+    if (request.binding === binding) discardNative(previous);
+  }
+  const timer = setTimeout(() => discardNative(key), nativeLifetime);
+  timer.unref();
+  nativeRequests.set(key, {id, binding, origin, timer, expires: Date.now() + nativeLifetime});
+  nativeIds.set(id, key);
+  return {request:key, url:url.href};
+}
+export function cancelNativeSaml(binding, key) {
+  if (nativeRequests.get(key)?.binding === binding) discardNative(key);
+}
+export function finishNativeSaml(binding, key) {
+  const request = nativeRequests.get(key);
+  if (!request || request.binding !== binding) throw new Meteor.Error(403, "Authorization does not belong to this session.");
+  if (request.expires <= Date.now() || !samlEnabled()) {
+    discardNative(key);
+    throw new Meteor.Error(403, "SAML authorization expired.");
+  }
+  if (!request.profile) return null;
+  const credentialToken = Crypto.randomBytes(32).toString("hex");
+  _loginResultForCredentialToken[credentialToken] = {profile:request.profile};
+  discardNative(key);
+  return {credentialToken};
+}
+export function discardNativeSamlCredential(credentialToken) {
+  retrieveCredential(credentialToken);
+}
+function completeNativeSaml(profile, res) {
+  const id = profile.inResponseToId || profile.InResponseTo;
+  if (typeof id !== "string" || !id.startsWith(nativePrefix)) return false;
+  const request = nativeRequests.get(nativeIds.get(id));
+  if (!request || request.expires <= Date.now() || !samlEnabled()) {
+    throw new Meteor.Error(403, "SAML authorization expired.");
+  }
+  if (request.profile) throw new Meteor.Error(403, "SAML response was already received.");
+  request.profile = profile;
+  res.writeHead(303, {Location:request.origin + "/oauth-complete", "Cache-Control":"no-store", "Referrer-Policy":"no-referrer"});
+  res.end();
+  return true;
+}
+
+export const handleSamlRequest = async function (req, res, next) {
   // Make sure to catch any exceptions because otherwise we'd crash
   // the runner
   try {
@@ -170,6 +242,8 @@ const middleware = async function (req, res, next) {
             "from the user choosing SAML login in the Sandstorm UI.");
       }
 
+      if (completeNativeSaml(profile, res)) return;
+
       _loginResultForCredentialToken[credentialToken] = {
         profile: profile,
       };
@@ -186,7 +260,7 @@ const middleware = async function (req, res, next) {
 
 // Listen to incoming OAuth http requests
 WebApp.connectHandlers.use(BodyParser.urlencoded({ extended: false })).use(function (req, res, next) {
-  middleware(req, res, next);
+  handleSamlRequest(req, res, next);
 });
 
 Meteor.methods({

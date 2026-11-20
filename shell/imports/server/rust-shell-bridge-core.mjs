@@ -82,7 +82,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         return { token, account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: linked.expires };
       }
       if (action === "nativeAuth") {
-        if (!nativeAuth || !validSecret(input.flow) || !["options","sendEmail","email","dev","ldap","oauthStart","oauthFinish","oauthCancel"].includes(input.operation)) throw Object.assign(new Error("Invalid sign-in request."), {status:400});
+        if (!nativeAuth || !validSecret(input.flow) || !["options","sendEmail","email","dev","ldap","oauthStart","oauthFinish","oauthCancel","samlStart","samlFinish","samlCancel"].includes(input.operation)) throw Object.assign(new Error("Invalid sign-in request."), {status:400});
         const result = await nativeAuth(input.operation,input.data,input.flow);
         if (result.accountId && result.loginHash) {
           if (signal.aborted) throw Object.assign(new Error("Sign-in disconnected."), {status:409});
@@ -124,7 +124,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       }
       if (action === "accountSettings") {
         const {operation, data} = input;
-        const fields = {oauthStart:["provider"],oauthFinish:["provider","request"],oauthCancel:["provider","request"],state:[], primary:["email"], sendEmail:["email","allowLogin"],
+        const fields = {samlStart:[],samlFinish:["request"],samlCancel:["request"],oauthStart:["provider"],oauthFinish:["provider","request"],oauthCancel:["provider","request"],state:[], primary:["email"], sendEmail:["email","allowLogin"],
           verifyEmail:["email","code","allowLogin"], unlink:["id"], allowLogin:["id","allowLogin"]};
         if (!accountSettings || !Object.hasOwn(fields, operation) || !data || typeof data !== "object" || Array.isArray(data) ||
             Object.keys(data).some(key => !fields[operation].includes(key)) || fields[operation].some(key =>

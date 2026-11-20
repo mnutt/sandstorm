@@ -7,11 +7,12 @@ export interface AccountSettings {
   githubEnabled?: boolean;
   googleEnabled?: boolean;
   oidcEnabled?: boolean;
-  oauth?: {request:string; url?:string; pending?:boolean};
+  samlEnabled?: boolean;
+  authorization?: {request:string; url?:string; pending?:boolean};
   emails: {email: string; verified: boolean; primary: boolean}[];
   credentials: {id: string; service: string; name: string; pictureUrl: string; login: boolean}[];
 }
-export type AccountOperation = 'oauthStart' | 'oauthFinish' | 'oauthCancel' | 'state' | 'primary' | 'sendEmail' | 'verifyEmail' | 'unlink' | 'allowLogin';
+export type AccountOperation = 'samlStart' | 'samlFinish' | 'samlCancel' | 'oauthStart' | 'oauthFinish' | 'oauthCancel' | 'state' | 'primary' | 'sendEmail' | 'verifyEmail' | 'unlink' | 'allowLogin';
 export interface AccountState { value: AccountSettings | null; pending: boolean; error: string; notice: string }
 export const emptyAccount = (): AccountState => ({value:null, pending:false, error:'', notice:''});
 
@@ -36,17 +37,20 @@ export class AccountService {
         : operation === 'verifyEmail' ? account.verifyEmail(p=>{p.email=email;p.code=String(input.code || '');p.allowLogin=!!input.allowLogin;})
         : operation === 'unlink' ? account.unlink(p=>{p.credentialId=String(input.id || '');})
         : operation === 'allowLogin' ? account.setLoginAllowed(p=>{p.credentialId=String(input.id || '');p.allowed=!!input.allowLogin;})
+        : operation === 'samlStart' ? account.startSaml()
+        : operation === 'samlFinish' ? account.finishSaml(p=>{p.request=String(input.request || '');})
+        : operation === 'samlCancel' ? account.cancelSaml(p=>{p.request=String(input.request || '');})
         : operation === 'oauthStart' ? account.startOAuth(p=>{p.provider=provider;})
         : operation === 'oauthFinish' ? account.finishOAuth(p=>{p.provider=provider;p.request=String(input.request || '');})
         : account.cancelOAuth(p=>{p.provider=provider;p.request=String(input.request || '');});
       const result = await this.connection.run(request.promise(), 'Account settings');
       if (generation !== this.generation) return false;
       const data = unwrap(result.result);
-      const value: AccountSettings = {emailEnabled:data.emailEnabled,githubEnabled:data.githubEnabled,googleEnabled:data.googleEnabled,oidcEnabled:data.oidcEnabled,
+      const value: AccountSettings = {emailEnabled:data.emailEnabled,githubEnabled:data.githubEnabled,googleEnabled:data.googleEnabled,oidcEnabled:data.oidcEnabled,samlEnabled:data.samlEnabled,
         emails:[...data.emails].map(item=>({email:item.email,verified:item.verified,primary:item.primary})),
         credentials:[...data.credentials].map(item=>({id:item.id,service:item.service,name:item.name,pictureUrl:item.pictureUrl,login:item.login})),
-        oauth:data._hasOauth() ? {request:data.oauth.request,url:data.oauth.url,pending:data.oauth.pending} : undefined};
-      this.update({value, notice: operation === 'sendEmail' ? 'Verification code sent. Check your email.' : operation === 'state' || value.oauth || operation === 'oauthCancel' ? '' : 'Account settings updated.'});
+        authorization:data._hasAuthorization() ? {request:data.authorization.request,url:data.authorization.url,pending:data.authorization.pending} : undefined};
+      this.update({value, notice: operation === 'sendEmail' ? 'Verification code sent. Check your email.' : operation === 'state' || value.authorization || operation === 'oauthCancel' || operation === 'samlCancel' ? '' : 'Account settings updated.'});
       return value;
     } catch (error) {
       if (generation === this.generation) this.update({error:applicationErrorMessage(error, operation === 'state' ? 'Could not load account settings. Please try again.' : 'Could not confirm the change. Check your account settings before trying again.')});

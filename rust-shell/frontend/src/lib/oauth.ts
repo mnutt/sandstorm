@@ -1,11 +1,12 @@
-export const oauthProviders = [
+export const signInProviders = [
+  {key:'saml',label:'SAML',origin:null,path:null},
   {key:'oidc',label:'OpenID Connect',origin:null,path:null},
   {key:'github',label:'GitHub',origin:'https://github.com',path:'/login/oauth/authorize'},
   {key:'google',label:'Google',origin:'https://accounts.google.com',path:'/o/oauth2/auth'},
 ] as const;
-export type OAuthProviderName = typeof oauthProviders[number]['key'];
-export function authorizationUrl(provider: OAuthProviderName, value: string): URL {
-  const expected = oauthProviders.find(item => item.key === provider);
+export type SignInProviderName = typeof signInProviders[number]['key'];
+export function authorizationUrl(provider: SignInProviderName, value: string): URL {
+  const expected = signInProviders.find(item => item.key === provider);
   const url = new URL(value);
   if (!expected || !['https:','http:'].includes(url.protocol) || (expected.origin && (url.origin !== expected.origin || url.pathname !== expected.path)) || url.username || url.password || url.hash) throw new Error('Invalid authorization URL.');
   return url;
@@ -13,8 +14,8 @@ export function authorizationUrl(provider: OAuthProviderName, value: string): UR
 
 // OAuth credentials stay server-side. The popup only visits the provider and
 // callback; the opener polls with its existing authenticated/flow cookie.
-export async function authorizeOAuth<T>(begin: () => Promise<{request:string;url:string}>,
-  poll: (request:string) => Promise<T | null>, cancel: (request:string) => Promise<unknown>, lifetime:AbortSignal, provider:OAuthProviderName): Promise<T> {
+export async function authorizePopup<T>(begin: () => Promise<{request:string;url:string}>,
+  poll: (request:string) => Promise<T | null>, cancel: (request:string) => Promise<unknown>, lifetime:AbortSignal, provider:SignInProviderName): Promise<T> {
   const popup = window.open('about:blank','_blank','popup,width=680,height=760');
   if (!popup) throw new Error('Allow popups to authorize your account.');
   popup.opener = null;

@@ -308,13 +308,13 @@ retain the main shell's last-write-wins behavior.
 ### Native account credentials and sign-in
 
 The account page lists linked login methods and verified email addresses, supports
-primary-email selection, email-code verification, GitHub/Google/OIDC linking, and credential
+primary-email selection, email-code verification, GitHub/Google/OIDC/SAML linking, and credential
 removal/login toggles. Mutations are account-scoped and serialized; removing the
 last login method is rejected. Credential-array updates compare the authorized
 arrays to reject concurrent changes. Email codes are consumed atomically and
 checked for expiry at consumption, using the same helper as the Meteor UI.
 
-`/login` offers enabled development accounts, email codes, LDAP, GitHub, Google, and OpenID Connect.
+`/login` offers enabled development accounts, email codes, LDAP, GitHub, Google, OpenID Connect, and SAML.
 The bridge invokes the real Meteor login methods using a temporary DDP connection
 through a secret-protected loopback upgrade listener into Meteor’s existing DDP
 handler. This avoids dependence on public DNS or gateway redirects. Existing login validators, organization checks,
@@ -332,9 +332,19 @@ completion consume the request. Provider configuration is reused without changin
 provider callback registration. OIDC shares Meteor's authorization URL builder,
 including the configured issuer endpoint, client authentication, and requested
 scopes. Its popup destination is server-selected; HTTP endpoints remain supported
-for providers configured that way in Meteor. Other sign-in providers retain an explicit main
-shell fallback. Email messages still include the canonical Meteor email link;
+for providers configured that way in Meteor. An explicit main-shell sign-in link
+remains available for reusing an existing session. Email messages still include the canonical Meteor email link;
 the code can be entered directly in the native form.
+
+SAML uses the existing assertion validation endpoint and Meteor login handler.
+Its server-side flow binds an opaque polling key to the sign-in cookie or account.
+The AuthnRequest ID sent to the identity provider is separate from both
+that polling key and the one-use DDP credential, which never reaches the browser.
+Canceled, expired, disabled, and consumed native requests cannot accept callbacks;
+pending requests expire after five minutes. Account linking revalidates account
+authority before writing. This covers sign-in and linking; provider-initiated
+single logout still uses Meteor's existing SAML logout route.
+
 
 Lists now have native Previous/Next controls. Grains and notification pages remain
 live through independent query-scoped subscriptions, with at most 100 entries per list.
@@ -887,12 +897,12 @@ Rust tests cover framing boundaries, segmented frames and size limits.
 Authentication tests use the production bridge core and HTTP handler with an
 in-memory database adapter: one-use grants, account isolation, shared writes,
 account switching across tabs, logout, expiration, and source-token revocation.
-`tests/tests/rust-auth.js` exercises native development-account sign-in, GitHub/Google/OIDC
+`tests/tests/rust-auth.js` exercises native development-account sign-in, GitHub/Google/OIDC/SAML
 callback completion and credential linking, account settings, and atomic email-code
-consumption against real Meteor methods and Mongo. Its OAuth credentials and
-provider responses are synthetic; it does not exercise live provider consent or send
+consumption against real Meteor methods and Mongo. Its OAuth credentials and SAML validation
+results are synthetic; it does not exercise live provider consent or send
 email. These checks also run in the packaged grain-session suite, alongside nested
-Powerbox provider-session isolation. The browser suite mocks all three provider popups and
+Powerbox provider-session isolation. The browser suite mocks all four provider popups and
 checks native pagination and account controls.
 
 The actual Meteor notification regression (`tests/tests/notifications.js`) also
@@ -976,8 +986,7 @@ subscriptions, and popup blocking in addition to the browser integration suite.
 
 Next useful slices:
 
-1. Complete remaining provider adapters (SAML), notification app
-   icons, and localized copy.
+1. Add notification app icons and localized copy.
 2. Validate full installed-server update recovery and main-shell visual/behavioral
    parity before migrating production UI.
 3. Extend embedded-app compatibility (Powerbox and other postMessage APIs), with

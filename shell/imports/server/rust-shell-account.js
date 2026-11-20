@@ -1,5 +1,6 @@
 import { oauthEnabled, oauthProvider, startOAuth, finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
-import { loginWithOAuth } from "/imports/server/rust-shell-auth";
+import { startNativeSaml, finishNativeSaml, cancelNativeSaml, samlEnabled } from "/imports/server/accounts/saml/saml-server";
+import { loginWithOAuth, loginWithSaml } from "/imports/server/rust-shell-auth";
 import { Meteor } from "meteor/meteor";
 import { Accounts } from "meteor/accounts-base";
 import { SandstormDb } from "/imports/sandstorm-db/db";
@@ -14,16 +15,27 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   const account = await Meteor.users.findOneAsync(accountId);
   if (!account?.loginCredentials) throw new Meteor.Error(403, "Account unavailable.");
   const ids = SandstormDb.getUserCredentialIds(account);
-  let oauth;
+  let authorization;
   if (operation.startsWith('oauth')) oauthProvider(input.provider);
   const binding = 'link:'+accountId;
-  if (operation === 'oauthStart') {
-    await beforeWrite(); oauth = await startOAuth(input.provider,binding);
+  if (operation === 'samlStart') {
+    await beforeWrite(); authorization = await startNativeSaml(binding);
+  } else if (operation === 'samlCancel') {
+    cancelNativeSaml(binding,input.request);
+  } else if (operation === 'samlFinish') {
+    const credential = finishNativeSaml(binding,input.request);
+    if (!credential) authorization = {pending:true,request:input.request};
+    else await loginWithSaml(credential,async id => {
+      await beforeWrite();
+      await Accounts.linkCredentialToAccount(globalDb,globalThis.globalBackend,id,accountId,true);
+    });
+  } else if (operation === 'oauthStart') {
+    await beforeWrite(); authorization = await startOAuth(input.provider,binding);
   } else if (operation === 'oauthCancel') {
     await cancelOAuth(input.provider,binding,input.request);
   } else if (operation === 'oauthFinish') {
     const credential = await finishOAuth(input.provider,binding,input.request);
-    if (!credential) oauth = {pending:true,request:input.request};
+    if (!credential) authorization = {pending:true,request:input.request};
     else await loginWithOAuth(input.provider,credential,async id => {
       await beforeWrite();
       await Accounts.linkCredentialToAccount(globalDb,globalThis.globalBackend,id,accountId,true);
@@ -67,7 +79,7 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   const current = await Meteor.users.findOneAsync(accountId);
   const credentials = await Meteor.users.find({_id: {$in: SandstormDb.getUserCredentialIds(current)}}).fetchAsync();
   return {
-    oauth, githubEnabled:oauthEnabled('github'), googleEnabled:oauthEnabled('google'), oidcEnabled:oauthEnabled('oidc'),
+    authorization, githubEnabled:oauthEnabled('github'), googleEnabled:oauthEnabled('google'), oidcEnabled:oauthEnabled('oidc'), samlEnabled:samlEnabled(),
     emailEnabled: !!Accounts.loginServices.email.isEnabled(),
     emails: await SandstormDb.getUserEmailsAsync(current),
     credentials: credentials.map(credential => ({id: credential._id,

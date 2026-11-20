@@ -1,3 +1,4 @@
+import { startNativeSaml, finishNativeSaml, cancelNativeSaml, samlEnabled, discardNativeSamlCredential } from "/imports/server/accounts/saml/saml-server";
 import Http from "node:http";
 import Crypto from "node:crypto";
 import { WebApp } from "meteor/webapp";
@@ -31,12 +32,18 @@ function authEndpoint() {
 const enabled = name => !!Accounts.loginServices[name]?.isEnabled();
 const fail = message => { throw new Meteor.Error(400, message); };
 export async function rustNativeAuth(operation, input, flow) {
-  if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:oauthEnabled('github'),google:oauthEnabled('google'),oidc:oauthEnabled('oidc')};
-  const fields = {oauthStart:['provider'],oauthFinish:['provider','request'],oauthCancel:['provider','request'],sendEmail:["email"],email:["email","code"],dev:["name"],ldap:["username","password"]};
+  if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:oauthEnabled('github'),google:oauthEnabled('google'),oidc:oauthEnabled('oidc'),saml:samlEnabled()};
+  const fields = {samlStart:[],samlFinish:['request'],samlCancel:['request'],oauthStart:['provider'],oauthFinish:['provider','request'],oauthCancel:['provider','request'],sendEmail:["email"],email:["email","code"],dev:["name"],ldap:["username","password"]};
   if (!Object.hasOwn(fields,operation) || !input || typeof input !== "object" || Array.isArray(input) ||
       Object.keys(input).some(key=>!fields[operation].includes(key)) || fields[operation].some(key=>typeof input[key] !== "string" || !input[key])) fail("Invalid sign-in request.");
   if (operation.startsWith('oauth')) oauthProvider(input.provider);
   const binding = 'login:'+flow;
+  if (operation === 'samlStart') return startNativeSaml(binding);
+  if (operation === 'samlCancel') { cancelNativeSaml(binding,input.request); return {}; }
+  if (operation === 'samlFinish') {
+    const credential = finishNativeSaml(binding,input.request);
+    return credential ? loginWithSaml(credential) : {pending:true};
+  }
   if (operation === 'oauthStart') return startOAuth(input.provider,binding);
   if (operation === 'oauthCancel') { await cancelOAuth(input.provider,binding,input.request); return {}; }
   if (operation === 'oauthFinish') {
@@ -52,6 +59,11 @@ export async function rustNativeAuth(operation, input, flow) {
 export async function loginWithOAuth(provider, oauth, link) {
   oauthProvider(provider);
   return loginThroughMeteor('oauth',oauth,link,provider);
+}
+
+export async function loginWithSaml(input, link) {
+  try { return await loginThroughMeteor('saml',input,link,'saml'); }
+  finally { discardNativeSamlCredential(input.credentialToken); }
 }
 
 async function loginThroughMeteor(operation,input,link,provider) {
@@ -76,10 +88,10 @@ async function loginThroughMeteor(operation,input,link,provider) {
           await call("createAndEmailTokenForUser",input.email,{rootUrl:process.env.ROOT_URL,resumePath:"/"});
           return {sent:true};
         }
-        if (operation === 'oauth') {
-          credential = await call('login',{oauth:input});
+        if (operation === 'oauth' || operation === 'saml') {
+          credential = await call('login',operation === 'saml' ? {saml:true,credentialToken:input.credentialToken} : {oauth:input});
           const identity = await Meteor.users.findOneAsync({_id:credential.id,['services.'+provider]:{$exists:true}},{fields:{_id:1}});
-          if (!identity) throw new Meteor.Error(403,'Expected a '+oauthProvider(provider).label+' credential.');
+          if (!identity) throw new Meteor.Error(403,'Expected a '+(provider === 'saml' ? 'SAML' : oauthProvider(provider).label)+' credential.');
           if (link) { await link(credential.id); return {linked:true}; }
         } else if (operation === "dev") {
           // These names are credential identifiers, not just display labels.

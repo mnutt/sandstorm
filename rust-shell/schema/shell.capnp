@@ -239,7 +239,7 @@ struct Credential {
   pictureUrl @3 :Text;
   login @4 :Bool;
 }
-struct OAuthState {
+struct AuthorizationState {
   request @0 :Text;
   url @1 :Text;
   pending @2 :Bool;
@@ -250,9 +250,10 @@ struct AccountState {
   githubEnabled @1 :Bool;
   emails @2 :List(EmailAddress);
   credentials @3 :List(Credential);
-  oauth @4 :OAuthState;
+  authorization @4 :AuthorizationState;
   googleEnabled @5 :Bool;
   oidcEnabled @6 :Bool;
+  samlEnabled @7 :Bool;
 }
 interface Account {
   readProfile @9 () -> (result :Result(AccountProfile));
@@ -267,6 +268,9 @@ interface Account {
   verifyEmail @3 (email :Text, code :Text, allowLogin :Bool) -> (result :Result(AccountState));
   unlink @4 (credentialId :Text) -> (result :Result(AccountState));
   setLoginAllowed @5 (credentialId :Text, allowed :Bool) -> (result :Result(AccountState));
+  startSaml @12 () -> (result :Result(AccountState));
+  finishSaml @13 (request :Text) -> (result :Result(AccountState));
+  cancelSaml @14 (request :Text) -> (result :Result(AccountState));
   startOAuth @6 (provider :OAuthProvider) -> (result :Result(AccountState));
   finishOAuth @7 (provider :OAuthProvider, request :Text) -> (result :Result(AccountState));
   cancelOAuth @8 (provider :OAuthProvider, request :Text) -> (result :Result(AccountState));
@@ -294,7 +298,7 @@ struct PowerboxState {
     waiting @0 :Void;
     choices @1 :PowerboxChoices;
     provider @2 :PowerboxProvider;
-    oauth @3 :OAuthState;
+    oauth @3 :AuthorizationState;
     email @4 :Text;
     complete @5 :PowerboxCompletion;
     closed @6 :Void;

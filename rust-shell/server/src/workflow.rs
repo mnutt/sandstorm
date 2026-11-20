@@ -117,8 +117,9 @@ fn account(value: &Value, mut out: api::account_state::Builder<'_>) -> capnp::Re
     out.set_github_enabled(boolean(value, "githubEnabled"));
     out.set_google_enabled(boolean(value, "googleEnabled"));
     out.set_oidc_enabled(boolean(value, "oidcEnabled"));
-    if let Some(oauth) = value["oauth"].as_object() {
-        let mut target = out.reborrow().init_oauth();
+    out.set_saml_enabled(boolean(value, "samlEnabled"));
+    if let Some(oauth) = value["authorization"].as_object() {
+        let mut target = out.reborrow().init_authorization();
         target.set_request(oauth.get("request").and_then(Value::as_str).unwrap_or(""));
         target.set_url(oauth.get("url").and_then(Value::as_str).unwrap_or(""));
         target.set_pending(
@@ -328,6 +329,51 @@ impl api::account::Server for Account {
             .call(
                 "accountSettings",
                 json!({"operation":"allowLogin","data":data}),
+            )
+            .await;
+        complete!(value, results.get().init_result(), account)
+    }
+    async fn start_saml(
+        self: Rc<Self>,
+        _params: api::account::StartSamlParams,
+        mut results: api::account::StartSamlResults,
+    ) -> capnp::Result<()> {
+        let data = json!({});
+        let value = self
+            .0
+            .call(
+                "accountSettings",
+                json!({"operation":"samlStart","data":data}),
+            )
+            .await;
+        complete!(value, results.get().init_result(), account)
+    }
+    async fn finish_saml(
+        self: Rc<Self>,
+        params: api::account::FinishSamlParams,
+        mut results: api::account::FinishSamlResults,
+    ) -> capnp::Result<()> {
+        let data = json!({"request":params.get()?.get_request()?.to_str()?});
+        let value = self
+            .0
+            .call(
+                "accountSettings",
+                json!({"operation":"samlFinish","data":data}),
+            )
+            .await;
+        complete!(value, results.get().init_result(), account)
+    }
+    async fn cancel_saml(
+        self: Rc<Self>,
+        params: api::account::CancelSamlParams,
+        mut results: api::account::CancelSamlResults,
+    ) -> capnp::Result<()> {
+        let data = json!({"request":params.get()?.get_request()?.to_str()?});
+        let value = self
+            .0
+            .call(
+                "accountSettings",
+                json!({"operation":"samlCancel","data":data}),
             )
             .await;
         complete!(value, results.get().init_result(), account)
