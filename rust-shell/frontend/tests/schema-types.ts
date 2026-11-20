@@ -1,3 +1,4 @@
+import type { Account_ReadProfile$Results, Account_UpdateProfile$Results, Account_PreparePictureUpload$Results, AccountProfile } from '../src/generated/shell';
 import type { NotificationHandle_Read$Results, NotificationHandle_SetStatisticsReporting$Results, NotificationDetails, StatisticsDetails } from '../src/generated/shell';
 import type {
   Installation_Read$Results, Installer_Catalog$Results, Installer_Upload$Results,
@@ -28,3 +29,7 @@ export type ShareLinkPayload = Assert<Equal<Sharing_Create$Results['result']['va
 
 export type NoticePayload = Assert<Equal<NotificationHandle_Read$Results['result']['value'],NotificationDetails>>;
 export type StatisticsPayload = Assert<Equal<NotificationHandle_SetStatisticsReporting$Results['result']['value'],StatisticsDetails>>;
+
+export type ProfileReadPayload = Assert<Equal<Account_ReadProfile$Results['result']['value'],AccountProfile>>;
+export type ProfileEditPayload = Assert<Equal<Account_UpdateProfile$Results['result']['value'],AccountProfile>>;
+export type ProfileUploadPayload = Assert<Equal<Account_PreparePictureUpload$Results['result']['value'],Url>>;

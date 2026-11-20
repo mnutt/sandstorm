@@ -57,7 +57,7 @@
     <label for="profile-picture">Choose an image</label>
     <input bind:this={input} id="profile-picture" type="file" accept="image/png,image/jpeg" disabled={profile.saving}
       aria-describedby={error ? 'picture-help picture-error' : 'picture-help'} onchange={event => void choose(event.currentTarget.files?.[0])} />
-    <p id="picture-help">PNG or JPEG, up to 20 MiB. We center-crop to 512 × 512 and compress it automatically. Your picture is visible to people you interact with.</p>
+    <p id="picture-help">PNG or JPEG. We center-crop to 512 × 512 and compress it automatically. Your picture is visible to people you interact with.</p>
     {#if selection.status === 'preparing'}<p role="status">Preparing preview…</p>{/if}
     <div class="actions">
       <Button disabled={selection.status !== 'ready' || profile.saving} onclick={save}>{profile.pictureSaving ? 'Uploading…' : 'Upload picture'}</Button>

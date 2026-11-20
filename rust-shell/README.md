@@ -262,7 +262,7 @@ or the legacy shell show “The profile was updated by someone else.” with a
 **Refresh** button. Values and unsaved drafts remain untouched until Refresh is
 chosen. Own saves and picture uploads acknowledge their returned version.
 The page also displays and uploads profile pictures using the canonical static-asset
-endpoint. Choose a PNG or JPEG up to 20 MiB and explicitly upload it. The browser
+endpoint. Choose a PNG or JPEG and explicitly upload it. The browser
 center-crops to 512×512, flattens transparency onto white, and encodes JPEG at 85%
 quality, reducing quality if necessary to meet the 64 KiB server limit. The original
 file is never uploaded. Selecting a file prepares a local thumbnail; Upload sends
@@ -275,15 +275,19 @@ host (`RUST_SHELL_WILDCARD_HOST`, supplied by the launcher), not arbitrary uploa
 origins. Account changes/disconnect abort client uploads and discard late results;
 uncertain outcomes are never retried automatically. As in the legacy uploader,
 a credential already issued remains usable until consumed, replaced, or expired.
-Login methods and email still link to the canonical `/account` page in the main shell.
+Login methods and email use the native Account credential controls.
 
-`getProfile` and `updateProfile` derive the account from the linked session, never
+`Account.readProfile`, `Account.updateProfile`, and `Account.preparePictureUpload`
+derive the account from the linked session, never
 a browser-supplied account ID. Updates use the same `updateProfileForUser` helper
 as Meteor's `updateProfile` method, preserving handle/pronoun validation and
-signup completion. Only these three text profile fields are writable through `updateProfile`; picture
+signup completion. Only these three profile fields are writable through `updateProfile`; picture
 uploads use their separate one-use credential. The bridge serializes updates per account and rechecks login/cancellation immediately before writes.
 Profile reads are reauthorized before returning. Credentials and other profile
-fields are preserved.
+fields are preserved. All three operations return typed results; expected denials
+are shown directly, while transport failures leave mutation outcomes uncertain.
+Pronouns use an enum matching Meteor's existing neutral/male/female/robot choices.
+Superseded root-level profile RPC methods and the unused main-shell URL field are removed.
 
 The profile service owns request lifetimes and save outcomes across route changes.
 Disconnect clears account data; an unconfirmed save displays an explicit warning

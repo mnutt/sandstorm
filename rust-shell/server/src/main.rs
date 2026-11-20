@@ -6,6 +6,7 @@ mod interop;
 mod notification;
 mod observation;
 mod powerbox;
+mod profile;
 mod rpc_protocol;
 mod service;
 mod shared;

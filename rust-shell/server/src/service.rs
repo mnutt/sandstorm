@@ -303,27 +303,6 @@ impl shell::Server for Shell {
         Ok(())
     }
 
-    async fn upload_picture(
-        self: Rc<Self>,
-        _: shell::UploadPictureParams,
-        mut results: shell::UploadPictureResults,
-    ) -> capnp::Result<()> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Sign in to upload a picture".into()))?;
-        let value = session
-            .call("uploadPicture", serde_json::json!({}))
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        let url = value
-            .get("uploadUrl")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| capnp::Error::failed("Invalid upload URL".into()))?;
-        results.get().set_upload_url(url);
-        Ok(())
-    }
-
     async fn notification(
         self: Rc<Self>,
         params: shell::NotificationParams,
@@ -339,53 +318,6 @@ impl shell::Server for Shell {
             .set_notice(capnp_rpc::new_client(crate::notification::Notice::new(
                 session, key,
             )));
-        Ok(())
-    }
-
-    async fn get_profile(
-        self: Rc<Self>,
-        _: shell::GetProfileParams,
-        mut results: shell::GetProfileResults,
-    ) -> capnp::Result<()> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Profile requires a signed-in account".into()))?;
-        let value = session
-            .call("getProfile", serde_json::json!({}))
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        let profile: crate::bridge::AccountProfile = serde_json::from_value(value)
-            .map_err(|_| capnp::Error::failed("Invalid profile response".into()))?;
-        profile.write(results.get().init_profile());
-        Ok(())
-    }
-
-    async fn update_profile(
-        self: Rc<Self>,
-        params: shell::UpdateProfileParams,
-        mut results: shell::UpdateProfileResults,
-    ) -> capnp::Result<()> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Profile requires a signed-in account".into()))?;
-        let input = params.get()?;
-        let name = input.get_name()?.to_str()?;
-        let handle = input.get_handle()?.to_str()?;
-        let pronoun = input.get_pronoun()?.to_str()?;
-        let value = session
-            .call(
-                "updateProfile",
-                serde_json::json!({
-                    "profile": { "name": name, "handle": handle, "pronoun": pronoun }
-                }),
-            )
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        let profile: crate::bridge::AccountProfile = serde_json::from_value(value)
-            .map_err(|_| capnp::Error::failed("Invalid profile response".into()))?;
-        profile.write(results.get().init_profile());
         Ok(())
     }
 

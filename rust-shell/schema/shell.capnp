@@ -88,14 +88,20 @@ struct AppAction {
   shortDescription @6 :Text;
   grainCount @7 :UInt32;
 }
+enum ProfilePronoun { neutral @0; male @1; female @2; robot @3; }
+struct ProfileEdit {
+  name @0 :Text;
+  handle @1 :Text;
+  pronoun @2 :ProfilePronoun;
+}
 struct AccountProfile {
   name @0 :Text;
   handle @1 :Text;
-  pronoun @2 :Text;
-  mainHref @3 :Text;
-  pictureUrl @4 :Text;
-  version @5 :Text;
+  pronoun @2 :ProfilePronoun;
+  pictureUrl @3 :Text;
+  version @4 :Text;
 }
+
 interface Shell {
   watchGrains @0 (query :GrainQuery, observer :GrainObserver) -> (subscription :Subscription);
   watchNotifications @1 (page :UInt32, observer :NotificationObserver) -> (subscription :Subscription);
@@ -103,23 +109,19 @@ interface Shell {
   installer @2 () -> (installer :Installer);
   account @3 () -> (account :Account);
 
-  uploadPicture @4 () -> (uploadUrl :Text);
-  notification @5 (key :Text) -> (notice :NotificationHandle);
-  watch @6 (observer :Observer) -> (subscription :Subscription);
-  dismiss @7 (id :UInt32) -> ();
-  addFixture @8 () -> ();
+  notification @4 (key :Text) -> (notice :NotificationHandle);
+  watch @5 (observer :Observer) -> (subscription :Subscription);
+  dismiss @6 (id :UInt32) -> ();
+  addFixture @7 () -> ();
   # Fixture state is private to this connection.
-  interop @9 () -> (fixture :Fixture);
+  interop @8 () -> (fixture :Fixture);
   # Available only when the operator sets RUST_SHELL_FIXTURE_SOCKET.
   # The browser never chooses a socket or receives Sandstorm Backend authority.
-  dismissReal @10 (key :Text) -> ();
-  markRead @11 (key :Text) -> ();
-  openGrain @12 (grainId :Text) -> (view :GrainView, session :GrainSession);
-  listApps @13 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
-  createGrain @14 (actionId :Text, title :Text) -> (grainId :Text);
-  getProfile @15 () -> (profile :AccountProfile);
-  updateProfile @16 (name :Text, handle :Text, pronoun :Text) -> (profile :AccountProfile);
-  # Profile authority remains in Meteor; updates are never automatically replayed.
+  dismissReal @9 (key :Text) -> ();
+  markRead @10 (key :Text) -> ();
+  openGrain @11 (grainId :Text) -> (view :GrainView, session :GrainSession);
+  listApps @12 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
+  createGrain @13 (actionId :Text, title :Text) -> (grainId :Text);
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
 
@@ -236,6 +238,12 @@ struct AccountState {
   oauth @4 :OAuthState;
 }
 interface Account {
+  readProfile @9 () -> (result :Result(AccountProfile));
+  updateProfile @10 (profile :ProfileEdit) -> (result :Result(AccountProfile));
+  preparePictureUpload @11 () -> (result :Result(Url));
+  # The one-use upload URL targets the existing streaming image validator.
+  # Account authority is revalidated for every operation. Never replay mutations.
+
   read @0 () -> (result :Result(AccountState));
   setPrimaryEmail @1 (email :Text) -> (result :Result(AccountState));
   sendEmail @2 (email :Text, allowLogin :Bool) -> (result :Result(AccountState));

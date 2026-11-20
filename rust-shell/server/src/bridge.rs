@@ -183,30 +183,6 @@ pub struct Snapshot {
     pub total: u32,
 }
 
-#[derive(Deserialize)]
-pub struct AccountProfile {
-    #[serde(default)]
-    pub version: String,
-    #[serde(default, rename = "pictureUrl")]
-    pub picture_url: String,
-    pub name: String,
-    pub handle: String,
-    pub pronoun: String,
-    #[serde(rename = "mainHref")]
-    pub main_href: String,
-}
-
-impl AccountProfile {
-    pub fn write(&self, mut out: crate::shell_capnp::account_profile::Builder<'_>) {
-        out.set_version(&self.version);
-        out.set_picture_url(&self.picture_url);
-        out.set_name(&self.name);
-        out.set_handle(&self.handle);
-        out.set_pronoun(&self.pronoun);
-        out.set_main_href(&self.main_href);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -49,8 +49,7 @@ async function accountProfile(accountId) {
   const pictureUrl = rustUserPicture(user);
   const version = createHash("sha256").update(JSON.stringify([user.profile.name,user.profile.handle,user.profile.pronoun,pictureUrl])).digest("hex");
   return { version, pictureUrl, name: user.profile?.name || "", handle: user.profile?.handle || "",
-    pronoun: user.profile?.pronoun || "neutral",
-    mainHref: new URL("/account", process.env.ROOT_URL).href };
+    pronoun: user.profile?.pronoun || "neutral" };
 }
 
 export const rustShellBridge = createRustShellBridge({

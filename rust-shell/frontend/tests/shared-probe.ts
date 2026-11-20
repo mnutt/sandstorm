@@ -7,7 +7,7 @@ export async function probe() {
   const ws=new WebSocket(location.origin.replace('https:','wss:')+'/shared-rpc');
   await new Promise<void>((resolve,reject)=>{ws.onopen=()=>resolve();ws.onerror=()=>reject(new Error('connect'));});
   const conn=new Conn(new WebSocketTransport(ws,()=>{}));
-  try {await conn.bootstrap(Shell).getProfile().promise();return false;}
+  try {await conn.bootstrap(Shell).account().getAccount().readProfile().promise();return false;}
   catch {return true;}
   finally {conn.shutdown();ws.close();}
 }

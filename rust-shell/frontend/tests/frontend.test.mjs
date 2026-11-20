@@ -10,7 +10,9 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
 const { ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
-  TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+  ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
+const profileResult = value => valueResult({...value,pronoun:ProfilePronoun[value.pronoun.toUpperCase()],pictureUrl:value.pictureUrl || '',version:value.version || ''});
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -238,19 +240,19 @@ test('profile outcomes survive route changes; late reads and writes cannot overw
   const saving = deferred();
   let state;
   let renamed;
-  const profile = new ProfileService({run:promise=>promise,shell:{
-    getProfile:()=>({promise:()=>reading.promise}),
+  const profile = new ProfileService({run:promise=>promise,account:{
+    readProfile:()=>({promise:()=>reading.promise}),
     updateProfile:()=>({promise:()=>saving.promise}),
   }}, value=>{state=value;}, value=>{renamed=value;});
   const load = profile.load();
   const save = profile.save({name:'New',handle:'alice',pronoun:'neutral'});
-  reading.resolve({profile:{name:'Stale',handle:'alice',pronoun:'neutral',mainHref:''}});
+  reading.resolve(profileResult({name:'Stale',handle:'alice',pronoun:'neutral'}));
   await load;
   assert.equal(state.value,null);
   profile.reset();
   assert.match(state.error,/Could not confirm/);
   profile.reset(true);
-  saving.resolve({profile:{name:'Old account',handle:'alice',pronoun:'neutral',mainHref:''}});
+  saving.resolve(profileResult({name:'Old account',handle:'alice',pronoun:'neutral'}));
   await save;
   assert.equal(state.value,null);
   assert.equal(state.error,'');
@@ -342,7 +344,7 @@ test('notification navigation only accepts supported canonical local destination
 test('picture uploads validate before issuing tokens and discard late results after account switches', async t => {
   let requests=0, state;
   const pending=deferred();
-  const connection={signal:new AbortController().signal,run:promise=>promise,shell:{uploadPicture:()=>{++requests;return {promise:()=>pending.promise};}}};
+  const connection={signal:new AbortController().signal,run:promise=>promise,account:{preparePictureUpload:()=>{++requests;return {promise:()=>pending.promise};}}};
   const profile=new ProfileService(connection,value=>{state=value;},()=>{});
   await profile.uploadPicture(new File(['<svg/>'],'bad.svg',{type:'image/svg+xml'}));
   assert.equal(requests,0);
@@ -353,7 +355,7 @@ test('picture uploads validate before issuing tokens and discard late results af
   assert.equal(requests,1);
   profile.reset(true);
   t.mock.method(globalThis,'fetch',()=>{throw new Error('Must not upload after account switch');});
-  pending.resolve({uploadUrl:'https://static.example.test/token'});
+  pending.resolve(valueResult({url:'https://static.example.test/token'}));
   await upload;
   assert.equal(state.value,null);
   assert.equal(state.error,'');
@@ -361,9 +363,9 @@ test('picture uploads validate before issuing tokens and discard late results af
 
 test('profile notices preserve the displayed values and distinguish own saves from remote edits', async () => {
   let state;
-  let current={name:'Alice',handle:'alice',pronoun:'neutral',version:'one',pictureUrl:'',mainHref:''};
+  let current={name:'Alice',handle:'alice',pronoun:'neutral',version:'one',pictureUrl:''};
   let save;
-  const profile=new ProfileService({run:p=>p,shell:{getProfile:()=>({promise:async()=>({profile:current})}),updateProfile:()=>({promise:()=>new Promise(resolve=>{save=resolve;})})}},value=>state=value,()=>{});
+  const profile=new ProfileService({run:p=>p,account:{readProfile:()=>({promise:async()=>profileResult(current)}),updateProfile:()=>({promise:()=>new Promise(resolve=>{save=resolve;})})}},value=>state=value,()=>{});
   profile.observe('one'); await profile.load();
   profile.observe('two');
   assert.equal(state.stale,true); assert.equal(state.value.name,'Alice');
@@ -371,11 +373,11 @@ test('profile notices preserve the displayed values and distinguish own saves fr
   await profile.load(); assert.equal(state.stale,false); assert.equal(state.value.name,'Remote');
   const saving=profile.save({name:'Mine',handle:'alice',pronoun:'neutral'});
   profile.observe('three');
-  save({profile:{...current,name:'Mine',version:'three'}}); await saving;
+  save(profileResult({...current,name:'Mine',version:'three'})); await saving;
   profile.observe('three'); assert.equal(state.stale,false);
   const later=profile.save({name:'Mine again',handle:'alice',pronoun:'neutral'});
   profile.observe('four'); profile.observe('five');
-  save({profile:{...current,name:'Mine again',version:'four'}}); await later;
+  save(profileResult({...current,name:'Mine again',version:'four'})); await later;
   assert.equal(state.stale,true,'A concurrent remote update after our save still shows the banner');
   profile.reset(true); assert.equal(state.stale,false); assert.equal(state.value,null);
 });
@@ -393,4 +395,35 @@ test('operation deadlines preserve the connection and release late results', asy
   pending.resolve({}); await turn();
   assert.equal(late, 1);
   assert.equal(await connection.run(Promise.resolve('healthy'), 'Another operation'), 'healthy');
+});
+
+test('profile denials are readable while unknown outcomes hide RPC details and are not retried', async () => {
+  let state, calls=0, rejectTransport=false;
+  const account={updateProfile:()=>({promise:async()=>{
+    ++calls;
+    if (rejectTransport) throw new Error('CAPNP-TS116 internal database trace');
+    return {result:{_isFailure:true,_isValue:false,failure:{code:FailureCode.INVALID_INPUT,message:'That handle cannot be used.'}}};
+  }})};
+  const profile=new ProfileService({run:p=>p,account},value=>state=value,()=>{});
+  const edit={name:'Alice',handle:'reserved',pronoun:'neutral'};
+  await profile.save(edit);
+  assert.equal(state.error,'That handle cannot be used.');
+  assert.equal(calls,1);
+  rejectTransport=true;
+  await profile.save(edit);
+  assert.match(state.error,/Could not confirm profile save/);
+  assert.doesNotMatch(state.error,/CAPNP|database/);
+  assert.equal(calls,2);
+});
+
+test('denied upload authorization reports the reason without sending the image', async t => {
+  let state;
+  t.mock.method(globalThis,'fetch',()=>{throw new Error('Image must not be sent');});
+  const connection={signal:new AbortController().signal,run:p=>p,account:{preparePictureUpload:()=>({promise:async()=>({
+    result:{_isFailure:true,_isValue:false,failure:{code:FailureCode.PERMISSION_DENIED,message:'This account cannot upload a picture.'}},
+  })})}};
+  const profile=new ProfileService(connection,value=>state=value,()=>{});
+  await profile.uploadPicture(new Blob(['jpeg'],{type:'image/jpeg'}));
+  assert.equal(state.pictureError,'This account cannot upload a picture.');
+  assert.equal(globalThis.fetch.mock.callCount(),0);
 });

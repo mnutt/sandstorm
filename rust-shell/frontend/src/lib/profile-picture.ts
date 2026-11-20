@@ -1,7 +1,6 @@
 // Encode locally before requesting an upload credential. The original never leaves the browser.
 export async function prepareProfilePicture(file: Blob): Promise<Blob> {
   if (!file.size || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error('Choose a PNG or JPEG image.');
-  if (file.size > 20 * 1024 * 1024) throw new Error('Choose an image smaller than 20 MiB.');
   let bitmap: ImageBitmap;
   try { bitmap = await createImageBitmap(file, {imageOrientation:'from-image'}); }
   catch { throw new Error('This image could not be opened. Choose another PNG or JPEG.'); }

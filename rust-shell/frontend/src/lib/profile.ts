@@ -1,7 +1,18 @@
 import type { ShellConnection } from './connection';
-import { errorMessage } from './operations';
+import { ProfilePronoun, type AccountProfile } from '../generated/shell';
+import { unwrap, ApplicationError } from './results';
 
-export interface Profile { name: string; handle: string; pronoun: string; mainHref: string; pictureUrl: string; version: string }
+class ProfileInputError extends Error {}
+function profileError(error: unknown, fallback: string) {
+  return error instanceof ProfileInputError || error instanceof ApplicationError ? error.message : fallback;
+}
+const pronouns: Record<string, ProfilePronoun> = {neutral:ProfilePronoun.NEUTRAL,male:ProfilePronoun.MALE,female:ProfilePronoun.FEMALE,robot:ProfilePronoun.ROBOT};
+function wirePronoun(value: string): ProfilePronoun {
+  if (!Object.hasOwn(pronouns,value)) throw new ProfileInputError('Choose a pronoun option.');
+  return pronouns[value];
+}
+
+export interface Profile { name: string; handle: string; pronoun: string; pictureUrl: string; version: string }
 export interface ProfileState {
   value: Profile | null;
   stale: boolean;
@@ -48,14 +59,15 @@ export class ProfileService {
     if (this.state.saving) return;
     const generation = this.generation;
     const read = ++this.read;
-    this.update({ loading: true });
+    this.update({ loading: true, error: '' });
     try {
-      const result = await this.connection.run(this.connection.shell.getProfile().promise(), 'Load profile');
+      const result = await this.connection.run(this.connection.account.readProfile().promise(), 'Load profile');
       if (generation !== this.generation || read !== this.read) return;
-      this.update({ value: this.decode(result.profile), stale:this.staleFor(result.profile.version) });
-      this.renamed(result.profile.name);
+      const profile = unwrap(result.result);
+      this.update({ value: this.decode(profile), stale:this.staleFor(profile.version) });
+      this.renamed(profile.name);
     } catch (error) {
-      if (generation === this.generation && read === this.read) this.update({ error: errorMessage(error) });
+      if (generation === this.generation && read === this.read) this.update({ error: profileError(error, 'Could not load your profile. Please try again.') });
     } finally {
       if (generation === this.generation && read === this.read) this.update({ loading: false });
     }
@@ -66,16 +78,18 @@ export class ProfileService {
     ++this.read;
     this.update({ saving: true, loading: false, error: '', notice: '' });
     try {
-      const result = await this.connection.run(this.connection.shell.updateProfile(params => {
-        params.name = profile.name;
-        params.handle = profile.handle;
-        params.pronoun = profile.pronoun;
+      const result = await this.connection.run(this.connection.account.updateProfile(params => {
+        const edit = params._initProfile();
+        edit.name = profile.name;
+        edit.handle = profile.handle;
+        edit.pronoun = wirePronoun(profile.pronoun);
       }).promise(), 'Save profile');
       if (generation !== this.generation) return;
-      this.update({ value: this.decode(result.profile), notice: 'Profile saved.', stale:this.staleFor(result.profile.version) });
-      this.renamed(result.profile.name);
+      const updated = unwrap(result.result);
+      this.update({ value: this.decode(updated), notice: 'Profile saved.', stale:this.staleFor(updated.version) });
+      this.renamed(updated.name);
     } catch (error) {
-      if (generation === this.generation) this.update({ stale:this.staleFor(this.state.value?.version || ''), error: `Could not confirm profile save. Refresh and check before saving again. ${errorMessage(error)}` });
+      if (generation === this.generation) this.update({ stale:this.staleFor(this.state.value?.version || ''), error: profileError(error, 'Could not confirm profile save. Refresh and check before saving again.') });
     } finally { if (generation === this.generation) this.update({ saving: false }); }
   }
   async uploadPicture(image: Blob) {
@@ -86,25 +100,32 @@ export class ProfileService {
     this.update({ saving:true, pictureSaving:true, loading:false, pictureError:'', pictureNotice:'' });
     let sent = false;
     try {
-      if (image.type !== 'image/jpeg' || image.size > 65536 || !image.size) throw new Error('Choose an image and wait for its preview before uploading.');
+      if (image.type !== 'image/jpeg' || image.size > 65536 || !image.size) throw new ProfileInputError('Choose an image and wait for its preview before uploading.');
       if (generation !== this.generation) return;
       lifetime.throwIfAborted();
-      const result = await this.connection.run(this.connection.shell.uploadPicture().promise(), 'Prepare picture upload');
+      const result = await this.connection.run(this.connection.account.preparePictureUpload().promise(), 'Prepare picture upload');
       if (generation !== this.generation) return;
+      const upload = unwrap(result.result);
       const signal = AbortSignal.any([lifetime, AbortSignal.timeout(30000)]);
       signal.throwIfAborted();
       sent = true;
-      const response = await fetch(result.uploadUrl, {method:'POST',body:image,credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal});
-      if (!response.ok) throw new Error('The server rejected the image. Use a PNG or JPEG no larger than 64 KiB.');
+      const response = await fetch(upload.url, {method:'POST',body:image,credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal});
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) throw new ProfileInputError('The server rejected the image. Choose an image and try uploading again.');
+        throw new Error('Picture upload failed.');
+      }
       if (generation !== this.generation) return;
-      const refreshed = await this.connection.run(this.connection.shell.getProfile().promise(), 'Refresh profile picture');
+      const refreshed = await this.connection.run(this.connection.account.readProfile().promise(), 'Refresh profile picture');
       if (generation !== this.generation) return;
-      this.update({value:this.decode(refreshed.profile),pictureNotice:'Profile picture updated.',stale:this.staleFor(refreshed.profile.version)});
+      const profile = unwrap(refreshed.result);
+      this.update({value:this.decode(profile),pictureNotice:'Profile picture updated.',stale:this.staleFor(profile.version)});
     } catch (error) {
-      if (generation === this.generation) this.update({stale:this.staleFor(this.state.value?.version || ''),pictureError:sent ? `Could not confirm picture upload. Check your picture before trying again. ${errorMessage(error)}` : errorMessage(error)});
+      if (generation === this.generation) this.update({stale:this.staleFor(this.state.value?.version || ''),pictureError:sent && !(error instanceof ProfileInputError) ? 'Could not confirm picture upload. Check your picture before trying again.' : profileError(error, 'Could not prepare picture upload. Please try again.')});
     } finally { if (generation === this.generation) this.update({saving:false,pictureSaving:false}); }
   }
-  private decode(profile: Profile): Profile {
-    return { name: profile.name, handle: profile.handle, pronoun: profile.pronoun, mainHref: profile.mainHref, pictureUrl: profile.pictureUrl || '', version: profile.version || '' };
+  private decode(profile: AccountProfile): Profile {
+    const pronoun = Object.keys(pronouns).find(key => pronouns[key] === profile.pronoun);
+    if (!pronoun) throw new Error('Invalid profile pronoun.');
+    return { name: profile.name, handle: profile.handle, pronoun, pictureUrl: profile.pictureUrl, version: profile.version };
   }
 }

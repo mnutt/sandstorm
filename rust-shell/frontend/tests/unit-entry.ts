@@ -14,3 +14,5 @@ export * from '../src/lib/template';
 export { notificationDestination } from '../src/lib/router';
 
 export { ShellConnection } from '../src/lib/connection';
+
+export { ProfilePronoun, FailureCode } from '../src/generated/shell';

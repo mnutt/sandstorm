@@ -47,7 +47,11 @@ macro_rules! complete {
     }};
 }
 fn url(value: &Value, mut out: api::url::Builder<'_>) -> capnp::Result<()> {
-    out.set_url(text(value, "uploadUrl"));
+    let url = value["uploadUrl"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| capnp::Error::failed("Invalid upload URL".into()))?;
+    out.set_url(url);
     Ok(())
 }
 fn install_permissions(value: &Value, mut out: api::install_permissions::Builder<'_>) {
@@ -188,6 +192,46 @@ impl api::installer::Server for Installer {
     }
 }
 impl api::account::Server for Account {
+    async fn read_profile(
+        self: Rc<Self>,
+        _: api::account::ReadProfileParams,
+        mut results: api::account::ReadProfileResults,
+    ) -> capnp::Result<()> {
+        match self.0.call("getProfile", json!({})).await {
+            Ok(value) => crate::profile::write(value, results.get().init_result().init_value()),
+            Err(error) => failure(error, results.get().init_result().init_failure()),
+        }
+    }
+    async fn update_profile(
+        self: Rc<Self>,
+        params: api::account::UpdateProfileParams,
+        mut results: api::account::UpdateProfileResults,
+    ) -> capnp::Result<()> {
+        let profile = params.get()?.get_profile()?;
+        let value = self
+            .0
+            .call(
+                "updateProfile",
+                json!({"profile":{
+                    "name":profile.get_name()?.to_str()?, "handle":profile.get_handle()?.to_str()?,
+                    "pronoun":crate::profile::pronoun_name(profile.get_pronoun()?)
+                }}),
+            )
+            .await;
+        match value {
+            Ok(value) => crate::profile::write(value, results.get().init_result().init_value()),
+            Err(error) => failure(error, results.get().init_result().init_failure()),
+        }
+    }
+    async fn prepare_picture_upload(
+        self: Rc<Self>,
+        _: api::account::PreparePictureUploadParams,
+        mut results: api::account::PreparePictureUploadResults,
+    ) -> capnp::Result<()> {
+        let value = self.0.call("uploadPicture", json!({})).await;
+        complete!(value, results.get().init_result(), url)
+    }
+
     async fn read(
         self: Rc<Self>,
         params: api::account::ReadParams,

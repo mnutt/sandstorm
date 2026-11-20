@@ -95,8 +95,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
       return {...installState};
     },
     uploadPicture: async (id,beforeWrite) => { await beforeWrite(); assert.equal(id,'alice'); return {uploadUrl:mainOrigin+'/picture-token'}; },
-    getProfile: async id => ({...profiles[id],version:profileVersion(id),mainHref:mainOrigin+'/account'}),
-    updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); profiles[id] = {...profiles[id],...profile}; users[id].name = profile.name; changed(); },
+    getProfile: async id => ({...profiles[id],version:profileVersion(id)}),
+    updateProfile: async (id, profile, beforeWrite) => { await beforeWrite(); if (profile.handle === 'reserved_handle') throw Object.assign(new Error('That handle cannot be used.'), {status:400}); profiles[id] = {...profiles[id],...profile}; users[id].name = profile.name; changed(); },
     sessionStore,
     listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
     createGrain: async (id, action, title, beforeCreate) => {
@@ -464,6 +464,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await expect(page.getByRole('img',{name:'Current avatar'})).toHaveAttribute('src',profiles.alice.pictureUrl);
     await expect(page.locator('.trigger .avatar img')).toHaveAttribute('src',profiles.alice.pictureUrl);
     assert.equal(profiles.bob.pictureUrl,undefined);
+    await page.getByLabel('Handle', {exact:true}).fill('reserved_handle');
+    await page.getByRole('button', {name:'Save profile',exact:true}).click();
+    await expect(page.getByRole('alert')).toHaveText('That handle cannot be used.');
+    assert.equal(profiles.alice.handle, 'alice', 'rejected profile edits do not change persisted values');
     await page.getByLabel('Display name', {exact:true}).fill('Alice renamed');
     await page.getByLabel('Handle', {exact:true}).fill('alice_renamed');
     await page.getByLabel('Pronouns', {exact:true}).selectOption('female');
@@ -471,6 +475,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByText('Profile saved.', {exact:true}).waitFor();
     await page.getByRole('button', {name:'Account: Alice renamed',exact:true}).waitFor();
     assert.equal(profiles.bob.name,'Bob');
+    assert.equal(profiles.alice.pronoun,'female', 'typed pronouns map to the canonical profile option');
     await page.reload();
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice renamed');
     await expect(page.getByRole('button',{name:'Refresh',exact:true})).toHaveCount(0);
