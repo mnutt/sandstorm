@@ -13,3 +13,21 @@ export async function open() {
 }
 export function release() { session?.client.close(); session = undefined; }
 export function disconnect() { conn?.shutdown(); conn = undefined; session = undefined; }
+
+export async function closedSharing() {
+  await open();
+  const grain = session!;
+  const sharing = grain.sharing().getSharing();
+  try {
+    const initial = await sharing.read().promise();
+    if (!initial.result._isValue) throw new Error('Sharing projection unavailable');
+    await grain.close().promise();
+    const results = await Promise.all([
+      sharing.read().promise(),
+      sharing.create(p => {p.label = 'closed'; p._initRole().all = true;}).promise(),
+      sharing.edit(p => {p.id = 'downstream'; p.label = 'closed';}).promise(),
+      sharing.revoke(p => {p.id = 'downstream';}).promise(),
+    ]);
+    return results.every(result => result.result._isFailure && result.result.failure.message === 'Grain session closed');
+  } finally { sharing.client.close(); release(); disconnect(); }
+}

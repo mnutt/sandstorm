@@ -159,10 +159,7 @@ limit. Disconnect and account switching remove the persisted link; source logout
 and suspension invalidate it on the next authorization check. Database outages
 fail requests without deleting otherwise valid links.
 
-Upgrading from an older memory-only bridge requires one final handoff; existing
-in-memory links cannot be recovered after that old process exits. Rolling back
-to a memory-only bridge also requires a fresh handoff. Ordinary reloads retain
-the cookie. The HTTPS regression recreates the bridge over a shared store while
+Ordinary reloads retain the cookie. The HTTPS regression recreates the bridge over a shared store while
 a grain and chooser are open, verifies waiting/recovery with the same cookie,
 and verifies that neither UI operation is replayed. The real Mongo regression
 checks bridge recreation, durable disconnect, and source-token revocation.
@@ -423,7 +420,8 @@ link requires an explicit user action; the new webkey is shown only in the trust
 shell, held in component memory until close, and never sent to the embedded app.
 Links point at the Rust shell's existing anonymous/identity-aware shared viewer.
 
-`GrainSession.getSharing`, `createShare`, and `updateShare` reach narrowly scoped
+`GrainSession.sharing()` returns a grain-scoped `Sharing` capability. Its typed
+`read`, `create`, `edit`, and `revoke` methods reach narrowly scoped
 private bridge operations. Meteor rechecks the linked account, grain lease and
 canonical grain authorization before and after operations. Creation uses
 `SandstormPermissions.createNewApiToken`; edits share `updateApiTokenForAccount`
@@ -440,8 +438,8 @@ revoking a source link explicitly warns that downstream recipients are affected.
 This does not implement selective revocation of a person who can reuse a webkey.
 Metadata loads on open, after mutations, and with **Refresh sharing**; it is not a
 live subscription. Responses include the full visible grant graph and role definitions.
-The old Meteor sharing route remains for compatibility, but the Rust UI no longer
-opens it. Public `SharedSession` capabilities still expose only `close`.
+The main Meteor shell retains its own sharing route; the Rust UI uses the typed
+Sharing capability. Public `SharedSession` capabilities still expose only `close`.
 
 Validation includes capability release, close/reopen, late creation cancellation,
 source-login revocation, logout with an active iframe, lease renewal/expiry,
@@ -683,12 +681,14 @@ The fixture schema is compiled by Rust, TypeScript, and C++ toolchains.
 The 0.5.0 generator specializes branded generic results: `Result(InstallationState)`
 exposes an `InstallationState` value, verified by `frontend/tests/schema-types.ts`.
 
-The native frontend now uses typed `Installer`/`Installation`, `Account`, and
-`PowerboxRequest` capabilities. Grain and notification views own independent
-query subscriptions. Existing string/JSON methods retain their original ordinals
-for compatibility while the migration proceeds; the private Meteor adapter still
-uses JSON internally. Sharing and several other domains have not yet migrated.
-Expected installation, account, and Powerbox denials use `Result.failure`, with
+The native frontend uses typed `Installer`/`Installation`, `Account`, `Sharing`,
+and `PowerboxRequest` capabilities. Grain and notification views own independent
+query subscriptions. The experimental Rust API has no backward-compatibility
+contract: superseded methods are removed, ordinals can change, and frontend/server
+bindings must be deployed together. The private Meteor adapter still uses JSON
+internally. Sharing roles, grants and edits cross the browser boundary as typed
+structures; label-only edits explicitly preserve existing custom permissions.
+Expected installation, account, sharing, and Powerbox denials use `Result.failure`, with
 a typed code and a readable message. Unexpected transport/backend errors remain
 RPC failures; these views display a generic outcome-uncertain message instead of
 protocol details and never automatically retry a mutation.
@@ -901,7 +901,7 @@ separate action that restarts only that account's eligible grains. Newer grain
 versions are never downgraded, and the native UI rejects downgrading installed
 app actions.
 
-The bounded `Shell.install` operations revalidate the linked account and serialize
+The scoped `Installation` operations revalidate the linked account and serialize
 mutations per account. They reuse the canonical download, verification, upload
 credential, action installation and grain upgrade paths. Upload bytes stream to
 the main shell's existing `/upload/:token` endpoint with no login cookies. The

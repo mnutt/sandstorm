@@ -8,13 +8,13 @@ export interface ShareGrant {
 }
 export interface SharingState {
   roles: { key: string; title: string; description: string }[];
-  defaultRole: string; grants: ShareGrant[]; limited: boolean; owner: boolean; private: boolean;
+  defaultRole: string; grants: ShareGrant[]; owner: boolean; private: boolean;
 }
-export interface ShareChanges { label?: string; role?: string; revoked?: boolean }
 export interface SharingActions {
   load(): Promise<SharingState>;
   create(label: string, role: string): Promise<string>;
-  update(id: string, changes: ShareChanges): Promise<void>;
+  edit(id: string, label: string, role?: string): Promise<void>;
+  revoke(id: string): Promise<void>;
 }
 export interface SharingRequest { mode: 'share' | 'access'; path: string }
 export function sharingRequest(mode: 'share' | 'access', value: unknown = {}): SharingRequest | undefined {

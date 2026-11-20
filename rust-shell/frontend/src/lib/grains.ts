@@ -1,7 +1,9 @@
+import { sharingState, writeRole } from './sharing-client';
+import { unwrap } from './results';
 import { PowerboxRequests } from './powerbox-client';
 import type { PowerboxActions, PowerboxState } from './powerbox-native';
-import type { SharingState, ShareChanges } from './sharing';
-import type { GrainSession$Client } from '../generated/shell';
+import type { SharingState } from './sharing';
+import type { GrainSession$Client, Sharing$Client } from '../generated/shell';
 import type { ShellConnection } from './connection';
 import type { ActiveGrain, Grain } from './model';
 import { TemplateOffers } from './template';
@@ -11,6 +13,7 @@ interface GrainState { activeGrain: ActiveGrain | null; openingGrain: boolean; g
 export class GrainService {
   private requests: PowerboxRequests;
   private session?: GrainSession$Client;
+  private sharing?: Sharing$Client;
   private active: ActiveGrain | null = null;
   private opening = false;
   private renaming = false;
@@ -22,6 +25,8 @@ export class GrainService {
     ++this.generation;
     this.requests.reset();
     this.offers.clear();
+    try { this.sharing?.client.close(); } catch { /* already disconnected */ }
+    this.sharing = undefined;
     try { if (release) this.session?.client.close(); } catch { /* already disconnected */ }
     this.session = undefined;
     this.active = null;
@@ -126,28 +131,40 @@ export class GrainService {
     return result;
   }
 
+  private sharingClient() {
+    if (!this.session) throw new Error('No active grain.');
+    return this.sharing ??= this.session.sharing().getSharing();
+  }
   async sharingState(): Promise<SharingState> {
-    const session = this.session;
     const generation = this.generation;
-    if (!session) throw new Error('No active grain.');
-    const result = await this.connection.run(session.getSharing().promise(), 'Load sharing');
+    const result = await this.connection.run(this.sharingClient().read().promise(), 'Load sharing');
     if (generation !== this.generation) throw new Error('Grain session changed.');
-    return JSON.parse(result.state) as SharingState;
+    return sharingState(unwrap(result.result));
   }
   async createShare(label: string, role: string): Promise<string> {
-    const session = this.session;
     const generation = this.generation;
-    if (!session) throw new Error('No active grain.');
-    const result = await this.connection.run(session.createShare(params => { params.label = label; params.role = role; }).promise(), 'Create sharing link');
+    const result = await this.connection.run(this.sharingClient().create(params => {
+      params.label = label; writeRole(role, params._initRole());
+    }).promise(), 'Create sharing link');
     if (generation !== this.generation) throw new Error('Grain session changed. Check sharing links before trying again.');
-    return result.token;
+    return unwrap(result.result).token;
   }
-  async updateShare(id: string, changes: ShareChanges): Promise<void> {
-    const session = this.session;
+  async editShare(id: string, label: string, role?: string): Promise<void> {
     const generation = this.generation;
-    if (!session) throw new Error('No active grain.');
-    await this.connection.run(session.updateShare(params => { params.id = id; params.changes = JSON.stringify(changes); }).promise(), 'Update sharing');
+    const result = await this.connection.run(this.sharingClient().edit(params => {
+      params.id = id; params.label = label;
+      const change = params._initRole();
+      if (role === undefined) change.unchanged = true;
+      else writeRole(role, change._initSet());
+    }).promise(), 'Edit sharing');
     if (generation !== this.generation) throw new Error('Grain session changed.');
+    unwrap(result.result);
+  }
+  async revokeShare(id: string): Promise<void> {
+    const generation = this.generation;
+    const result = await this.connection.run(this.sharingClient().revoke(params => {params.id = id;}).promise(), 'Revoke sharing');
+    if (generation !== this.generation) throw new Error('Grain session changed.');
+    unwrap(result.result);
   }
   async renderTemplate(input: unknown) {
     const session = this.session;

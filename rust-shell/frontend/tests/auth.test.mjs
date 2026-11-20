@@ -137,7 +137,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
       sharing: async () => ({roles:[{key:'0',title:'Viewer',description:'Read only'},{key:'1',title:'Editor',description:'Can edit'}],defaultRole:'0',private:true,owner:true,
         grants:[...sharingGrants,{id:'downstream',kind:'person',recipient:'Bob',recipientPictureUrl:fixtureAvatar,label:'Via project link',role:'0',editable:false,inherited:true,created:''}],limited:false}),
       createShare: async (_handle, input, beforeWrite) => {
-        await beforeWrite(); ++shareCreations;
+        await beforeWrite();
+        if (input.label === 'Denied test link') throw Object.assign(new Error('You cannot share this grain.'), {status:403});
+        ++shareCreations;
         sharingGrants.push({id:'share-'+shareCreations,kind:'link',label:input.label,role:input.role,editable:true,inherited:false,created:'',recipient:'Anyone with the link'});
         return {id:'share-'+shareCreations,token:'native-share-'+shareCreations};
       },
@@ -598,6 +600,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.release()));
     await expect.poll(() => liveGrains.size).toBe(0);
     await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.disconnect()));
+    assert.equal(await page.evaluate(() => import('/grain-session-probe.js').then(probe => probe.closedSharing())), true,
+      'retained sharing capabilities lose authority when their grain closes');
+    await expect.poll(() => liveGrains.size).toBe(0);
+
     let releaseFrame;
     const frameGate = new Promise(resolve => { releaseFrame = resolve; });
     await page.route(grainOrigin+'/**', async route => { await frameGate; await route.continue(); });
@@ -837,6 +843,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await app.evaluate(() => { window.sharingMessages = []; addEventListener('message', event => window.sharingMessages.push(event.data));
       parent.postMessage({startSharing:{pathname:'/folder',hash:'#document'}}, '*'); });
     const sharingDialog = page.getByRole('dialog', {name:'Sharing',exact:true});
+    await sharingDialog.getByLabel('Link label', {exact:true}).fill('Denied test link');
+    await sharingDialog.getByRole('button', {name:'Create link',exact:true}).click();
+    await expect(sharingDialog.getByRole('alert')).toHaveText('You cannot share this grain.');
+    assert.equal(shareCreations, 0, 'permission denial must not create a token');
     await sharingDialog.getByLabel('Link label', {exact:true}).fill('Project team');
     await sharingDialog.getByLabel('Permissions', {exact:true}).selectOption('1');
     await sharingDialog.getByRole('button', {name:'Create link',exact:true}).click();
@@ -1053,7 +1063,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal((await context.cookies()).find((entry) => entry.name === cookie.name).value, cookie.value,
       'ordinary reload must preserve the linked session');
     await expect.poll(() => [...observers.values()]).toEqual(expect.arrayContaining([
-      {pages:{grains:0,notifications:0},query:undefined},
+      {pages:{},query:undefined},
       {pages:{notifications:0},query:undefined},
     ]));
     await expect.poll(() => [...observers.values()]).toHaveLength(2);

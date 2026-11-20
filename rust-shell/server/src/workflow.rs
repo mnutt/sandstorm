@@ -172,67 +172,6 @@ impl api::installer::Server for Installer {
             .await;
         complete!(value, results.get().init_result(), catalog)
     }
-    async fn status(
-        self: Rc<Self>,
-        params: api::installer::StatusParams,
-        mut results: api::installer::StatusResults,
-    ) -> capnp::Result<()> {
-        let input = params.get()?;
-        let operation = "status";
-        let data = json!({"packageId":input.get_package_id()?.to_str()?});
-        let value = self
-            .0
-            .call("install", json!({"operation":operation,"data":data}))
-            .await;
-        complete!(value, results.get().init_result(), installation)
-    }
-    async fn download(
-        self: Rc<Self>,
-        params: api::installer::DownloadParams,
-        mut results: api::installer::DownloadResults,
-    ) -> capnp::Result<()> {
-        let input = params.get()?;
-        let operation = if input.get_retry() {
-            "retry"
-        } else {
-            "download"
-        };
-        let data =
-            json!({"packageId":input.get_package_id()?.to_str()?,"url":input.get_url()?.to_str()?});
-        let value = self
-            .0
-            .call("install", json!({"operation":operation,"data":data}))
-            .await;
-        complete!(value, results.get().init_result(), installation)
-    }
-    async fn confirm(
-        self: Rc<Self>,
-        params: api::installer::ConfirmParams,
-        mut results: api::installer::ConfirmResults,
-    ) -> capnp::Result<()> {
-        let input = params.get()?;
-        let operation = "confirm";
-        let data = json!({"packageId":input.get_package_id()?.to_str()?});
-        let value = self
-            .0
-            .call("install", json!({"operation":operation,"data":data}))
-            .await;
-        complete!(value, results.get().init_result(), installation)
-    }
-    async fn upgrade(
-        self: Rc<Self>,
-        params: api::installer::UpgradeParams,
-        mut results: api::installer::UpgradeResults,
-    ) -> capnp::Result<()> {
-        let input = params.get()?;
-        let operation = "upgrade";
-        let data = json!({"packageId":input.get_package_id()?.to_str()?});
-        let value = self
-            .0
-            .call("install", json!({"operation":operation,"data":data}))
-            .await;
-        complete!(value, results.get().init_result(), installation)
-    }
     async fn upload(
         self: Rc<Self>,
         params: api::installer::UploadParams,

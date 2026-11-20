@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { applicationErrorMessage } from './lib/results';
   import Avatar from './components/ui/Avatar.svelte';
   import { onMount, untrack } from 'svelte';
   import { Tabs } from 'bits-ui';
@@ -36,7 +37,7 @@
     try {
       const result = await actions.load();
       if (alive) { snapshot = result; if (initial) role = result.defaultRole; }
-    } catch (e) { if (alive) error = String(e); }
+    } catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not load sharing information. Please try again.'); }
     finally { if (alive) loading = false; }
   }
   async function create(event: SubmitEvent) {
@@ -48,20 +49,21 @@
       if (!alive) return;
       link = sharingUrl(token, request.path);
       await refresh();
-    } catch (e) { if (alive) error = `Could not confirm link creation. Check Who has access before trying again. ${String(e)}`; }
+    } catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not confirm link creation. Check Who has access before trying again.'); }
     finally { if (alive) busy = false; }
   }
   async function update(grant: ShareGrant, revoke = false) {
     if (busy || loading) return;
     busy = true; error = '';
     try {
-      await actions.update(grant.id, revoke ? { revoked: true } : { label: editLabel, ...(editRole !== grant.role ? { role: editRole } : {}) });
+      if (revoke) await actions.revoke(grant.id);
+      else await actions.edit(grant.id, editLabel, editRole !== grant.role ? editRole : undefined);
       if (!alive) return;
       editing = undefined; revoking = undefined;
       // Avoid displaying a freshly created URL after any revocation.
       if (revoke) link = '';
       await refresh();
-    } catch (e) { if (alive) error = `Could not confirm the change. Refresh sharing before trying again. ${String(e)}`; }
+    } catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not confirm the change. Refresh sharing before trying again.'); }
     finally { if (alive) busy = false; }
   }
   async function copy() {
@@ -148,7 +150,6 @@
             </tbody>
           </table>
         </div>
-        {#if snapshot.limited}<p class="hint">Showing the first 100 grants. Some access is not shown.</p>{/if}
       </Tabs.Content>
     {/if}
   </Tabs.Root>

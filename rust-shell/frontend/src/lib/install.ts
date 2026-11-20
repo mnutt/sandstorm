@@ -31,16 +31,6 @@ export class InstallService {
     const value=unwrap((await this.connection.run(this.connection.installer.catalog().promise(),'Load app catalog')).result);
     return {permissions:permissions(value.permissions),marketUrl:value.marketUrl,updates:[...value.updates].map(row=>({packageId:row.packageId,title:row.title,version:row.version,url:row.url}))};
   }
-  async state(operation: string, packageId: string, url = ''): Promise<InstallState> {
-    const installer=this.connection.installer;
-    const request = operation === 'status' ? installer.status(p=>{p.packageId=packageId;})
-      : operation === 'confirm' ? installer.confirm(p=>{p.packageId=packageId;})
-      : operation === 'upgrade' ? installer.upgrade(p=>{p.packageId=packageId;})
-      : operation === 'download' || operation === 'retry' ? installer.download(p=>{p.packageId=packageId;p.url=url;p.retry=operation==='retry';})
-      : undefined;
-    if (!request) throw new Error('Invalid installation operation');
-    return installState(unwrap((await this.connection.run(request.promise(),'App installation')).result));
-  }
   async upload(file: File, signal: AbortSignal, progress: (percent: number) => void): Promise<string> {
     const lifetime = this.connection.signal;
     const result = unwrap((await this.connection.run(this.connection.installer.upload().promise(),'Upload app')).result);
@@ -65,7 +55,8 @@ export class InstallService {
       xhr.send(file);
     });
     aborted.throwIfAborted();
-    await this.state('download',id);
+    const installation = this.open(id);
+    try { await installation.act('download'); } finally { installation.close(); }
     return id;
   }
 }

@@ -57,7 +57,7 @@ export async function rustSharingState(db, handle) {
     };
   }));
   return { roles, defaultRole: defaultRole >= 0 ? String(defaultRole) : "none",
-    grants, limited: false, owner: grain.userId === handle.accountId,
+    grants, owner: grain.userId === handle.accountId,
     private: !!grain.private };
 }
 

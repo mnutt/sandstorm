@@ -66,7 +66,7 @@ export class GrainWorkspace {
   sharing(id: string): SharingActions {
     const service = this.service(id);
     return { load: () => service.sharingState(), create: (label, role) => service.createShare(label, role),
-      update: (key, changes) => service.updateShare(key, changes) };
+      edit: (key, label, role) => service.editShare(key, label, role), revoke: key => service.revokeShare(key) };
   }
   renderTemplate(id: string, input: unknown) { return this.service(id).renderTemplate(input); }
   private service(id: string) {

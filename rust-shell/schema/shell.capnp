@@ -39,9 +39,7 @@ struct Snapshot {
   grainsLimited @4 :Bool;
   profileVersion @5 :Text;
   accountPictureUrl @6 :Text;
-  grainPage @7 :UInt32;
-  notificationPage @8 :UInt32;
-  hasUnread @9 :Bool;
+  hasUnread @7 :Bool;
   # Each callback replaces the entire projection. First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }
@@ -68,20 +66,14 @@ struct GrainView {
   iconSrc @6 :Text;
 }
 interface GrainSession {
-  whenClosed @8 () -> ();
+  sharing @0 () -> (sharing :Sharing);
+  whenClosed @1 () -> ();
   # Lifetime signal: revocation or lease failure closes only this grain.
   # Waiting does not retain the lease. Reopening always requires a new session.
-  beginPowerbox @7 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
-  close @0 () -> ();
-  renderTemplate @1 (options :Text) -> (token :Text, host :Text);
-  rename @2 (title :Text) -> (title :Text, ownerTitle :Text);
-  powerbox @6 (request :Text, operation :Text, input :Text) -> (state :Text);
-  # Request IDs identify child lifetimes, never authority outside this grain.
-  getSharing @3 () -> (state :Text);
-  createShare @4 (label :Text, role :Text) -> (token :Text);
-  updateShare @5 (id :Text, changes :Text) -> ();
-  # Bounded sharing projection and strictly validated changes, scoped to this grain.
-  # A freshly created webkey is returned only to trusted shell UI, never the app.
+  beginPowerbox @2 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
+  close @3 () -> ();
+  renderTemplate @4 (options :Text) -> (token :Text, host :Text);
+  rename @5 (title :Text) -> (title :Text, ownerTitle :Text);
   # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.
@@ -105,32 +97,28 @@ struct AccountProfile {
   version @5 :Text;
 }
 interface Shell {
-  watchGrains @18 (query :GrainQuery, observer :GrainObserver) -> (subscription :Subscription);
-  watchNotifications @19 (page :UInt32, observer :NotificationObserver) -> (subscription :Subscription);
+  watchGrains @0 (query :GrainQuery, observer :GrainObserver) -> (subscription :Subscription);
+  watchNotifications @1 (page :UInt32, observer :NotificationObserver) -> (subscription :Subscription);
 
-  installer @16 () -> (installer :Installer);
-  account @17 () -> (account :Account);
+  installer @2 () -> (installer :Installer);
+  account @3 () -> (account :Account);
 
-  selectPage @15 (kind :Text, page :UInt32) -> ();
-  accountSettings @14 (operation :Text, input :Text) -> (state :Text);
-  uploadPicture @13 () -> (uploadUrl :Text);
-  install @11 (operation :Text, input :Text) -> (state :Text);
-  notification @12 (key :Text, operation :Text, enabled :Bool) -> (state :Text);
-  # Fixed installation operations; package and account authority stays server-side.
-  watch @0 (observer :Observer) -> (subscription :Subscription);
-  dismiss @1 (id :UInt32) -> ();
-  addFixture @2 () -> ();
-  # State is private to this connection; at most 50 entries and one observer.
-  interop @3 () -> (fixture :Fixture);
+  uploadPicture @4 () -> (uploadUrl :Text);
+  notification @5 (key :Text, operation :Text, enabled :Bool) -> (state :Text);
+  watch @6 (observer :Observer) -> (subscription :Subscription);
+  dismiss @7 (id :UInt32) -> ();
+  addFixture @8 () -> ();
+  # Fixture state is private to this connection.
+  interop @9 () -> (fixture :Fixture);
   # Available only when the operator sets RUST_SHELL_FIXTURE_SOCKET.
   # The browser never chooses a socket or receives Sandstorm Backend authority.
-  dismissReal @4 (key :Text) -> ();
-  markRead @5 (key :Text) -> ();
-  openGrain @6 (grainId :Text) -> (view :GrainView, session :GrainSession);
-  listApps @7 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
-  createGrain @8 (actionId :Text, title :Text) -> (grainId :Text);
-  getProfile @9 () -> (profile :AccountProfile);
-  updateProfile @10 (name :Text, handle :Text, pronoun :Text) -> (profile :AccountProfile);
+  dismissReal @10 (key :Text) -> ();
+  markRead @11 (key :Text) -> ();
+  openGrain @12 (grainId :Text) -> (view :GrainView, session :GrainSession);
+  listApps @13 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
+  createGrain @14 (actionId :Text, title :Text) -> (grainId :Text);
+  getProfile @15 () -> (profile :AccountProfile);
+  updateProfile @16 (name :Text, handle :Text, pronoun :Text) -> (profile :AccountProfile);
   # Profile authority remains in Meteor; updates are never automatically replayed.
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
@@ -217,15 +205,11 @@ struct InstallationState {
   permissions @13 :InstallPermissions;
 }
 interface Installer {
-  open @6 (packageId :Text, url :Text) -> (installation :Installation);
+  open @0 (packageId :Text, url :Text) -> (installation :Installation);
   # Opening observes a package; it does not initiate a download or installation.
 
-  catalog @0 () -> (result :Result(InstallCatalog));
-  status @1 (packageId :Text) -> (result :Result(InstallationState));
-  download @2 (packageId :Text, url :Text, retry :Bool = false) -> (result :Result(InstallationState));
-  confirm @3 (packageId :Text) -> (result :Result(InstallationState));
-  upgrade @4 (packageId :Text) -> (result :Result(InstallationState));
-  upload @5 () -> (result :Result(Url));
+  catalog @1 () -> (result :Result(InstallCatalog));
+  upload @2 () -> (result :Result(Url));
 }
 struct EmailAddress {
   email @0 :Text;
@@ -352,3 +336,57 @@ struct GrainPage { grains @0 :List(Grain); hasMore @1 :Bool; page @2 :UInt32; }
 struct NotificationPage { entries @0 :List(Notification); total @1 :UInt32; page @2 :UInt32; }
 interface GrainObserver { replace @0 (page :GrainPage) -> (); }
 interface NotificationObserver { replace @0 (page :NotificationPage) -> (); }
+
+# Sharing authority is restricted to the parent grain lease. Closing that lease
+# invalidates retained Sharing capabilities. Grant IDs are scoped selectors,
+# never authority by themselves; Meteor revalidates every operation.
+struct ShareRole {
+  union {
+    none @0 :Void;
+    all @1 :Void;
+    roleId @2 :UInt32;
+  }
+}
+struct ShareRoleChange {
+  union {
+    unchanged @0 :Void;
+    set @1 :ShareRole;
+  }
+}
+struct ShareRoleDefinition {
+  id @0 :UInt32;
+  title @1 :Text;
+  description @2 :Text;
+}
+enum ShareGrantKind { link @0; person @1; grain @2; }
+struct ShareGrant {
+  id @0 :Text;
+  label @1 :Text;
+  union {
+    role @2 :ShareRole;
+    custom @3 :Void;
+  }
+  kind @4 :ShareGrantKind;
+  recipient @5 :Text;
+  recipientPictureUrl @6 :Text;
+  editable @7 :Bool;
+  inherited @8 :Bool;
+  created @9 :Text;
+}
+struct SharingState {
+  roles @0 :List(ShareRoleDefinition);
+  defaultRole @1 :ShareRole;
+  grants @2 :List(ShareGrant);
+  owner @3 :Bool;
+  private @4 :Bool;
+}
+struct ShareLink { token @0 :Text; }
+interface Sharing {
+  read @0 () -> (result :Result(SharingState));
+  create @1 (label :Text, role :ShareRole) -> (result :Result(ShareLink));
+  # This bearer token is for trusted shell UI only; never forward it to the app.
+  edit @2 (id :Text, label :Text, role :ShareRoleChange) -> (result :Result(Empty));
+  # Unchanged preserves custom permissions during label-only edits.
+  revoke @3 (id :Text) -> (result :Result(Empty));
+  # Mutation outcomes must not be replayed automatically after transport failure.
+}

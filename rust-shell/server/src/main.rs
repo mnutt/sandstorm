@@ -8,6 +8,7 @@ mod powerbox;
 mod rpc_protocol;
 mod service;
 mod shared;
+mod sharing;
 mod transport;
 mod workflow;
 
