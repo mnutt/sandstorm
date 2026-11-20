@@ -193,10 +193,7 @@ impl grain_session::Server for Lease {
         let operation = params.get_operation()?.to_str()?;
         let request = params.get_request()?.to_str()?;
         let input = params.get_input()?.to_str()?;
-        if !matches!(operation, "begin" | "select" | "poll" | "cancel")
-            || request.len() != 64
-            || input.len() > 65536
-        {
+        if !matches!(operation, "begin" | "select" | "poll" | "cancel") || request.len() != 64 {
             return Err(capnp::Error::failed("Invalid Powerbox request".into()));
         }
         let input: serde_json::Value = serde_json::from_str(input)
@@ -225,9 +222,6 @@ impl grain_session::Server for Lease {
         let params = params.get()?;
         let label = params.get_label()?.to_str()?;
         let role = params.get_role()?.to_str()?;
-        if label.len() > 640 || role.len() > 16 {
-            return Err(capnp::Error::failed("Invalid sharing options".into()));
-        }
         let value = self
             .sharing_call("createShare", json!({"label": label, "role": role}))
             .await?;
@@ -247,9 +241,6 @@ impl grain_session::Server for Lease {
         let params = params.get()?;
         let id = params.get_id()?.to_str()?;
         let changes = params.get_changes()?.to_str()?;
-        if id.len() > 128 || changes.len() > 2048 {
-            return Err(capnp::Error::failed("Invalid sharing update".into()));
-        }
         let changes: serde_json::Value = serde_json::from_str(changes)
             .map_err(|_| capnp::Error::failed("Invalid sharing update".into()))?;
         self.sharing_call("updateShare", json!({"id": id, "changes": changes}))
@@ -266,9 +257,6 @@ impl grain_session::Server for Lease {
             return Err(capnp::Error::failed("Grain session closed".into()));
         }
         let title = params.get()?.get_title()?.to_str()?;
-        if title.len() > 640 {
-            return Err(capnp::Error::failed("Grain title too long".into()));
-        }
         let value = self
             .scope
             .session
@@ -300,9 +288,6 @@ impl grain_session::Server for Lease {
             return Err(capnp::Error::failed("Grain session closed".into()));
         }
         let options = params.get()?.get_options()?.to_str()?;
-        if options.len() > 6144 {
-            return Err(capnp::Error::failed("Template options too large".into()));
-        }
         let options: serde_json::Value = serde_json::from_str(options)
             .map_err(|_| capnp::Error::failed("Invalid template options".into()))?;
         let value = self
@@ -372,11 +357,6 @@ impl Scope {
         {
             let mut grains = self.grains.borrow_mut();
             grains.retain(|grain| grain.busy.get() || grain.active.borrow().is_some());
-            if grains.len() >= 8 {
-                return Err(capnp::Error::failed(
-                    "Close a grain before opening another (8 open maximum)".into(),
-                ));
-            }
             grains.push(grain.clone());
         }
         grain.open(grain_id).await
@@ -391,7 +371,7 @@ impl Scope {
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
             let grains = self.grains.borrow().clone();
-            // At most eight grains; a slow lease must not delay every other renewal.
+            // A slow lease must not delay every other renewal.
             futures::future::join_all(grains.iter().map(|grain| grain.keep())).await;
         }
     }

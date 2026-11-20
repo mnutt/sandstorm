@@ -34,13 +34,10 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
   return {
     async open(token, accountId, input, signal) {
       if (!open || !valid(input.scope) || typeof input.grainId !== "string" ||
-          !input.grainId || input.grainId.length > 128) throw failure(400, "Invalid grain request.");
+          !input.grainId) throw failure(400, "Invalid grain request.");
       if (leases.has(input.scope)) throw failure(409, "Close the current grain first.");
-      if (leases.size >= 32 || [...leases.values()].filter((r) => r.token === token).length >= 8) {
-        throw failure(503, "Too many open grain sessions.");
-      }
       const record = { token, scope: input.scope, lease: randomBytes(32).toString("hex"),
-        expires: now() + 45000, handle: null, closed: false, templates: 0, rendering: false };
+        expires: now() + 45000, handle: null, closed: false, rendering: false };
       leases.set(input.scope, record);
       try {
         const result = await open(accountId, input.grainId);
@@ -68,7 +65,7 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
     async rename(token, input, signal) {
       const record = get(token, input.scope, input.lease);
       if (!rename || !record?.handle || record.closed || record.expires <= now()) throw failure(410, "Grain session expired.");
-      if (typeof input.title !== "string" || !input.title.trim() || input.title.length > 160) throw failure(400, "Invalid grain title.");
+      if (typeof input.title !== "string" || !input.title.trim()) throw failure(400, "Invalid grain title.");
       if (record.renaming) throw failure(409, "A rename is already in progress.");
       record.renaming = true;
       const handle = record.handle;
@@ -134,7 +131,6 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
       const callback = { getSharing: sharing, createShare, updateShare }[operation];
       if (!callback) throw failure(503, "Sharing is unavailable.");
       if (record.sharing) throw failure(409, "A sharing operation is already pending.");
-      if (operation === "createShare" && (record.shares || 0) >= 32) throw failure(429, "Too many sharing links. Reopen the grain to create more.");
       record.sharing = true;
       const handle = record.handle;
       const beforeWrite = async () => {
@@ -145,7 +141,6 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
       let result;
       try {
         await beforeWrite();
-        if (operation === "createShare") record.shares = (record.shares || 0) + 1;
         result = await callback(handle, input, beforeWrite);
         await beforeWrite();
         return operation === "createShare" ? { token: result.token } : result;
@@ -158,9 +153,8 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
     async template(token, input, signal) {
       const record = get(token, input.scope, input.lease);
       if (!template || !record?.handle || record.closed || signal.aborted || record.expires <= now()) throw failure(410, "Grain session expired.");
-      if (record.rendering || record.templates >= 8) throw failure(429, "Too many template requests. Reopen the grain to request more.");
+      if (record.rendering) throw failure(409, "A template request is already pending.");
       record.rendering = true;
-      ++record.templates;
       let result;
       try {
         await validate(token);

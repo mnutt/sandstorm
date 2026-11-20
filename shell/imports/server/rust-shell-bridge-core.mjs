@@ -11,7 +11,6 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
 export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
-  let watches = 0;
   const creating = new Set();
   const installing = new Set();
   const notificationWrites = new Set();
@@ -19,9 +18,6 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
   const accountWrites = new Set();
   const grants = new Map();
   const sessions = sessionStore;
-  // One authoritative bridge process admits exchanges serially, including DB
-  // writes, so async persistence cannot race the linked-session bound.
-  let exchanging = Promise.resolve();
   const prune = () => {
     for (const [key, value] of grants) if (value.expires <= now()) grants.delete(key);
   };
@@ -55,7 +51,6 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       if (!validSecret(state) || !accountId || !loginHash) throw unauthorized();
       const record = { accountId, loginHash, state, expires: now() + 60000 };
       await validate(record);
-      if (grants.size >= 1024) throw Object.assign(new Error("Too many pending sign-ins."), { status: 503 });
       const code = secret();
       grants.set(hash(code), record);
       return code;
@@ -72,22 +67,17 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         const record = grants.get(key);
         grants.delete(key); // Consume before any await: concurrent exchanges cannot both win.
         if (!record || record.state !== input.state) throw unauthorized();
-        const exchange = exchanging.then(async () => {
-          const account = await validate(record);
-          await sessions.prune(now());
-          if (validSecret(input.previous)) {
-            await sessions.remove(hash(input.previous));
-            await leases.revoke(input.previous);
-          }
-          if (await sessions.count() >= 1024) throw Object.assign(new Error("Too many linked sessions."), { status: 503 });
-          const token = secret();
-          const linked = { accountId: record.accountId, loginHash: record.loginHash,
-            expires: Math.min(account.expires, now() + 12 * 60 * 60 * 1000) };
-          await sessions.put(hash(token), linked);
-          return { token, account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: linked.expires };
-        });
-        exchanging = exchange.catch(() => {});
-        return exchange;
+        const account = await validate(record);
+        await sessions.prune(now());
+        if (validSecret(input.previous)) {
+          await sessions.remove(hash(input.previous));
+          await leases.revoke(input.previous);
+        }
+        const token = secret();
+        const linked = { accountId: record.accountId, loginHash: record.loginHash,
+          expires: Math.min(account.expires, now() + 12 * 60 * 60 * 1000) };
+        await sessions.put(hash(token), linked);
+        return { token, account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: linked.expires };
       }
       if (action === "nativeAuth") {
         if (!nativeAuth || !validSecret(input.flow) || !["options","sendEmail","email","dev","ldap","githubStart","githubFinish","githubCancel"].includes(input.operation)) throw Object.assign(new Error("Invalid sign-in request."), {status:400});
@@ -110,7 +100,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       if (action === "closeGrain") return leases.close(input.token, input);
       const { record, account } = await session(input.token);
       if (action === "notification") {
-        if (!notification || typeof input.key !== "string" || !input.key || input.key.length > 128 ||
+        if (!notification || typeof input.key !== "string" || !input.key ||
             !["details", "setStats"].includes(input.operation) ||
             (input.operation === "setStats" && typeof input.enabled !== "boolean")) {
           throw Object.assign(new Error("Invalid notification operation."), {status:400});
@@ -135,11 +125,11 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
           verifyEmail:["email","code","allowLogin"], unlink:["id"], allowLogin:["id","allowLogin"]};
         if (!accountSettings || !Object.hasOwn(fields, operation) || !data || typeof data !== "object" || Array.isArray(data) ||
             Object.keys(data).some(key => !fields[operation].includes(key)) || fields[operation].some(key =>
-              key === "allowLogin" ? typeof data[key] !== "boolean" : typeof data[key] !== "string" || !data[key] || data[key].length > 320)) {
+              key === "allowLogin" ? typeof data[key] !== "boolean" : typeof data[key] !== "string" || !data[key])) {
           throw Object.assign(new Error("Invalid account settings request."), {status:400});
         }
         const writing = operation !== "state";
-        if (writing && (accountWrites.has(record.accountId) || accountWrites.size >= 8)) {
+        if (writing && (accountWrites.has(record.accountId))) {
           throw Object.assign(new Error("An account update is in progress."), {status:409});
         }
         if (writing) accountWrites.add(record.accountId);
@@ -159,11 +149,11 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         if (!install || !["catalog", "status", "download", "retry", "confirm", "upgrade", "upload"].includes(operation) ||
             !data || typeof data !== "object" || Array.isArray(data) ||
             Object.keys(data).some(key => !["packageId", "url"].includes(key)) ||
-            Object.values(data).some(value => typeof value !== "string" || value.length > 2048)) {
+            Object.values(data).some(value => typeof value !== "string")) {
           throw Object.assign(new Error("Invalid installation request."), {status:400});
         }
         const mutating = !["catalog", "status"].includes(operation);
-        if (mutating && (installing.has(record.accountId) || installing.size >= 8)) {
+        if (mutating && (installing.has(record.accountId))) {
           throw Object.assign(new Error("An installation operation is in progress."), {status:409});
         }
         if (mutating) installing.add(record.accountId);
@@ -180,7 +170,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       }
       if (action === "uploadPicture") {
         if (!uploadPicture) throw Object.assign(new Error("Picture upload unavailable."), {status:503});
-        if (updatingProfiles.has(record.accountId) || updatingProfiles.size >= 8) throw Object.assign(new Error("A profile update is already in progress."), {status:409});
+        if (updatingProfiles.has(record.accountId)) throw Object.assign(new Error("A profile update is already in progress."), {status:409});
         updatingProfiles.add(record.accountId);
         try {
           const beforeWrite = async () => {
@@ -198,12 +188,12 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
           const profile = input.profile;
           if (!updateProfile || !profile || typeof profile !== "object" || Array.isArray(profile) ||
               Object.keys(profile).some(key => !["name", "handle", "pronoun"].includes(key)) ||
-              typeof profile.name !== "string" || !profile.name.trim() || profile.name.length > 160 ||
-              typeof profile.handle !== "string" || profile.handle.length > 64 || !/^[a-z_][a-z0-9_]*$/.test(profile.handle) ||
+              typeof profile.name !== "string" || !profile.name.trim() ||
+              typeof profile.handle !== "string" || !/^[a-z_][a-z0-9_]*$/.test(profile.handle) ||
               !["male", "female", "neutral", "robot"].includes(profile.pronoun)) {
             throw Object.assign(new Error("Invalid profile."), { status: 400 });
           }
-          if (updatingProfiles.has(record.accountId) || updatingProfiles.size >= 8) {
+          if (updatingProfiles.has(record.accountId)) {
             throw Object.assign(new Error("A profile update is already in progress."), { status: 409 });
           }
           updatingProfiles.add(record.accountId);
@@ -224,17 +214,17 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         if (!listApps) throw Object.assign(new Error("Apps unavailable."), { status: 503 });
         const page = input.page ?? 0;
         const appId = input.appId ?? "";
-        if (!Number.isSafeInteger(page) || page < 0 || page > 1000000 || typeof appId !== "string" || appId.length > 128) throw Object.assign(new Error("Invalid app page."), {status:400});
+        if (!Number.isSafeInteger(page) || page < 0 || typeof appId !== "string") throw Object.assign(new Error("Invalid app page."), {status:400});
         const result = await listApps(record.accountId, page, appId);
         await session(input.token);
         return result;
       }
       if (action === "createGrain") {
-        if (!createGrain || typeof input.actionId !== "string" || !input.actionId || input.actionId.length > 128 ||
-            typeof input.title !== "string" || !input.title.trim() || input.title.length > 160) {
+        if (!createGrain || typeof input.actionId !== "string" || !input.actionId ||
+            typeof input.title !== "string" || !input.title.trim()) {
           throw Object.assign(new Error("Invalid grain creation request."), { status: 400 });
         }
-        if (creating.has(record.accountId) || creating.size >= 8) {
+        if (creating.has(record.accountId)) {
           throw Object.assign(new Error("A grain creation is already in progress. Check your grains before trying again."), { status: 409 });
         }
         creating.add(record.accountId);
@@ -258,14 +248,14 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       const query = input.query;
       if (query !== undefined && (!query || typeof query !== 'object' || Array.isArray(query) ||
           Object.keys(query).some(key=>!['search','appId','sort','ownership'].includes(key)) ||
-          typeof query.search !== 'string' || query.search.length>160 || typeof query.appId !== 'string' || query.appId.length>128 ||
+          typeof query.search !== 'string' || typeof query.appId !== 'string' ||
           !['recent','title'].includes(query.sort) || !['all','owned','shared'].includes(query.ownership))) {
         throw Object.assign(new Error('Invalid grain query.'),{status:400});
       }
       const pages = input.pages ?? {};
       if ((action === "snapshot" || action === "watch") &&
           (typeof pages !== "object" || Array.isArray(pages) || Object.keys(pages).some(key =>
-            !["grains", "notifications"].includes(key) || !Number.isSafeInteger(pages[key]) || pages[key] < 0 || pages[key] > 1000000))) {
+            !["grains", "notifications"].includes(key) || !Number.isSafeInteger(pages[key]) || pages[key] < 0))) {
         throw Object.assign(new Error("Invalid list page."), {status:400});
       }
       if (action === "snapshot") {
@@ -277,8 +267,6 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         if (!observe || !validSecret(input.after)) {
           throw Object.assign(new Error("Invalid watch request."), { status: 400 });
         }
-        if (watches >= 32) throw Object.assign(new Error("Too many notification watches."), { status: 503 });
-        ++watches;
         let stop;
         let wake;
         let dirty = true;
@@ -317,19 +305,18 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
             });
           }
         } finally {
-          --watches;
           await stop?.();
         }
       }
       if (action === "dismiss") {
-        if (typeof input.id !== "string" || !input.id || input.id.length > 256) {
+        if (typeof input.id !== "string" || !input.id) {
           throw Object.assign(new Error("Invalid notification ID."), { status: 400 });
         }
         await dismiss(record.accountId, input.id);
         return {};
       }
       if (action === "read") {
-        if (input.key !== undefined && (typeof input.key !== "string" || !input.key || input.key.length > 256)) {
+        if (input.key !== undefined && (typeof input.key !== "string" || !input.key)) {
           throw Object.assign(new Error("Invalid notification ID."), {status:400});
         }
         await markRead(record.accountId, input.key);
@@ -340,7 +327,8 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
   };
 }
 
-// Only fixed operations, bounded request/response bodies, no CORS or network listener.
+// Private Unix-socket adapter: fixed operations, no CORS or public network listener.
+// The browser transport enforces the envelope size before JSON serialization.
 export function bridgeHandler(bridge) {
   return async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -353,10 +341,7 @@ export function bridgeHandler(bridge) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];
-      let bytes = 0;
       for await (const part of req) {
-        bytes += part.length;
-        if (bytes > (req.url === "/powerbox" ? 69632 : req.url === "/renderTemplate" ? 8192 : 4096)) throw Object.assign(new Error("Request too large."), { status: 413 });
         parts.push(part);
       }
       let input;
@@ -366,7 +351,6 @@ export function bridgeHandler(bridge) {
         throw Object.assign(new Error("Invalid request."), { status: 400 });
       }
       const output = JSON.stringify(await bridge.handle(req.url.slice(1), input, controller.signal));
-      if (Buffer.byteLength(output) > 220000) throw new Error("Projection too large");
       res.end(output);
     } catch (error) {
       if (res.destroyed) return;

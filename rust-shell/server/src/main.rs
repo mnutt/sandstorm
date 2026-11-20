@@ -5,7 +5,7 @@ mod grain;
 mod interop;
 mod observation;
 mod powerbox;
-mod rpc_budget;
+mod rpc_protocol;
 mod service;
 mod shared;
 mod transport;
@@ -27,8 +27,8 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use std::{net::SocketAddr, path::PathBuf};
+use tokio::sync::mpsc;
 use tower_http::{
     services::{ServeDir, ServeFile},
     set_header::SetResponseHeaderLayer,
@@ -36,10 +36,8 @@ use tower_http::{
 
 type Connection = (
     axum::extract::ws::WebSocket,
-    OwnedSemaphorePermit,
     Option<bridge::Session>,
     Option<bridge::Bridge>,
-    Option<OwnedSemaphorePermit>,
 );
 
 enum Listener {
@@ -72,8 +70,6 @@ struct AppState {
     origin: String,
     host: String,
     sockets: mpsc::Sender<Connection>,
-    permits: Arc<Semaphore>,
-    shared_permits: Arc<Semaphore>,
 }
 
 async fn upgrade(
@@ -98,17 +94,10 @@ async fn upgrade(
     } else {
         None
     };
-    // Failed sign-in attempts must not occupy the slots reserved for real sessions.
-    let Ok(permit) = state.permits.try_acquire_owned() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     ws.max_message_size(transport::MAX_MESSAGE)
         .max_frame_size(transport::MAX_MESSAGE)
         .on_upgrade(move |socket| async move {
-            let _ = state
-                .sockets
-                .send((socket, permit, session, None, None))
-                .await;
+            let _ = state.sockets.send((socket, session, None)).await;
         })
 }
 
@@ -125,21 +114,11 @@ async fn upgrade_shared(
     let Some(bridge) = state.auth.bridge.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // Anonymous visitors cannot consume every account-shell connection slot.
-    let Ok(shared_permit) = state.shared_permits.try_acquire_owned() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    let Ok(permit) = state.permits.try_acquire_owned() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     let account = auth::session(&state.auth, &headers);
     ws.max_message_size(transport::MAX_MESSAGE)
         .max_frame_size(transport::MAX_MESSAGE)
         .on_upgrade(move |socket| async move {
-            let _ = state
-                .sockets
-                .send((socket, permit, account, Some(bridge), Some(shared_permit)))
-                .await;
+            let _ = state.sockets.send((socket, account, Some(bridge))).await;
         })
 }
 
@@ -196,8 +175,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         origin: origin.clone(),
         host,
         sockets,
-        permits: Arc::new(Semaphore::new(16)),
-        shared_permits: Arc::new(Semaphore::new(8)),
     };
     let static_origin = match std::env::var("RUST_SHELL_WILDCARD_HOST") {
         Ok(host) if !host.is_empty() => {
@@ -272,7 +249,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             next.run(request).await
         }))
         .with_state(state)
-        .layer(DefaultBodyLimit::max(4096))
+        .layer(DefaultBodyLimit::max(transport::MAX_MESSAGE))
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
         .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
         .layer(axum::middleware::from_fn_with_state(shell_policy, |State(shell_policy): State<HeaderValue>, request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
@@ -318,11 +295,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 tokio::select! {
                     result = &mut server => { result?; break; }
-                    Some((socket, permit, session, shared_bridge, shared_permit)) = receiver.recv() => {
+                    Some((socket, session, shared_bridge)) = receiver.recv() => {
                         let fixture_socket = fixture_socket.clone();
                         connections.spawn_local(async move {
-                            let _permit = permit;
-                            let _shared_permit = shared_permit;
                             if let Some(bridge) = shared_bridge { transport::serve_shared(socket,bridge,session).await; }
                             else { transport::serve(socket, fixture_socket, session).await; }
                         });

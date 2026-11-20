@@ -8,8 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
-use std::{sync::Arc, time::Duration};
-use tokio::sync::Semaphore;
+use std::time::Duration;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest, protocol::WebSocketConfig, Message as UpstreamMessage,
 };
@@ -19,8 +18,6 @@ pub struct Frontend {
     port: u16,
     origin: String,
     client: reqwest::Client,
-    sockets: Arc<Semaphore>,
-    requests: Arc<Semaphore>,
 }
 
 impl Frontend {
@@ -33,8 +30,6 @@ impl Frontend {
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(15))
                 .build()?,
-            sockets: Arc::new(Semaphore::new(16)),
-            requests: Arc::new(Semaphore::new(32)),
         })
     }
 }
@@ -79,9 +74,6 @@ pub async fn frontend(State(dev): State<Frontend>, method: Method, uri: Uri) -> 
     {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(_permit) = dev.requests.try_acquire() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     // Fixed loopback destination; do not forward credentials, cookies, or browser-supplied hosts.
     let url = format!(
         "http://127.0.0.1:{}{}",
@@ -108,9 +100,7 @@ pub async fn frontend(State(dev): State<Frontend>, method: Method, uri: Uri) -> 
     let mut bytes = Vec::new();
     loop {
         match upstream.chunk().await {
-            Ok(Some(chunk)) if bytes.len() + chunk.len() <= 16 * 1024 * 1024 => {
-                bytes.extend_from_slice(&chunk)
-            }
+            Ok(Some(chunk)) => bytes.extend_from_slice(&chunk),
             Ok(None) => break,
             _ => return StatusCode::BAD_GATEWAY.into_response(),
         }
@@ -142,9 +132,6 @@ pub async fn hmr(
         Some("vite-ping") => "vite-ping",
         _ => return StatusCode::BAD_REQUEST.into_response(),
     };
-    let Ok(permit) = dev.sockets.clone().try_acquire_owned() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
     let url = format!(
         "ws://127.0.0.1:{}{}",
         dev.port,
@@ -164,8 +151,8 @@ pub async fn hmr(
         .insert(header::ORIGIN, headers[header::ORIGIN].clone());
     // Vite verifies the per-process token for HMR; its ping protocol only tests availability.
     let config = WebSocketConfig::default()
-        .max_message_size(Some(1024 * 1024))
-        .max_frame_size(Some(1024 * 1024));
+        .max_message_size(Some(crate::transport::MAX_MESSAGE))
+        .max_frame_size(Some(crate::transport::MAX_MESSAGE));
     let Ok(Ok((upstream, _))) = tokio::time::timeout(
         Duration::from_secs(5),
         tokio_tungstenite::connect_async_with_config(request, Some(config), false),
@@ -175,10 +162,9 @@ pub async fn hmr(
         return unavailable();
     };
     ws.protocols([protocol])
-        .max_message_size(1024 * 1024)
-        .max_frame_size(1024 * 1024)
+        .max_message_size(crate::transport::MAX_MESSAGE)
+        .max_frame_size(crate::transport::MAX_MESSAGE)
         .on_upgrade(move |socket| async move {
-            let _permit = permit;
             let (mut browser_send, mut browser_read) = socket.split();
             let (mut vite_send, mut vite_read) = upstream.split();
             let to_vite = async {

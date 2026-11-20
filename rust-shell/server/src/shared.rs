@@ -83,9 +83,6 @@ impl shared_shell::Server for SharedShell {
         }
         let _busy = Busy(&self.busy);
         let webkey = params.get()?.get_webkey()?.to_str()?;
-        if webkey.len() > 256 {
-            return Err(capnp::Error::failed("Invalid sharing link".into()));
-        }
         let info = self
             .call("inspectSharedGrain", json!({"webkey":webkey}))
             .await?;
@@ -113,9 +110,6 @@ impl shared_shell::Server for SharedShell {
         }
         let input = params.get()?;
         let webkey = input.get_webkey()?.to_str()?;
-        if webkey.len() > 256 {
-            return Err(capnp::Error::failed("Invalid sharing link".into()));
-        }
         let value = self
             .call(
                 "openSharedGrain",

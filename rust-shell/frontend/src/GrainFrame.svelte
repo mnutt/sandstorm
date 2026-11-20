@@ -90,7 +90,7 @@
     if (data.getGrainTitle) titles.request(data.rpcId, data.getGrainTitle, data.subscribe);
     if (data.powerboxRequest && canManage) requestPowerbox(data.powerboxRequest);
     const template = record(data.renderTemplate);
-    if (template && typeof template.rpcId === 'string' && template.rpcId.length <= 256) {
+    if (template && typeof template.rpcId === 'string') {
       const source = event.source as Window;
       const rpcId = template.rpcId;
       const origin = grain.origin;
@@ -117,7 +117,7 @@
     {#snippet triggerContent()}<ShellIcon name="pencil" />{/snippet}
     <form onsubmit={saveTitle}>
       <label for="rename-grain-title">Grain title</label>
-      <TextInput id="rename-grain-title" bind:value={draftTitle} maxlength={160} required disabled={renaming} />
+      <TextInput id="rename-grain-title" bind:value={draftTitle} required disabled={renaming} />
       <div class="dialog-actions">
       <Button type="submit" disabled={renaming || !draftTitle.trim()}>{renaming ? 'Saving title…' : 'Save title'}</Button>
       <Button variant="secondary" type="button" disabled={renaming} onclick={() => { editing = false; renameError = ''; }}>Cancel rename</Button>

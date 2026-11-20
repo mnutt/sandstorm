@@ -65,10 +65,9 @@ test('closing or revoking a pending shared open destroys its late session',async
   }
 });
 
-test('shared scope admission is bounded and close cannot target a different scope',async()=>{
+test('more than 32 shared scopes can open and close cannot target a different scope',async()=>{
   const f=fixture();
-  for(let i=0;i<32;i++) await f.leases.open({...f.request,scope:i.toString(16).padStart(64,'0')},f.signal);
-  await assert.rejects(f.leases.open(f.request,f.signal),{status:503});
-  await f.leases.close(f.request); assert.equal(f.live.size,32);
+  for(let i=0;i<40;i++) await f.leases.open({...f.request,scope:i.toString(16).padStart(64,'0')},f.signal);
+  await f.leases.close(f.request); assert.equal(f.live.size,40);
   f.expire(); await f.leases.sweep(); assert.equal(f.live.size,0);
 });

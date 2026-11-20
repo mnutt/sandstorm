@@ -44,7 +44,7 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
 
     await serveProbe(page, './rpc-probe.ts', 'rpc-probe.js');
     const result = await page.evaluate(async () => (await import('/rpc-probe.js')).probe());
-    assert.deepEqual(result, { fixtureDisabled: true, duplicateRejected: true, oldCancelSafe: true, cancelled: true, limitRejected: true, entries: 50 });
+    assert.deepEqual(result, { fixtureDisabled: true, parallelAccepted: true, oldCancelSafe: true, cancelled: true, entries: 51 });
 
     // A browser on another port is a different origin, even on the same host.
     const foreign = await browser.newPage();

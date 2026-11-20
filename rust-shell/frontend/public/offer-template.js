@@ -8,7 +8,7 @@ function isOffer(value) {
   if (!value || typeof value !== 'object') return false;
   const data = /** @type {Record<string, unknown>} */ (value);
   if (typeof data.host !== 'string' || typeof data.token !== 'string' || !data.token ||
-      typeof data.renderedTemplate !== 'string' || data.renderedTemplate.length > 131072 ||
+      typeof data.renderedTemplate !== 'string' ||
       typeof data.expires !== 'number' || !Number.isFinite(data.expires)) return false;
   try {
     const url = new URL('https://' + data.host);

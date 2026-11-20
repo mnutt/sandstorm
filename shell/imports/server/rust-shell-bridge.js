@@ -226,10 +226,10 @@ export const rustShellBridge = createRustShellBridge({
 Meteor.methods({
   async rustShellSharingContext(sessionId, mode, shareData) {
     check(sessionId, String);
-    if (sessionId.length > 128 || !["share", "access"].includes(mode) ||
+    if (!["share", "access"].includes(mode) ||
         !shareData || typeof shareData !== "object" || Array.isArray(shareData) ||
         Object.keys(shareData).some(key => !["pathname", "hash"].includes(key)) ||
-        Object.values(shareData).some(value => typeof value !== "string" || value.length > 2048 || /[\x00-\x1f\x7f\\]/.test(value)) ||
+        Object.values(shareData).some(value => typeof value !== "string" || /[\x00-\x1f\x7f\\]/.test(value)) ||
         (shareData.pathname && (shareData.pathname.startsWith("//") || /(^|\/)(\.|%2e){2}(\/|$)/i.test(shareData.pathname)))) {
       throw new Meteor.Error(400, "Invalid sharing request.");
     }
@@ -238,12 +238,12 @@ Meteor.methods({
   },
   async rustShellPowerboxContext(sessionId, request) {
     check(sessionId, String);
-    if (sessionId.length > 128 || !request || typeof request !== "object" || Array.isArray(request) ||
+    if (!request || typeof request !== "object" || Array.isArray(request) ||
         !["string", "number"].includes(typeof request.rpcId) ||
-        (request.query !== undefined && (!Array.isArray(request.query) || request.query.length > 32 ||
-          request.query.some(q => typeof q !== "string" || q.length > 8192))) ||
+        (request.query !== undefined && (!Array.isArray(request.query) ||
+          request.query.some(q => typeof q !== "string"))) ||
         (request.saveLabel !== undefined && (!request.saveLabel ||
-          typeof request.saveLabel.defaultText !== "string")) || JSON.stringify(request).length > 65536) {
+          typeof request.saveLabel.defaultText !== "string"))) {
       throw new Meteor.Error(400, "Invalid Powerbox request.");
     }
     if (!Meteor.settings.public.rustShellOrigin) throw new Meteor.Error(503, "The Rust shell is not enabled.");

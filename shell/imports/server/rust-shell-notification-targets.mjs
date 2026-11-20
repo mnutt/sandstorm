@@ -4,13 +4,13 @@ export function nativeNotificationPath(notification) {
   if (!notification.grainId) return notification.appUpdates ? "/install" : "";
   const id = notification.grainId;
   const path = notification.path ?? "";
-  if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id) ||
-      typeof path !== "string" || path.length > 2048 || /[\\\u0000-\u001f\u007f]/.test(path)) return "";
+  if (typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id) ||
+      typeof path !== "string" || /[\\\u0000-\u001f\u007f]/.test(path)) return "";
   const base = "/grain/" + id;
   const url = new URL(base + (path ? "/" + path.replace(/^\/+/, "") : ""), "https://shell.invalid");
   if (url.pathname !== base && !url.pathname.startsWith(base + "/")) return "";
   const target = url.pathname + url.search + url.hash;
-  return target.length <= 2048 ? target : "";
+  return target;
 }
 
 export function nativeNotificationAction(notification) {

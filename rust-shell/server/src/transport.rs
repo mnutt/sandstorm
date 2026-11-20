@@ -6,13 +6,11 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use tokio::io::AsyncWriteExt;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-pub const MAX_MESSAGE: usize = 256 * 1024;
+// Match Meteor's default SockJS/faye websocket-driver MAX_LENGTH.
+pub const MAX_MESSAGE: usize = 0x3ffffff;
 
 pub(crate) fn options() -> ReaderOptions {
-    ReaderOptions {
-        traversal_limit_in_words: Some(MAX_MESSAGE / 8),
-        nesting_limit: 32,
-    }
+    ReaderOptions::new()
 }
 
 // One unpacked Cap'n Proto message (including its segment table) per WS message.
@@ -29,12 +27,12 @@ fn validate_frame(bytes: &[u8]) -> capnp::Result<()> {
     Ok(())
 }
 
-fn admit_frame(bytes: &[u8], budget: &mut crate::rpc_budget::Budget) -> capnp::Result<()> {
+fn admit_frame(bytes: &[u8], protocol: &mut crate::rpc_protocol::Protocol) -> capnp::Result<()> {
     validate_frame(bytes)?;
     // WebSocket Bytes may be unaligned; inspect aligned storage. Validate the
     // segment table against the frame first, before allocating that storage.
     let message = capnp::serialize::read_message(std::io::Cursor::new(bytes), options())?;
-    budget.incoming(message.get_root()?)
+    protocol.incoming(message.get_root()?)
 }
 
 pub async fn serve(
@@ -107,20 +105,12 @@ async fn serve_rpc(
         options(),
     );
     let rpc = RpcSystem::new(Box::new(network), Some(bootstrap));
-    let budget = RefCell::new(crate::rpc_budget::Budget::new());
+    let protocol = RefCell::new(crate::rpc_protocol::Protocol::new());
     let incoming = async {
         while let Some(Ok(message)) = ws_in.next().await {
-            let size = match &message {
-                Message::Binary(bytes) | Message::Ping(bytes) | Message::Pong(bytes) => bytes.len(),
-                Message::Text(text) => text.len(),
-                Message::Close(_) => 0,
-            };
-            if budget.borrow_mut().frame(size).is_err() {
-                break;
-            }
             match message {
                 Message::Binary(bytes) => {
-                    let accepted = admit_frame(&bytes, &mut budget.borrow_mut());
+                    let accepted = admit_frame(&bytes, &mut protocol.borrow_mut());
                     if accepted.is_err() {
                         break;
                     }
@@ -139,14 +129,12 @@ async fn serve_rpc(
         {
             let accepted = message
                 .get_root()
-                .and_then(|root| budget.borrow_mut().outgoing(root));
+                .and_then(|root| protocol.borrow_mut().outgoing(root));
             if accepted.is_err() {
                 break;
             }
             let bytes = capnp::serialize::write_message_segments_to_words(message.get_segments());
-            if bytes.len() > MAX_MESSAGE
-                || ws_out.send(Message::Binary(bytes.into())).await.is_err()
-            {
+            if ws_out.send(Message::Binary(bytes.into())).await.is_err() {
                 break;
             }
         }
@@ -174,7 +162,7 @@ mod tests {
         let bytes = capnp::serialize::write_message_to_words(&message);
         let mut unaligned = vec![0];
         unaligned.extend_from_slice(&bytes);
-        assert!(admit_frame(&unaligned[1..], &mut crate::rpc_budget::Budget::new()).is_ok());
+        assert!(admit_frame(&unaligned[1..], &mut crate::rpc_protocol::Protocol::new()).is_ok());
     }
 
     #[test]
@@ -187,6 +175,10 @@ mod tests {
         assert!(validate_frame(&[bytes.clone(), bytes].concat()).is_err());
         assert!(validate_frame(&[0xff; 8]).is_err());
         assert!(validate_frame(&vec![0; MAX_MESSAGE + 1]).is_err());
+        // Valid messages above the original 256 KiB spike ceiling are accepted.
+        let mut large = capnp::message::Builder::new_default();
+        large.set_root("x".repeat(1024 * 1024).as_str()).unwrap();
+        assert!(validate_frame(&capnp::serialize::write_message_to_words(&large)).is_ok());
         // Two segments, including the segment table padding word.
         let segmented = [1_u32, 1, 1, 0, 0, 0, 0, 0]
             .into_iter()

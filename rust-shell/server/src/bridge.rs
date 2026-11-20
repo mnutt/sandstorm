@@ -1,8 +1,7 @@
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::Semaphore;
+use std::{path::PathBuf, time::Duration};
 
 pub type Error = (StatusCode, String);
 
@@ -32,8 +31,6 @@ pub struct AppList {
 #[derive(Clone)]
 pub struct Bridge {
     client: reqwest::Client,
-    requests: Arc<Semaphore>,
-    maintenance: Arc<Semaphore>,
 }
 
 impl Bridge {
@@ -45,33 +42,10 @@ impl Bridge {
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(5))
                 .build()?,
-            requests: Arc::new(Semaphore::new(32)),
-            // Keep heartbeat/revocation/cleanup independent of public request pressure.
-            maintenance: Arc::new(Semaphore::new(32)),
         })
     }
 
     pub async fn call(&self, action: &str, input: Value) -> Result<Value, Error> {
-        let maintenance = matches!(
-            action,
-            "watch"
-                | "keepGrain"
-                | "closeGrain"
-                | "keepSharedGrain"
-                | "closeSharedGrain"
-                | "logout"
-        );
-        let pool = if maintenance {
-            &self.maintenance
-        } else {
-            &self.requests
-        };
-        let _permit = pool.try_acquire().map_err(|_| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Too many pending shell requests.".into(),
-            )
-        })?;
         let unavailable = || {
             (
                 StatusCode::BAD_GATEWAY,
@@ -95,9 +69,6 @@ impl Bridge {
         let status = response.status();
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
-            if bytes.len() + chunk.len() > 220000 {
-                return Err(unavailable());
-            }
             bytes.extend_from_slice(&chunk);
         }
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
@@ -240,10 +211,14 @@ impl AccountProfile {
 mod tests {
     use super::*;
     use axum::{routing::post, Json, Router};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::sync::Semaphore;
 
     #[tokio::test]
-    async fn request_pressure_is_bounded_without_blocking_cleanup() {
+    async fn concurrent_requests_do_not_have_a_rust_shell_quota() {
         let path =
             std::env::temp_dir().join(format!("rust-bridge-audit-{}.sock", std::process::id()));
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
@@ -272,23 +247,19 @@ mod tests {
         });
         let bridge = Bridge::new(path.clone()).unwrap();
         let mut calls = tokio::task::JoinSet::new();
-        for _ in 0..32 {
+        for _ in 0..40 {
             let bridge = bridge.clone();
             calls.spawn(async move { bridge.call("getProfile", json!({})).await });
         }
         tokio::time::timeout(Duration::from_secs(3), async {
-            while entered.load(Ordering::SeqCst) < 32 {
+            while entered.load(Ordering::SeqCst) < 40 {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap();
-        assert_eq!(
-            bridge.call("getProfile", json!({})).await.unwrap_err().0,
-            StatusCode::SERVICE_UNAVAILABLE
-        );
         assert!(bridge.call("closeGrain", json!({})).await.is_ok());
-        release.add_permits(33);
+        release.add_permits(41);
         while let Some(result) = calls.join_next().await {
             assert!(result.unwrap().is_ok());
         }

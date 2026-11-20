@@ -141,7 +141,6 @@ pub async fn native_login(
         "githubCancel",
     ]
     .contains(&input.operation.as_str())
-        || input.data.to_string().len() > 4096
     {
         return StatusCode::BAD_REQUEST.into_response();
     }

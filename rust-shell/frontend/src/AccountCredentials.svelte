@@ -81,13 +81,13 @@
       {#if verifying}
         <form onsubmit={verify}>
           <label for="verification-code">Verification code for {email}</label>
-          <TextInput id="verification-code" bind:value={code} autocomplete="one-time-code" maxlength={320} required disabled={model.pending} />
+          <TextInput id="verification-code" bind:value={code} autocomplete="one-time-code" required disabled={model.pending} />
           <div class="actions"><Button type="submit" disabled={model.pending || !code.trim()}>Verify email</Button><Button variant="secondary" disabled={model.pending} onclick={() => { verifying = false; code = ''; }}>Cancel</Button></div>
         </form>
       {:else}
         <form onsubmit={send}>
           <label for="account-email">Add an email address</label>
-          <TextInput id="account-email" type="email" bind:value={email} maxlength={320} required disabled={model.pending} />
+          <TextInput id="account-email" type="email" bind:value={email} required disabled={model.pending} />
           <label><input type="checkbox" bind:checked={allowLogin} disabled={model.pending} /> Allow this email to log in</label>
           <Button type="submit" disabled={model.pending || !email.trim()}>Send verification code</Button>
         </form>

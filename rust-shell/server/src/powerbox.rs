@@ -18,18 +18,10 @@ fn nonce() -> capnp::Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 pub(crate) fn query(input: capnp::text_list::Reader<'_>) -> capnp::Result<Vec<String>> {
-    if input.len() > 32 {
-        return Err(capnp::Error::failed("Too many query descriptors".into()));
-    }
     let result: Vec<String> = input
         .iter()
         .map(|s| Ok(s?.to_str()?.to_owned()))
         .collect::<capnp::Result<_>>()?;
-    if result.iter().any(|s| s.len() > 8192)
-        || result.iter().map(String::len).sum::<usize>() > 60000
-    {
-        return Err(capnp::Error::failed("Query too large".into()));
-    }
     Ok(result)
 }
 impl Request {
@@ -38,9 +30,6 @@ impl Request {
         mut path: Vec<String>,
         query: Vec<String>,
     ) -> Result<(Self, Value), crate::bridge::Error> {
-        if path.len() >= 4 {
-            return Err((StatusCode::BAD_REQUEST, "Too many nested requests".into()));
-        }
         path.push(nonce().map_err(|_| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -150,9 +139,6 @@ impl powerbox_request::Server for Request {
             Which::StartGithub(()) => ("githubStart", "key", key),
             Which::FinishGithub(()) => ("githubFinish", "key", key),
         };
-        if key.len() > 320 || value.len() > 2048 {
-            return Err(capnp::Error::failed("Selection too large".into()));
-        }
         let mut data = json!({"key":key,"mode":mode});
         data[field] = json!(value);
         match self.call("select", data).await {

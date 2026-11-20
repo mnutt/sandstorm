@@ -1,6 +1,6 @@
 export type Route = { page: 'install'; packageId?: string; url: string } | { page: 'apps'; appId?: string } | { page: 'notifications' | 'grains' | 'account' | 'login' | 'oauth-complete' | 'missing' } | { page: 'grain'; grainId: string; path: string } | { page: 'shared'; webkey: string; path: string };
 export function appPath(value: string): string | null {
-  if (!value || value.length > 2048 || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) return null;
+  if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) return null;
   const url = new URL(value, 'https://app.invalid');
   return url.origin === 'https://app.invalid' ? url.pathname + url.search + url.hash : null;
 }

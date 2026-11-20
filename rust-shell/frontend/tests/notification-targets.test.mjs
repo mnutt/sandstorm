@@ -6,10 +6,11 @@ test('notification destinations preserve app paths without escaping the grain ro
   assert.equal(nativeNotificationPath({grainId:'grain-1'}),'/grain/grain-1');
   assert.equal(nativeNotificationPath({grainId:'grain-1',path:'/folder/document?mode=read#comment'}),'/grain/grain-1/folder/document?mode=read#comment');
   assert.equal(nativeNotificationPath({appUpdates:{app:{packageId:'unused'}}}),'/install');
-  for (const path of ['../../admin','%2e%2e/other','../other','a\\b','x\n','x'.repeat(2049),42]) {
+  assert.equal(nativeNotificationPath({grainId:'grain-1',path:'x'.repeat(4096)}), '/grain/grain-1/' + 'x'.repeat(4096));
+  for (const path of ['../../admin','%2e%2e/other','../other','a\\b','x\n',42]) {
     assert.equal(nativeNotificationPath({grainId:'grain-1',path}),'');
   }
-  for (const row of [{admin:{action:'/apps'}},{referral:true},{grainId:'../other'},{grainId:'x'.repeat(129)},{}]) {
+  for (const row of [{admin:{action:'/apps'}},{referral:true},{grainId:'../other'},{}]) {
     assert.equal(nativeNotificationPath(row),'');
   }
 });

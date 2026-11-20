@@ -12,7 +12,7 @@ export async function probe() {
   finally {conn.shutdown();ws.close();}
 }
 
-// Run only against the isolated test server. Neither attack has a valid webkey.
+// An invalid reply must close; a burst of valid bootstraps must remain connected.
 export async function attack(kind: 'reply' | 'flood') {
   const ws = new WebSocket(location.origin.replace('https:', 'wss:') + '/shared-rpc');
   await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = () => reject(new Error('connect')); });

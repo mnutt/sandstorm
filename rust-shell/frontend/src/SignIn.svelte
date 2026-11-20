@@ -66,8 +66,8 @@
   {#if options?.email}
     <form onsubmit={event => {event.preventDefault(); void signIn(sent ? 'email' : 'sendEmail',sent ? {email,code} : {email});}}>
       <h3>Email</h3>
-      <label for="sign-in-email">Email address</label><TextInput id="sign-in-email" type="email" bind:value={email} required maxlength={320} disabled={pending || sent} autocomplete="email" />
-      {#if sent}<label for="sign-in-code">One-time code</label><TextInput id="sign-in-code" bind:value={code} required maxlength={320} autocomplete="one-time-code" disabled={pending} />{/if}
+      <label for="sign-in-email">Email address</label><TextInput id="sign-in-email" type="email" bind:value={email} required disabled={pending || sent} autocomplete="email" />
+      {#if sent}<label for="sign-in-code">One-time code</label><TextInput id="sign-in-code" bind:value={code} required autocomplete="one-time-code" disabled={pending} />{/if}
       <div><Button type="submit" disabled={pending}>{sent ? 'Sign in' : 'Send sign-in code'}</Button>{#if sent}<Button variant="secondary" disabled={pending} onclick={() => {sent=false;code='';}}>Change email</Button>{/if}</div>
     </form>
   {/if}

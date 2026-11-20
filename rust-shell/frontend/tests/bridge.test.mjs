@@ -176,13 +176,12 @@ test('idle watch enforces revocation and releases its observers', async () => {
   assert.equal(f.active, 0);
 });
 
-test('watch admission is bounded and canceled requests release capacity', async () => {
+test('more than 32 watches are admitted and cancellation releases observers', async () => {
   const f = await watchFixture();
   const controller = new AbortController();
-  const pending = Array.from({ length: 32 }, () => assert.rejects(
+  const pending = Array.from({ length: 40 }, () => assert.rejects(
     f.bridge.handle('watch', { token: f.token, after: f.initial.version }, controller.signal), /disconnected/));
-  await until(() => f.active === 32);
-  await assert.rejects(f.bridge.handle('watch', { token: f.token, after: f.initial.version }), { status: 503 });
+  await until(() => f.active === 40);
   controller.abort();
   await Promise.all(pending);
   assert.equal(f.active, 0);
@@ -246,7 +245,7 @@ test('durable linked sessions survive restart without persisting grants or raw t
   assert.equal(await store.count(), 0);
 });
 
-test('persisted-session admission remains bounded across concurrent exchanges', async () => {
+test('concurrent exchanges can exceed 1024 persisted sessions', async () => {
   const { memorySessionStore } = await import('../../../shell/imports/server/rust-shell-session-store.mjs');
   const store = memorySessionStore();
   for (let i = 0; i < 1023; ++i) await store.put(String(i), { expires: Date.now() + 60000 });
@@ -255,9 +254,8 @@ test('persisted-session admission remains bounded across concurrent exchanges', 
   const state = 'd'.repeat(64);
   const codes = await Promise.all([bridge.issue('alice', 'hash', state), bridge.issue('alice', 'hash', state)]);
   const results = await Promise.allSettled(codes.map(code => bridge.handle('exchange', { code, state })));
-  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-  assert.equal(results.find(result => result.status === 'rejected').reason.status, 503);
-  assert.equal(await store.count(), 1024);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 2);
+  assert.equal(await store.count(), 1025);
 });
 
 test('grain creation is account-scoped, bounded and revalidates before committing', async () => {
@@ -307,7 +305,7 @@ test('grain creation is account-scoped, bounded and revalidates before committin
   assert.equal(commits,1);
 });
 
-test('profile operations use linked identity, bound input, and recheck authority before writes and reads', async () => {
+test('profile operations use linked identity, validate input, and recheck authority before writes and reads', async () => {
   let authorized = true;
   let writes = 0;
   let blockWrite, blockRead;
@@ -328,7 +326,7 @@ test('profile operations use linked identity, bound input, and recheck authority
   const {token} = await bridge.handle('exchange',{code,state});
   const input = {token,accountId:'bob',profile:{name:'Updated',handle:'alice',pronoun:'neutral'}};
   assert.equal((await bridge.handle('updateProfile',input)).name,'Updated');
-  for (const patch of [{handle:'INVALID'},{pronoun:'invalid'},{name:'a'.repeat(161)},{isAdmin:true}]) {
+  for (const patch of [{handle:'INVALID'},{pronoun:'invalid'},{isAdmin:true}]) {
     await assert.rejects(bridge.handle('updateProfile',{...input,profile:{...input.profile,...patch}}),{status:400});
   }
   let release;
@@ -368,7 +366,7 @@ test('installation binds account, validates operations and fences writes after r
   const {token} = await bridge.handle('exchange',{code,state:nonce});
   const call = (operation, data = {}) => bridge.handle('install',{token,accountId:'bob',operation,data});
   assert.deepEqual(await call('status',{packageId:'a'.repeat(32)}),{status:'ready'});
-  for (const [operation,data] of [['unknown',{}],['confirm',{accountId:'bob'}],['status',{url:'x'.repeat(2049)}],['upload',null]]) {
+  for (const [operation,data] of [['unknown',{}],['confirm',{accountId:'bob'}],['upload',null]]) {
     await assert.rejects(call(operation,data),{status:400});
   }
   assert.equal(calls,1);
@@ -460,4 +458,25 @@ test('account settings bind identity, validate fields, serialize writes, and rec
   authorized = false; release();
   await assert.rejects(pending,{status:401});
   assert.equal(writes,1);
+});
+
+test('private bridge accepts request and response bodies above the prototype ceilings', async () => {
+  const { bridgeHandler } = await import('../../../shell/imports/server/rust-shell-bridge-core.mjs');
+  const { Readable } = await import('node:stream');
+  const { EventEmitter } = await import('node:events');
+  const input = { value: 'x'.repeat(300000) };
+  const output = { value: 'y'.repeat(500000) };
+  const request = Readable.from([Buffer.from(JSON.stringify(input))]);
+  request.method = 'POST';
+  request.url = '/accountSettings';
+  const response = new EventEmitter();
+  response.setHeader = () => {};
+  let result;
+  response.end = body => { result = JSON.parse(body); };
+  await bridgeHandler({handle: async (action, data) => {
+    assert.equal(action, 'accountSettings');
+    assert.deepEqual(data, input);
+    return output;
+  }})(request, response);
+  assert.deepEqual(result, output);
 });

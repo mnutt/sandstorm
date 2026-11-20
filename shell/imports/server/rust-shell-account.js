@@ -14,7 +14,6 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   const account = await Meteor.users.findOneAsync(accountId);
   if (!account?.loginCredentials) throw new Meteor.Error(403, "Account unavailable.");
   const ids = SandstormDb.getUserCredentialIds(account);
-  if (ids.length > 100) fail("Too many linked credentials.");
   let oauth;
   const binding = 'link:'+accountId;
   if (operation === 'githubStart') {
@@ -71,7 +70,7 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
     emailEnabled: !!Accounts.loginServices.email.isEnabled(),
     emails: await SandstormDb.getUserEmailsAsync(current),
     credentials: credentials.map(credential => ({id: credential._id,
-      service: SandstormDb.getServiceName(credential), name: String(SandstormDb.getLoginId(credential)).slice(0, 256),
+      service: SandstormDb.getServiceName(credential), name: String(SandstormDb.getLoginId(credential)),
       pictureUrl: rustUserPicture(credential), login: current.loginCredentials.some(item => item.id === credential._id)})),
   };
 }

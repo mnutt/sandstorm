@@ -36,7 +36,6 @@ export function createSharedLeases({ inspect, open, keep, close, account, now = 
     async open(input, signal) {
       if (!validScope(input.scope) || !validWebkey(input.webkey) || typeof input.revealIdentity !== 'boolean') throw fail(400, 'Invalid shared session request.');
       if (records.has(input.scope)) throw fail(409, 'A shared session is already open.');
-      if (records.size >= 32) throw fail(503, 'Too many shared sessions.');
       const record = {scope:input.scope, webkey:input.webkey, expires:now()+45000, handle:null, closed:false};
       records.set(input.scope,record);
       try {

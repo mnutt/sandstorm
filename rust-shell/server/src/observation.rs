@@ -31,10 +31,10 @@ impl Scope {
                 .upgrade()
                 .is_some_and(|o| o.cleanup.borrow().is_some())
         });
-        if self.0.closed.get() || observations.len() >= 8 {
+        if self.0.closed.get() {
             cleanup();
             return Err(capnp::Error::overloaded(
-                "Too many active observations or connection closed".into(),
+                "Observation connection closed".into(),
             ));
         }
         let (closed, _) = watch::channel(None);
@@ -124,15 +124,14 @@ mod tests {
     use std::{cell::Cell, time::Duration};
 
     #[tokio::test]
-    async fn connection_close_cancels_retained_observations_and_bounds_admission() {
+    async fn connection_close_cancels_all_retained_observations() {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let scope = Scope::default();
                 let mut clients = Vec::new();
-                for _ in 0..8 {
+                for _ in 0..40 {
                     clients.push(scope.spawn(std::future::pending(), || {}).unwrap());
                 }
-                assert!(scope.spawn(std::future::pending(), || {}).is_err());
                 clients.pop();
                 let cleaned = Rc::new(Cell::new(false));
                 let cleanup = cleaned.clone();

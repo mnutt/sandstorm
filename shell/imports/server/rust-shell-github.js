@@ -14,7 +14,7 @@ async function discard(key, request) {
 }
 
 export async function startGithub(binding, scopes = ['user:email']) {
-  if (!Array.isArray(scopes) || scopes.length > 32 || scopes.some(scope => typeof scope !== 'string' || !/^[a-zA-Z0-9_:.-]{1,128}$/.test(scope))) fail('Invalid GitHub scopes.');
+  if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string' || !/^[a-zA-Z0-9_:.-]+$/.test(scope))) fail('Invalid GitHub scopes.');
   if (!githubEnabled()) throw new Meteor.Error(403,'GitHub sign-in is disabled.');
   const config = await ServiceConfiguration.configurations.findOneAsync({service:'github'});
   if (!config?.clientId) throw new Meteor.Error(503,'GitHub is not configured.');
@@ -22,7 +22,6 @@ export async function startGithub(binding, scopes = ['user:email']) {
   if (!origin || new URL(origin).protocol !== 'https:') throw new Meteor.Error(503,'Rust shell is unavailable.');
   for (const [key,request] of requests) if (request.expires <= Date.now() || request.binding === binding) await discard(key,request);
   // No await between admission and insertion: concurrent starts cannot exceed the bound.
-  if (requests.size >= 64) throw new Meteor.Error(503,'Too many pending authorizations.');
   const key = Crypto.randomBytes(32).toString('hex');
   requests.set(key,{binding,expires:Date.now()+lifetime,origin});
   const url = new URL('https://github.com/login/oauth/authorize');

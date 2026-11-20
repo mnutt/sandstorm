@@ -87,7 +87,7 @@
       {#if !snapshot.private}<p>This grain uses legacy public access. Revoking a link does not make it private.</p>{/if}
       <Tabs.Content value="share">
         <form onsubmit={create}>
-          <label>Link label<TextInput bind:value={label} maxlength={160} placeholder="For example: Project team" disabled={busy || loading} /></label>
+          <label>Link label<TextInput bind:value={label} placeholder="For example: Project team" disabled={busy || loading} /></label>
           <label>Permissions<NativeSelect aria-label="Permissions" bind:value={role} disabled={busy || loading}>
             <option value="none">App default</option>
             {#each snapshot.roles as item}<option value={item.key}>{item.title}</option>{/each}
@@ -129,7 +129,7 @@
                 {#if editing?.id === grant.id}<tr class="expanded"><td colspan="3">
                   <form onsubmit={event => { event.preventDefault(); void update(grant); }}>
                     <div class="edit-fields">
-                      <label>Edit label<TextInput bind:value={editLabel} maxlength={160} disabled={busy} /></label>
+                      <label>Edit label<TextInput bind:value={editLabel} disabled={busy} /></label>
                       <label>Edit permissions<NativeSelect aria-label="Edit permissions" bind:value={editRole} disabled={busy}>
                         {#if grant.role === 'custom'}<option value="custom">Custom permissions (unchanged)</option>{/if}
                         <option value="none">App default</option>

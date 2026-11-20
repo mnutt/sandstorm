@@ -75,8 +75,8 @@
   async function accept(result:PowerboxState) {
     if (!alive) return;
     if (result.status === 'complete') {
-      if (typeof result.token !== 'string' || result.token.length > 16384 ||
-        (result.descriptor !== undefined && (typeof result.descriptor !== 'string' || result.descriptor.length > 65536))) throw new Error('Invalid Powerbox result.');
+      if (typeof result.token !== 'string' ||
+        (result.descriptor !== undefined && (typeof result.descriptor !== 'string'))) throw new Error('Invalid Powerbox result.');
       done({token:result.token,descriptor:result.descriptor});
     } else if (result.status === 'provider') {
       const target = new URL(result.url);
@@ -159,7 +159,7 @@
     {:else if busy}<LoadingStatus label="Loading connection options…" />
     {:else if pasting}
       <form onsubmit={paste}>
-        <label>API capability link<TextInput type="url" bind:value={webkey} maxlength={16384} autocomplete="off" spellcheck={false} placeholder="https://api.example.com/#token" disabled={!!error} /></label>
+        <label>API capability link<TextInput type="url" bind:value={webkey} autocomplete="off" spellcheck={false} placeholder="https://api.example.com/#token" disabled={!!error} /></label>
         <p class="hint">Paste an API capability link from this Sandstorm server. This gives the requesting app access through that link.</p>
         <div class="actions"><Button type="submit" disabled={!!error || !webkey.trim()}>Connect using link</Button><Button variant="secondary" disabled={!!error} onclick={() => { pasting = false; webkey = ''; }}>Back</Button></div>
       </form>
@@ -173,8 +173,8 @@
         <p class="hint">This app will receive access to the selected grain. It cannot receive permissions you do not have.</p>
       {/if}
       {#if selected.emailInput}
-        {#if verifyingEmail}<label>Verification code for {email}<TextInput bind:value={code} autocomplete="one-time-code" maxlength={320} /></label>
-        {:else}<label>Email address<TextInput type="email" bind:value={email} maxlength={320} /></label>{/if}
+        {#if verifyingEmail}<label>Verification code for {email}<TextInput bind:value={code} autocomplete="one-time-code" /></label>
+        {:else}<label>Email address<TextInput type="email" bind:value={email} /></label>{/if}
         <p class="hint">Verify an email address to share it with this app. This does not enable email login.</p>
       {/if}
       {#if selected.urlInput}<label>URL<TextInput type="url" bind:value={url} placeholder="https://example.com/" /></label>{/if}

@@ -80,15 +80,15 @@ test('cancellation and logout during session creation destroy the late session',
   }
 });
 
-test('grain scope admission is bounded and logout frees capacity', async () => {
+test('more than eight grains can open and logout closes all of them', async () => {
   const f = await fixture();
-  for (let i = 0; i < 8; ++i) await f.call('openGrain', { grainId: 'allowed', scope: i.toString(16).padStart(64, '0') });
-  await assert.rejects(f.call('openGrain', { grainId: 'allowed' }), { status: 503 });
+  for (let i = 0; i < 40; ++i) await f.call('openGrain', { grainId: 'allowed', scope: i.toString(16).padStart(64, '0') });
+  assert.equal(f.live.size, 40);
   await f.call('logout');
   assert.equal(f.live.size, 0);
 });
 
-test('template issuance is scoped, bounded and rolls back a token created after close', async () => {
+test('template issuance has no lifetime quota and rolls back a token created after close', async () => {
   let created = 0;
   let revoked = 0;
   let release;
@@ -96,9 +96,8 @@ test('template issuance is scoped, bounded and rolls back a token created after 
     revokeTemplate: async () => { ++revoked; } });
   const view = await f.call('openGrain', { grainId: 'allowed' });
   await assert.rejects(f.call('renderTemplate', { lease: 'b'.repeat(64), options: {} }), { status: 403 });
-  for (let i = 0; i < 8; ++i) assert.equal((await f.call('renderTemplate', { lease: view.lease, options: {} })).token, 'secret');
-  await assert.rejects(f.call('renderTemplate', { lease: view.lease, options: {} }), { status: 429 });
-  assert.equal(created, 8);
+  for (let i = 0; i < 40; ++i) assert.equal((await f.call('renderTemplate', { lease: view.lease, options: {} })).token, 'secret');
+  assert.equal(created, 40);
   const late = await fixture({ template: () => new Promise(resolve => { release = () => resolve({ id: 9, token: 'late', host: 'api.test' }); }),
     revokeTemplate: async () => { ++revoked; } });
   const opened = await late.call('openGrain', { grainId: 'allowed' });

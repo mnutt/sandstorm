@@ -39,8 +39,8 @@ export class PowerboxChooser {
       if (!result || typeof result !== 'object' || result.rpcId !== pending.request.rpcId) return;
       if (result.canceled === true) this.finish({ rpcId: result.rpcId, canceled: true });
       else if (typeof result.error === 'string') this.finish({ rpcId: result.rpcId, error: result.error });
-      else if (typeof result.token === 'string' && result.token.length <= 16384 &&
-          (result.descriptor === undefined || (typeof result.descriptor === 'string' && result.descriptor.length <= 65536))) {
+      else if (typeof result.token === 'string' &&
+          (result.descriptor === undefined || (typeof result.descriptor === 'string'))) {
         this.finish({ rpcId: result.rpcId, token: result.token, descriptor: result.descriptor });
       }
     }

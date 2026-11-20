@@ -1,5 +1,5 @@
 use crate::shell_capnp::shell;
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 use tokio::sync::watch;
 
 #[derive(Clone, PartialEq)]
@@ -28,7 +28,6 @@ struct Projection {
 pub struct Shell {
     interop: Rc<crate::interop::Link>,
     state: watch::Sender<Projection>,
-    watching: Rc<Cell<bool>>,
     pub observations: crate::observation::Scope,
     session: Option<crate::bridge::Session>,
     version: String,
@@ -96,7 +95,6 @@ impl Shell {
             grain,
             interop,
             state,
-            watching: Rc::new(Cell::new(false)),
             observations: crate::observation::Scope::default(),
             session,
             version,
@@ -184,9 +182,6 @@ impl shell::Server for Shell {
         let page = query.get_page();
         let search = query.get_search()?.to_str()?.to_owned();
         let app_id = query.get_app_id()?.to_str()?.to_owned();
-        if page > 1_000_000 || search.len() > 160 || app_id.len() > 128 {
-            return Err(capnp::Error::failed("Invalid grain query".into()));
-        }
         let sort = match query.get_sort()? {
             crate::shell_capnp::GrainSort::Recent => "recent",
             crate::shell_capnp::GrainSort::Title => "title",
@@ -249,9 +244,6 @@ impl shell::Server for Shell {
     ) -> capnp::Result<()> {
         let input = params.get()?;
         let page = input.get_page();
-        if page > 1_000_000 {
-            return Err(capnp::Error::failed("Invalid page".into()));
-        }
         let observer = input.get_observer()?;
         let session = self
             .session
@@ -360,7 +352,7 @@ impl shell::Server for Shell {
         let input = params.get()?;
         let key = input.get_key()?.to_str()?;
         let operation = input.get_operation()?.to_str()?;
-        if key.is_empty() || key.len() > 128 || !["details", "setStats"].contains(&operation) {
+        if key.is_empty() || !["details", "setStats"].contains(&operation) {
             return Err(capnp::Error::failed(
                 "Invalid notification operation".into(),
             ));
@@ -424,7 +416,6 @@ impl shell::Server for Shell {
             "allowLogin",
         ]
         .contains(&operation)
-            || data.len() > 2048
         {
             return Err(capnp::Error::failed(
                 "Invalid account settings request".into(),
@@ -458,7 +449,6 @@ impl shell::Server for Shell {
             "catalog", "status", "download", "retry", "confirm", "upgrade", "upload",
         ]
         .contains(&operation)
-            || data.len() > 3072
         {
             return Err(capnp::Error::failed("Invalid installation request".into()));
         }
@@ -515,9 +505,6 @@ impl shell::Server for Shell {
         let name = input.get_name()?.to_str()?;
         let handle = input.get_handle()?.to_str()?;
         let pronoun = input.get_pronoun()?.to_str()?;
-        if name.len() > 640 || handle.len() > 64 || pronoun.len() > 16 {
-            return Err(capnp::Error::failed("Invalid profile".into()));
-        }
         let value = session
             .call(
                 "updateProfile",
@@ -545,9 +532,6 @@ impl shell::Server for Shell {
         let input = params.get()?;
         let page = input.get_page();
         let app_id = input.get_app_id()?.to_str()?;
-        if page > 1_000_000 || app_id.len() > 128 {
-            return Err(capnp::Error::failed("Invalid app page".into()));
-        }
         let value = session
             .call("listApps", serde_json::json!({"page":page,"appId":app_id}))
             .await
@@ -583,11 +567,6 @@ impl shell::Server for Shell {
         let input = params.get()?;
         let action = input.get_action_id()?.to_str()?;
         let title = input.get_title()?.to_str()?;
-        if action.len() > 128 || title.len() > 640 {
-            return Err(capnp::Error::failed(
-                "Invalid grain creation request".into(),
-            ));
-        }
         let value = session
             .call(
                 "createGrain",
@@ -612,9 +591,6 @@ impl shell::Server for Shell {
             .as_ref()
             .ok_or_else(|| capnp::Error::failed("Grains require a signed-in account".into()))?;
         let grain_id = params.get()?.get_grain_id()?.to_str()?;
-        if grain_id.len() > 128 {
-            return Err(capnp::Error::failed("Invalid grain ID".into()));
-        }
         let grain_id = grain_id.to_owned();
         let (view, session) = scope.open(grain_id).await?;
         let mut out = results.get();
@@ -636,9 +612,6 @@ impl shell::Server for Shell {
         _: shell::DismissRealResults,
     ) -> capnp::Result<()> {
         let key = params.get()?.get_key()?.to_str()?;
-        if key.len() > 1024 {
-            return Err(capnp::Error::failed("Invalid notification ID".into()));
-        }
         let key = key.to_owned();
         self.mutate_real("dismiss", serde_json::json!({ "id": key }))
             .await
@@ -674,13 +647,7 @@ impl shell::Server for Shell {
         mut results: shell::WatchResults,
     ) -> capnp::Result<()> {
         let observer = params.get()?.get_observer()?;
-        if self.watching.replace(true) {
-            return Err(capnp::Error::failed(
-                "one subscription per connection".into(),
-            ));
-        }
         let mut receiver = self.state.subscribe();
-        let watching = self.watching.clone();
         let subscription = self.observations.spawn(
             async move {
                 loop {
@@ -745,7 +712,7 @@ impl shell::Server for Shell {
                     }
                 }
             },
-            move || watching.set(false),
+            || {},
         )?;
         results.get().set_subscription(subscription);
         Ok(())
@@ -783,11 +750,6 @@ impl shell::Server for Shell {
         if self.session.is_some() {
             return Err(capnp::Error::failed(
                 "Test notifications are disabled for real accounts".into(),
-            ));
-        }
-        if self.state.borrow().entries.len() >= 50 {
-            return Err(capnp::Error::failed(
-                "fixture limit reached (50 notifications)".into(),
             ));
         }
         self.state.send_modify(|state| {

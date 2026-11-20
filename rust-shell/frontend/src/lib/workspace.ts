@@ -40,10 +40,6 @@ export class GrainWorkspace {
   async open(id: string, path: string, menu: Grain[]) {
     this.selected = id;
     if (this.tabs.has(id)) { this.publish(); return; }
-    if (this.tabs.size >= 8) {
-      this.changed({grainError:'Close a grain before opening another (8 open maximum).'});
-      return;
-    }
     const tab: Tab = { grain: null, opening: true, service: undefined! };
     tab.service = new GrainService(this.connection, patch => {
       if (this.tabs.get(id) !== tab) return;

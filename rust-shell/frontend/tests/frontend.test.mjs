@@ -167,7 +167,7 @@ test('message parsers reject malformed structured clones without throwing out of
   assert.deepEqual(shareData({ pathname: '/document', hash: '#a' }), { pathname: '/document', hash: '#a' });
 });
 
-test('owner title subscriptions update once, are bounded, and clear at frame teardown', () => {
+test('owner title subscriptions update once, have no quota, and clear at frame teardown', () => {
   const replies = [];
   const titles = new GrainTitleSubscriptions('Owner title', reply => replies.push(reply));
   titles.request('once', {});
@@ -179,10 +179,10 @@ test('owner title subscriptions update once, are bounded, and clear at frame tea
   for (let i = 0; i < 50; ++i) titles.request(i, {}, true);
   replies.length = 0;
   titles.update('Next');
-  assert.equal(replies.length, 32);
+  assert.equal(replies.length, 51);
   titles.clear();
   titles.update('Closed');
-  assert.equal(replies.length, 32);
+  assert.equal(replies.length, 51);
 });
 
 test('native sharing paths cannot escape the shared route', () => {

@@ -144,7 +144,7 @@ impl api::installer::Server for Installer {
         let input = params.get()?;
         let id = input.get_package_id()?.to_str()?;
         let url = input.get_url()?.to_str()?;
-        if id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()) || url.len() > 2048 {
+        if id.len() != 32 || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
             return Err(capnp::Error::failed("Invalid package".into()));
         }
         results
@@ -154,7 +154,6 @@ impl api::installer::Server for Installer {
                 observations: self.1.clone(),
                 id: id.to_owned(),
                 url: url.to_owned(),
-                watching: std::cell::Cell::new(false),
             }));
         Ok(())
     }
@@ -397,7 +396,6 @@ struct Installation {
     session: bridge::Session,
     id: String,
     url: String,
-    watching: std::cell::Cell<bool>,
 }
 impl Installation {
     async fn call(&self, operation: &str) -> Result<Value, bridge::Error> {
@@ -454,11 +452,6 @@ impl api::installation::Server for Installation {
         mut results: api::installation::WatchResults,
     ) -> capnp::Result<()> {
         let observer = params.get()?.get_observer()?;
-        if self.watching.replace(true) {
-            return Err(capnp::Error::failed(
-                "Already observing this installation".into(),
-            ));
-        }
         let owner = self.clone();
         let scope = self.observations.clone();
         let subscription = scope.spawn(
@@ -486,7 +479,7 @@ impl api::installation::Server for Installation {
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                 }
             },
-            move || self.watching.set(false),
+            || {},
         )?;
         results.get().set_subscription(subscription);
         Ok(())

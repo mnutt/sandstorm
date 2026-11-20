@@ -53,9 +53,9 @@
       {/key}
       <form onsubmit={save} oninput={() => { dirty = true; }}>
         <label for="profile-name">Display name</label>
-        <TextInput id="profile-name" bind:value={name} maxlength={160} required disabled={profile.saving} />
+        <TextInput id="profile-name" bind:value={name} required disabled={profile.saving} />
         <label for="profile-handle">Handle</label>
-        <TextInput id="profile-handle" bind:value={handle} pattern="[a-z_][a-z0-9_]*" maxlength={64} required disabled={profile.saving} aria-describedby="handle-help" />
+        <TextInput id="profile-handle" bind:value={handle} pattern="[a-z_][a-z0-9_]*" required disabled={profile.saving} aria-describedby="handle-help" />
         <p id="handle-help">Start with a lowercase letter or underscore. Use lowercase letters, numbers, and underscores.</p>
         <label for="profile-pronoun">Pronouns</label>
         <NativeSelect id="profile-pronoun" bind:value={pronoun} disabled={profile.saving}>

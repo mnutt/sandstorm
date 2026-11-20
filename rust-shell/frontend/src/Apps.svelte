@@ -127,7 +127,7 @@
           {#each selectedApp?.actions || actions as action (action.key)}<option value={action.key}>{action.title}</option>{/each}
         </NativeSelect>
         <label for="new-grain-title">Grain title</label>
-        <TextInput id="new-grain-title" bind:value={title} maxlength={160} required disabled={creating || uncertain} />
+        <TextInput id="new-grain-title" bind:value={title} required disabled={creating || uncertain} />
         <div class="form-actions"><Button type="submit" disabled={creation.status !== 'idle' || !selected || !title.trim()}>{creating ? 'Creating grain…' : 'Create grain'}</Button>
         <Button variant="secondary" disabled={creating || uncertain} onclick={() => { selected = ''; }}>Cancel</Button></div>
       </form>

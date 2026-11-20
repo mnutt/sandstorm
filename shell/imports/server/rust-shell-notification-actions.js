@@ -26,19 +26,19 @@ export async function rustNotificationAction(accountId, key, operation, enabled,
     const serialized = latest ? JSON.stringify(latest,null,2) : "";
     await checkAuthAsync(db,accountId,undefined);
     return {kind,enabled:typeof preference?.value === "boolean" ? preference.value : null,
-      sample:serialized.length <= 32768 ? serialized : "",sampleLimited:serialized.length > 32768};
+      sample:serialized,sampleLimited:false};
   }
   if (kind === "referrals") {
     const user = await Meteor.users.findOneAsync(accountId,{fields:{referredAccountIds:1}});
     const ids = [...new Set(user?.referredAccountIds || [])];
     const [pending,completed] = await Promise.all([
       Meteor.users.find({referredBy:accountId,referredByComplete:{$exists:false},type:"account","profile.name":{$exists:true}},
-        {fields:{profile:1},sort:{"profile.name":1,_id:1},limit:101}).fetchAsync(),
-      Meteor.users.find({_id:{$in:ids.slice(0,100)}},{fields:{profile:1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
+        {fields:{profile:1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
+      Meteor.users.find({_id:{$in:ids}},{fields:{profile:1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
     ]);
     const person = row => ({name:String(row.profile?.name || "Unnamed account").slice(0,160),pictureUrl:rustUserPicture(row)});
-    return {kind,enabled:!!db.isReferralEnabled(),pending:pending.slice(0,100).map(person),completed:completed.map(person),
-      limited:pending.length > 100 || ids.length > 100};
+    return {kind,enabled:!!db.isReferralEnabled(),pending:pending.map(person),completed:completed.map(person),
+      limited:false};
   }
   if (kind === "identity") return {kind};
   throw new Meteor.Error(400,"This notification has no native action.");

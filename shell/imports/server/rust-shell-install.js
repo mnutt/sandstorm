@@ -8,7 +8,7 @@ const fail = message => { throw new Meteor.Error(400, message); };
 const httpUrl = value => {
   let url;
   try { url = new URL(value); } catch { fail("Invalid package URL."); }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || value.length > 2048) fail("Invalid package URL.");
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) fail("Invalid package URL.");
   return url.href;
 };
 
@@ -19,10 +19,10 @@ export async function rustInstall(accountId, operation, input, beforeWrite) {
   if (operation === "catalog") {
     const market = await db.collections.settings.findOneAsync("appMarketUrl");
     const index = await db.collections.settings.findOneAsync("appIndexUrl");
-    const installed = await db.collections.userActions.find({userId:accountId}, {limit:101,fields:{appId:1,appVersion:1}}).fetchAsync();
+    const installed = await db.collections.userActions.find({userId:accountId}, {fields:{appId:1,appVersion:1}}).fetchAsync();
     const versions = new Map();
     for (const row of installed) versions.set(row.appId, Math.max(versions.get(row.appId) ?? -1, row.appVersion));
-    const rows = await db.collections.appIndex.find({_id:{$in:[...versions.keys()]}}, {limit:100}).fetchAsync();
+    const rows = await db.collections.appIndex.find({_id:{$in:[...versions.keys()]}}).fetchAsync();
     return {permissions, marketUrl:httpUrl(market?.value || "https://apps.sandstorm.io"), updates:rows.filter(row => row.versionNumber > versions.get(row._id)).map(row => ({
       packageId:row.packageId, title:text(row.name), version:text(row.version),
       url:httpUrl((index?.value || "https://app-index.sandstorm.io") + "/packages/" + row.packageId),

@@ -184,7 +184,7 @@ fragment; app-update links open the native installer. Usage-statistics choices,
 referral details, and account-identity notices open native dialogs. Statistics
 reads and writes require current administrator authority; the fixed reportStats
 setting and notice cleanup match the legacy admin UI. Referral projections include
-only the current account’s pending/completed names, bounded to 100 each.
+only the current account’s pending/completed names.
 Other unsupported destinations retain an explicit main-shell link. Native paths are
 projected separately from legacy URLs and validated to stay within the specified
 grain route. Following a notification does not grant grain access: normal session
@@ -203,7 +203,7 @@ is absent or fails to load. App icons and localized notification copy remain to 
 There is no test-notification button in this mode. Standalone runs without
 `RUST_SHELL_BRIDGE_SOCKET` retain the isolated fixture UI.
 
-The private bridge uses bounded JSON HTTP over a Unix socket. It exposes only
+The private bridge uses JSON HTTP over a Unix socket. It exposes only
 session exchange/validation and account-scoped notification operations; it never
 accepts browser-provided account IDs or Mongo selectors. Browser RPC remains
 Cap'n Proto. Authentication failures close active RPC connections and clear old
@@ -211,7 +211,7 @@ UI state on reconnect. While idle, authority is checked every second without
 rebuilding notification projections; account changes also wake the request.
 
 The internal `watch` operation is a bounded long-poll, with one request in flight
-per Rust connection and at most 32 active watches in Meteor. Observers are attached
+per observation, with no bridge-wide watch quota. Observers are attached
 before reading a snapshot. A content hash detects changes between requests, and
 a dirty flag catches writes during a read without accumulating an event queue.
 Every returned projection is reauthorized. Unchanged requests return after 20
@@ -276,9 +276,7 @@ Login methods and email still link to the canonical `/account` page in the main 
 a browser-supplied account ID. Updates use the same `updateProfileForUser` helper
 as Meteor's `updateProfile` method, preserving handle/pronoun validation and
 signup completion. Only these three text profile fields are writable through `updateProfile`; picture
-uploads use their separate one-use credential. The spike bounds
-names to 160 characters and handles to 64; it admits one update per account and
-eight across the bridge, and rechecks login/cancellation immediately before writes.
+uploads use their separate one-use credential. The bridge serializes updates per account and rechecks login/cancellation immediately before writes.
 Profile reads are reauthorized before returning. Credentials and other profile
 fields are preserved.
 
@@ -306,7 +304,7 @@ account creation, and login-token ownership remain in Meteor. Rust receives the
 linked session and sets its existing HttpOnly cookie; passwords and credential
 resume tokens are never persisted in frontend state or browser storage.
 
-GitHub uses the existing configured callback URL. A bounded, expiring, server-side
+GitHub uses the existing configured callback URL. A expiring, server-side
 request map binds each flow to its Rust sign-in cookie, linked account, or provider
 session. Only those state tokens use the Rust callback adapter; other OAuth flows
 retain Meteor's handler. The callback retains the OAuth secret on the server and
@@ -337,7 +335,7 @@ and package from that account's installed action, then uses the same
 `createGrainForUser` implementation as the legacy `newGrain` method. Signup/demo,
 quota, and package checks retain their existing owner. The Rust bridge rechecks
 the linked login and request connection immediately before inserting the grain.
-It admits one in-flight creation per account and eight across the bridge.
+It admits one in-flight creation per account to prevent overlapping writes.
 
 Creation is never automatically retried. A lost response may mean the grain was
 created; the UI disables another submission and asks the user to check their
@@ -370,10 +368,9 @@ session response supplies the frame URL.
 `openGrain()` returns a `GrainSession` capability. Explicit close, capability
 release and WebSocket disconnect close the UI session. Navigation hides established
 iframes without unloading them; their independent sessions and app state stay live.
-Each tab has its own Meteor scope, bounded to eight per connection and linked login. Rust
+Each tab has its own Meteor scope. Rust
 renews its lease every 10 seconds; Meteor expires abandoned leases after 45
-seconds, checked every five seconds. Admission is limited to 32 leases globally
-and eight per linked login. Closing, logout, or cancellation while opening also
+seconds, checked every five seconds. Closing, logout, or cancellation while opening also
 cleans up a session that finishes creation late. Old session handles cannot close
 a replacement session. Closing removes the UI session record, never the grain.
 
@@ -404,13 +401,13 @@ frame continuity across both Rust and legacy title changes.
 Each grain exposes `GrainSession.whenClosed()` as a lifetime signal. A failed
 renewal invalidates only that lease, removes its iframe, and offers an explicit
 reopen; other grains keep their frame state. Renewals run concurrently across the
-bounded set of eight grains. Account revocation or transport failure still closes
+open grains. Account revocation or transport failure still closes
 all account-scoped sessions. Pending lifetime calls do not retain the lease.
 
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
 and `getGrainTitle` replies with optional `subscribe: true` updates. The app
-receives the owner title, never the recipient’s personal alias; up to 32 title
+receives the owner title, never the recipient’s personal alias; title
 subscriptions live with the frame. Live updates currently cover grains in the
 loaded menu. Sharing requests open a native shell dialog;
 `renderTemplate` uses an isolated shell-origin display (below). Powerbox requests
@@ -431,7 +428,7 @@ private bridge operations. Meteor rechecks the linked account, grain lease and
 canonical grain authorization before and after operations. Creation uses
 `SandstormPermissions.createNewApiToken`; edits share `updateApiTokenForAccount`
 with the legacy Meteor method. A canceled creation removes its late token. Calls
-are serialized per lease and issuance is capped at 32 links per lease. Mutations
+are serialized per lease, with no lifetime issuance quota. Mutations
 are never automatically replayed; an uncertain outcome asks the user to inspect
 existing links before retrying.
 
@@ -442,7 +439,7 @@ raw database documents. Other accounts' grants and child tokens are read-only;
 revoking a source link explicitly warns that downstream recipients are affected.
 This does not implement selective revocation of a person who can reuse a webkey.
 Metadata loads on open, after mutations, and with **Refresh sharing**; it is not a
-live subscription. Responses show at most 100 grants and 64 role definitions.
+live subscription. Responses include the full visible grant graph and role definitions.
 The old Meteor sharing route remains for compatibility, but the Rust UI no longer
 opens it. Public `SharedSession` capabilities still expose only `close`.
 
@@ -470,7 +467,7 @@ it cannot read account notifications/profile/grains or create API tokens. Shared
 views retain the app path and can stay mounted in background sidebar tabs. They do
 not redeem the token into permanent account access. Rename, sharing management,
 Powerbox and API-template issuance are not exposed through this guest interface.
-Public shared viewers use at most eight of the sixteen WebSocket slots. Unopened
+Shared viewers have no connection-count quota. Unopened
 connections expire after 30 seconds for guests or 120 seconds after a validated
 sign-in; active sessions renew their 45-second lease every ten seconds.
 
@@ -505,7 +502,7 @@ and built-in capabilities. Users can grant a UiView with selected permissions,
 open a provider app inside the dialog to choose an object, use an existing
 verified email/network capability, enter an HTTP(S) URL, or paste a local API
 capability link. New email verification and GitHub OAuth authorization are also native. Provider
-iframes can request nested native Powerbox choosers, with four levels at most.
+iframes can request nested native Powerbox choosers.
 Each child is bound to its provider session, not the outer requesting grain;
 closing a parent closes its children. Other OAuth providers and unsupported shell
 interactions retain **More options in main shell** as an explicit fallback.
@@ -516,8 +513,8 @@ five minutes, and serializes operations. Meteor holds the candidate records and
 provider session; the browser receives only bounded display metadata and option
 keys. Clients cannot supply a frontendRef object, provider grain ID, receiving
 grain ID, or session ID. Matching and issuance reuse the same exported functions
-as the legacy publication and methods. At most 64 candidates/32 roles per grain
-are projected, with a 160 KB projection budget.
+as the legacy publication and methods. All matching supported candidates and roles
+are projected without a Rust-shell count or byte quota.
 
 Provider sessions use the normal gateway's `powerboxRequest` machinery and the
 Rust shell's parent origin. The trusted shell polls for fulfillment once a second
@@ -558,7 +555,7 @@ cleared. Display options reuse the same token. HTML is displayed as text.
 
 The scoped `GrainSession` capability asks Meteor to create a token using the
 existing `createNewApiToken` permission path. The bridge checks linked-login
-and grain access, permits one issuance at a time and eight per grain lease, and
+and grain access, permits one issuance at a time, and
 revokes a late-created token if the lease closes or authorization ends. Tokens
 retain the existing five-minute unused expiry. Issued API access is separate
 from UI-session lifetime: an API token already copied and used remains subject
@@ -567,8 +564,8 @@ to the existing permission and revocation rules.
 The frontend coalesces concurrent requests with identical token options and
 memoizes their result for 2.5 minutes, matching the main-shell behavior. This is
 necessary for Davros's separate URL, username, and password fields to agree on
-the same token-specific API host. Different issuances are queued; display records
-are limited to 32 per grain view. Closing the view clears both records and cache.
+the same token-specific API host. Different issuances are queued.
+Closing the view clears both records and cache.
 
 The trusted frontend stores the result in tab-local sessionStorage and gives the
 app only a random fragment URL to `/offer-template.html`. That document renders
@@ -582,7 +579,7 @@ grain. Opening another workspace tab does not invalidate existing live offers. D
 may require selecting/copying text manually in an embedded app.
 
 Browser tests check placeholder substitution, text-only rendering, origin
-isolation, reply contents, and storage cleanup. Lease tests cover issuance limits
+isolation, reply contents, and storage cleanup. Lease tests cover repeated issuance
 and cancellation during creation; the real-grain test checks canonical token
 ownership, expiry, gateway keepalive, and rejection after sharing revocation.
 Davros regression coverage checks simultaneous field rendering, shared tokens,
@@ -613,8 +610,8 @@ enabled; the Rust frontend's development-tool advisory below is separate.
   exponential backoff and a fresh authorized snapshot (or fixture). Mutations are never automatically replayed.
 - Explicit cancel, capability release and disconnect end subscriptions. A connection
   owns a scope that explicitly cancels its observations on shutdown; a pending
-  `whenClosed()` call does not retain the subscription. At most eight observations
-  can be live per connection, including the summary and installation watches.
+  `whenClosed()` call does not retain the subscription. Multiple summary, query,
+  and installation watches can coexist without a per-connection count quota.
 - `Subscription.whenClosed()` stays pending while delivery is healthy, resolves
   on explicit cancellation, and rejects if a callback fails or exceeds its
   ten-second deadline. Failure remains observable after cleanup. The frontend
@@ -715,37 +712,31 @@ messages to `capnp-rpc`'s two-party byte-stream transport.
 Wire format: one **unpacked** Cap'n Proto message, including its segment table,
 per binary WebSocket message. Multiple Cap'n Proto segments are supported.
 Malformed/truncated frames, trailing bytes, text messages, and oversized messages
-close the connection. Reader traversal/nesting budgets are explicit. Current
-limits are 256 KiB/message, 16 connections, one summary subscription/connection (eight total observations), and 50
-fixture notifications. Browser queues are bounded. Observer delivery has one
-call in flight and a ten-second deadline; timeout/error drops the observer task.
-Connections no longer rotate merely because an hour has elapsed. Linked-session
-expiry, account revocation, transport failure, and failed summary observation
-still end the connection and require revalidation.
+close the connection. Inbound messages allow `0x3ffffff` bytes (about 64 MiB),
+matching the bundled Meteor default SockJS transport: `ddp-server` supplies no
+`maxLength` override to faye, whose websocket-driver uses that `MAX_LENGTH`.
+This describes the default transport, not Meteor's optional UWS backend or a
+custom deployment override. Cap'n Proto uses its standard reader validation.
 
-Wire admission bounds live state: 128 inbound calls awaiting Return/Finish,
-64 outbound questions, 1,024 counted capability references in each direction,
-and 64 outstanding disembargo exchanges per direction. Capability tables are
-limited to 32 descriptors/message. Early Finish retains its call slot until the
-Return arrives; result-capability release, explicit partial Release, and
-noFinishNeeded returns reclaim the corresponding state. Unsolicited and duplicate
-returns are rejected before the pinned Rust runtime indexes its question table.
-The accounting follows capnp-rpc 0.25's handling of releaseParamCaps (it ignores
-incoming implicit parameter releases); changing RPC runtime versions requires
-rechecking this behavior.
+The Rust shell adds no rate, connection, in-flight call, capability-reference,
+subscription, grain, sharing-link, or pending-sign-in quotas. Browser send/receive
+queues have no extra application-level ceiling. Internal bridge responses are
+not capped separately. Pagination controls the size of individual list pages,
+not the total available records. Existing Meteor account policy and native DDP
+login rate limiting remain authoritative. Profile image size restrictions come
+from the existing Meteor upload handler.
 
-A replenishing frame bucket permits 128 frames/second with a 512-frame burst,
-including ping/pong. A byte bucket permits 1 MiB/second with an 8 MiB burst.
-Traffic below these limits has no cumulative call, frame, byte, or descriptor
-quota. Exceeding a live-state or rate limit closes the connection; mutations are
-never automatically replayed. These are protocol-state bounds, not a formal
-upper bound on the runtime's entire heap.
+Unsolicited and duplicate returns are still rejected before the pinned
+capnp-rpc 0.25.1 runtime indexes its question table. This validates the protocol;
+it does not limit how many questions may be outstanding. A canceled question
+can receive its one late reply. Mutations are never automatically replayed.
 
-Bridge IO admits 32 ordinary requests and a separate 32 maintenance requests
-(watches, lease renewal, cleanup, logout), failing immediately when full. Failed
-account authentication does not occupy a WebSocket slot. Host checks apply to
-ordinary HTTP/auth endpoints as well as upgrades. Repeated lease-close calls are
-idempotent before awaiting bridge IO.
+Lifecycle deadlines remain: observer delivery has one call in flight and a
+ten-second deadline; failed delivery ends that observation. Linked-session
+expiry, account revocation, and transport failure still require revalidation.
+Per-resource write guards prevent conflicting simultaneous mutations, while
+unrelated accounts and sessions can operate concurrently. Host/Origin checks,
+scoped capabilities and idempotent cleanup remain enforced.
 
 ### Rust server security review (2026-11-18)
 
@@ -753,13 +744,12 @@ Reviewed all handwritten Rust server modules, the generated-schema entry points,
 private bridge boundary, session/lease cancellation, and supervisor launch/TLS
 configuration. No account-authentication or shared-webkey permission bypass was
 found in this review. The Rust process runs as the Sandstorm service user behind
-the existing TLS gateway, with a mode-0600 Unix listener, bounded bridge bodies
-and deadlines, no general URL fetch interface, and no handwritten unsafe blocks.
+the existing TLS gateway, with a mode-0600 Unix listener, operation deadlines, no general URL fetch interface, and no handwritten unsafe blocks.
 That service UID is a broad trust boundary, not a separate privilege sandbox.
 
-Fixed availability weaknesses: unbounded aggregate bridge work and RPC lifetime
-state; pre-authentication acquisition of account WebSocket slots; repeated close
-amplification; and an unchecked question-ID indexing path in capnp-rpc 0.25.1
+The review originally added resource quotas; these were subsequently removed
+to avoid stricter limits than Meteor. Retained fixes address repeated close
+amplification and an unchecked question-ID indexing path in capnp-rpc 0.25.1
 (rejected at our transport boundary). The latter could panic a connection task,
 not a confirmed whole-process crash or memory-corruption exploit. Added tests for
 unauthenticated malformed replies/floods, aligned envelope parsing, cookie
@@ -774,10 +764,9 @@ no vulnerabilities or informational warnings in that database snapshot.
 This is not a formal security certification or a full gateway/Meteor audit.
 Per-source abuse controls at the gateway, sustained adversarial load testing,
 protocol fuzzing, and explicit OS memory/CPU isolation remain outstanding. A
-public visitor can still occupy the eight shared-view slots: admission bounds
-resource use but does not guarantee fair availability. Origin checking is not
-account authentication. Live-state and rate limits bound protocol work, not a
-formal upper bound on every internal RPC allocation.
+public visitor can consume resources through the shared-view endpoint. Origin
+checking is not account authentication. There are no extra Rust-shell admission
+quotas or claims of a formal upper bound on RPC allocations.
 
 ## Validation
 
@@ -817,7 +806,7 @@ Meteor test-app packaging step; the notification regression was run directly via
 `tests/run-local.sh` because it does not need that app. The user confirmed the
 deployed HTTPS handoff and shared notification behavior on yertle.sandhost.org.
 Observation tests cover idle reads, burst coalescing, snapshot/read races, gaps
-between requests, revocation, admission limits, heartbeat deadlines, and cleanup.
+between requests, revocation, operation beyond former quotas, heartbeat deadlines, and cleanup.
 `tests/tests/rust-shell.js` exercises the actual Meteor/Mongo adapter in an
 isolated server, including legacy inserts, owned/shared grain renames, sender renames, read/dismiss,
 recipient isolation, token revocation, and source-login revocation. Browser tests
@@ -926,8 +915,8 @@ not the durable package download. Reconnecting creates a fresh subscription.
 
 Update discovery reflects the server's existing app index, which may be disabled
 or out of date; the Rust shell does not independently refresh the external index.
-The initial update projection uses at most 101 installed actions and 100 index entries. The main shell
-still owns package verification and account eligibility policy.
+Update discovery covers all installed actions and their app-index entries. The main
+shell still owns package verification and account eligibility policy.
 
 The app gallery's **Most used** section ranks up to six installed apps by their
 number of owned and shared grains, with alphabetical ties. Multiple shared links

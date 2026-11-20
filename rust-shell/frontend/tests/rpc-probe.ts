@@ -32,17 +32,16 @@ export async function probe() {
     const first = (await watching.promise()).subscription;
     const active = (await shell.watch((p) => { p.observer = observer(); }).promise()).subscription;
     await waitFor(() => latest === 0, 'initial');
-    let duplicateRejected = false;
-    try { await shell.watch((p) => { p.observer = observer(); }).promise(); }
-    catch { duplicateRejected = true; }
-    // Repeated cancel/release of an old handle must not unlock the new subscription.
+    const parallel = (await shell.watch((p) => { p.observer = observer(); }).promise()).subscription;
+    await parallel.cancel().promise();
+    parallel.client.close();
+    // Canceling an old subscription must not affect the active observer.
     await first.cancel().promise();
     first.client.close();
-    let oldCancelSafe = false;
-    try { await shell.watch((p) => { p.observer = observer(); }).promise(); }
-    catch { oldCancelSafe = true; }
+    const beforeChange = calls;
     await shell.addFixture().promise();
     await waitFor(() => latest === 1 && entries === 2, 'first change');
+    const oldCancelSafe = calls > beforeChange;
     let closed = false;
     const closure = active.whenClosed().promise().then(() => { closed = true; });
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -57,10 +56,9 @@ export async function probe() {
     const resumed = (await shell.watch((p) => { p.observer = observer(); }).promise()).subscription;
     await waitFor(() => latest === 2 && entries === 3, 'resubscribe');
     for (let i = 0; i < 47; i++) await shell.addFixture().promise();
-    let limitRejected = false;
-    try { await shell.addFixture().promise(); } catch { limitRejected = true; }
-    await waitFor(() => entries === 50, 'limit');
-    // Releasing without cancel must free the sole subscription slot too.
+    await shell.addFixture().promise();
+    await waitFor(() => entries === 51, 'past former fixture quota');
+    // Releasing without cancel also cleans up the observer.
     resumed.client.close();
     const replacement = (await shell.watch((p) => { p.observer = observer(); }).promise()).subscription;
     await replacement.cancel().promise();
@@ -99,12 +97,12 @@ export async function probe() {
       service.start();
       await waitFor(() => recovered, 'service recovery');
     } finally { service.stop(); }
-    return { fixtureDisabled, duplicateRejected, oldCancelSafe, cancelled, limitRejected, entries };
+    return { fixtureDisabled, parallelAccepted: true, oldCancelSafe, cancelled, entries };
   } finally { conn.shutdown(); }
 }
 
 // Cross the former call/capability quotas using real generated clients and callbacks.
-// Pace traffic below the burst/rate limit; this tests retention, not throughput.
+// No pacing: the transport must not impose a throughput quota.
 export async function churn() {
   const socket = new WebSocket(location.origin.replace('http', 'ws') + '/rpc');
   await new Promise<void>((resolve, reject) => {socket.onopen = () => resolve(); socket.onerror = reject;});
@@ -119,7 +117,6 @@ export async function churn() {
       await subscription.cancel().promise();
       subscription.client.close();
       observer.client.close();
-      await new Promise(resolve => setTimeout(resolve, 80));
     }
     await shell.dismiss(p => {p.id = 0xffffffff;}).promise();
     return {connected:socket.readyState === WebSocket.OPEN,callbacks};

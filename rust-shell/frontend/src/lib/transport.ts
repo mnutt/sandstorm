@@ -1,7 +1,8 @@
 import { DeferredTransport, Message } from 'capnp-es';
 import { Message as RpcMessage } from 'capnp-es/capnp/rpc';
 
-const MAX_MESSAGE = 256 * 1024;
+// Meteor's default SockJS/faye websocket-driver MAX_LENGTH.
+const MAX_MESSAGE = 0x3ffffff;
 
 export class WebSocketTransport extends DeferredTransport {
   constructor(private socket: WebSocket, private failed: (error: Error) => void) {
@@ -9,8 +10,8 @@ export class WebSocketTransport extends DeferredTransport {
     socket.binaryType = 'arraybuffer';
     socket.onmessage = (event) => {
       try {
-        if (!(event.data instanceof ArrayBuffer) || event.data.byteLength > MAX_MESSAGE || this.queue.length >= 32) {
-          throw new Error('RPC receive limit exceeded');
+        if (!(event.data instanceof ArrayBuffer)) {
+          throw new Error('Expected a binary RPC message');
         }
         // Parse here so malformed data fails the connection rather than being ignored.
         new Message(event.data, false).getRoot(RpcMessage);
@@ -26,7 +27,7 @@ export class WebSocketTransport extends DeferredTransport {
     const copy = new Message();
     copy.setRoot(message);
     const bytes = copy.toArrayBuffer();
-    if (bytes.byteLength > MAX_MESSAGE || this.socket.bufferedAmount + bytes.byteLength > MAX_MESSAGE * 2) {
+    if (bytes.byteLength > MAX_MESSAGE) {
       const error = new Error('RPC send limit exceeded');
       this.failed(error);
       throw error;

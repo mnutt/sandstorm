@@ -28,15 +28,13 @@ function authEndpoint() {
   return localEndpoint;
 }
 
-let active = 0;
-let started = [];
 const enabled = name => !!Accounts.loginServices[name]?.isEnabled();
 const fail = message => { throw new Meteor.Error(400, message); };
 export async function rustNativeAuth(operation, input, flow) {
   if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:githubEnabled()};
   const fields = {githubStart:[],githubFinish:['request'],githubCancel:['request'],sendEmail:["email"],email:["email","code"],dev:["name"],ldap:["username","password"]};
   if (!Object.hasOwn(fields,operation) || !input || typeof input !== "object" || Array.isArray(input) ||
-      Object.keys(input).some(key=>!fields[operation].includes(key)) || fields[operation].some(key=>typeof input[key] !== "string" || !input[key] || input[key].length > 1024)) fail("Invalid sign-in request.");
+      Object.keys(input).some(key=>!fields[operation].includes(key)) || fields[operation].some(key=>typeof input[key] !== "string" || !input[key])) fail("Invalid sign-in request.");
   const binding = 'login:'+flow;
   if (operation === 'githubStart') return startGithub(binding);
   if (operation === 'githubCancel') { await cancelGithub(binding,input.request); return {}; }
@@ -56,9 +54,6 @@ export async function loginWithGithub(oauth, link) {
 
 async function loginThroughMeteor(operation,input,link) {
   const endpoint = await authEndpoint();
-  started = started.filter(time => time > Date.now() - 60000);
-  if (active >= 8 || started.length >= 60) throw new Meteor.Error(429,"Too many sign-in attempts. Try again shortly.");
-  started.push(Date.now()); ++active;
   let connected;
   const ready = new Promise(resolve => { connected = resolve; });
   const connection = DDP.connect(endpoint,{retry:false,onConnected:connected,headers:{Host:new URL(process.env.ROOT_URL).host,Authorization:'Bearer '+localKey}});
@@ -103,7 +98,7 @@ async function loginThroughMeteor(operation,input,link) {
       new Promise((_,reject) => { timer=setTimeout(()=>{ expired=true; reject(new Meteor.Error(503,"Sign-in timed out. Check before trying again.")); },15000); }),
     ]);
   } finally {
-    clearTimeout(timer); connection.close(); --active;
+    clearTimeout(timer); connection.close();
     // Only the resulting account token backs the Rust session. Do not leave an
     // unused credential resume token behind after this temporary DDP connection.
     if (credential?.token) await Meteor.users.updateAsync(credential.id,{$pull:{"services.resume.loginTokens":{hashedToken:Accounts._hashLoginToken(credential.token)}}});

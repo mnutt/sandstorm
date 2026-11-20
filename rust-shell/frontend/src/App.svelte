@@ -32,7 +32,7 @@
   $effect(() => {
     const current = route;
     if (current.page === 'shared' && (model.status === 'ready' || model.status === 'signed-out') && !sharedTabs.some(tab=>tab.webkey===current.webkey)) {
-      if (sharedTabs.length < 8) sharedTabs = [...sharedTabs,{webkey:current.webkey,path:current.path,title:'Shared grain',iconSrc:''}];
+      sharedTabs = [...sharedTabs,{webkey:current.webkey,path:current.path,title:'Shared grain',iconSrc:''}];
     }
   });
   function sharedPathChanged(webkey:string,path:string) {
@@ -165,7 +165,7 @@
     {#key (route.packageId || '') + route.url + model.accountKey}<Install {service} {model} {navigate} packageId={route.packageId} url={route.url} />{/key}
   {:else if route.page === 'shared'}
     {@const webkey = route.webkey}
-    {#if !sharedTabs.some(tab=>tab.webkey===webkey)}<Panel>{#if sharedTabs.length>=8}<p>Close a shared grain before opening another.</p>{:else}<LoadingStatus label="Connecting…" />{/if}</Panel>{/if}
+    {#if !sharedTabs.some(tab=>tab.webkey===webkey)}<Panel><LoadingStatus label="Connecting…" /></Panel>{/if}
   {:else if route.page === 'grain'}
     <Panel aria-label="Grain route">
       <h2>Grain</h2>

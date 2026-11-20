@@ -10,7 +10,7 @@ import { queryPowerboxOptions, newPowerboxFrontendRef, fulfillPowerboxUiView } f
 import { rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { rustGrainTitles } from "/imports/server/rust-shell-grains";
 
-const text = value => (typeof value === "string" ? value : value?.defaultText || "").slice(0, 160);
+const text = value => (typeof value === "string" ? value : value?.defaultText || "");
 const fail = message => { throw new Meteor.Error(400, message); };
 const simpleTitles = {
   ipInterfacePowerboxCard: "Accept incoming network connections",
@@ -34,25 +34,20 @@ export function rustPowerbox(db) {
   }
   const api = {
     async open(parent, input, beforeWrite) {
-      if ((parent.depth || 0) > 3) fail("Too many nested connection requests.");
       check(input.query, [String]);
-      if (input.query.length > 32 || input.query.some(q => q.length > 8192) || JSON.stringify(input.query).length > 60000) fail("Powerbox query too large.");
       await validate(parent);
       const options = await queryPowerboxOptions(db, globalFrontendRefRegistry, parent.accountId, input.query);
       const request = {parent, query:input.query, options:new Map(), provider:null, result:null, delivered:false};
       const candidates = [];
       let legacy = false;
-      let bytes = 0;
-      let limited = options.length > 64;
-      for (const option of options.slice(0, 128)) {
-        if (candidates.length >= 64) break;
+      for (const option of options) {
         let candidate;
         if (option.grainId) {
           try {
             const titles = await rustGrainTitles(db, parent.accountId, option.grainId);
             const grain = await db.collections.grains.findOneAsync(option.grainId);
             if (!grain || grain.trashed || grain.suspended) continue;
-            const roles = (grain.cachedViewInfo?.roles || []).slice(0, 32).map((role, index) => ({key:String(index),title:text(role.title)}));
+            const roles = (grain.cachedViewInfo?.roles || []).map((role, index) => ({key:String(index),title:text(role.title)}));
             candidate = {title:text(titles.title),iconSrc:titles.iconSrc,uiView:!!option.uiView,hostedObject:!!option.hostedObject,roles};
           } catch { continue; }
         } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && option.oauthServiceInfo.service === 'github' && githubEnabled()) {
@@ -67,13 +62,11 @@ export function rustPowerbox(db) {
           candidate = {title:text(title),detail: option.frontendRef.emailVerifier?.services?.join(", ") || ""};
         } else { legacy = true; continue; }
         const key = String(candidates.length);
-        bytes += Buffer.byteLength(JSON.stringify(candidate)) + 32;
-        if (bytes > 160000) { limited = true; break; }
         request.options.set(key, option);
         candidates.push({...candidate,key});
       }
       await beforeWrite();
-      return {handle:request,view:{status:"choices",candidates,legacy,limited}};
+      return {handle:request,view:{status:"choices",candidates,legacy,limited:false}};
     },
     async select(request, input, beforeWrite) {
       if (input.mode === 'nested') return {status:'nested',view:await api.nested(request,input,beforeWrite)};
@@ -104,12 +97,12 @@ export function rustPowerbox(db) {
       }
       if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
         if (input.mode === "sendEmail") {
-          if (request.email || typeof input.email !== "string" || input.email.length > 320 || !input.email.includes("@")) fail("Invalid verification request.");
+          if (request.email || typeof input.email !== "string" || !input.email.includes("@")) fail("Invalid verification request.");
           request.email = {key:input.key,address:input.email};
           await rustAccount(request.parent.accountId,"sendEmail",{email:input.email,allowLogin:false},beforeWrite);
           return {status:"email",address:input.email};
         }
-        if (input.mode !== "verifyEmail" || request.email?.key !== input.key || typeof input.code !== "string" || !input.code || input.code.length > 320) fail("Send a verification code first.");
+        if (input.mode !== "verifyEmail" || request.email?.key !== input.key || typeof input.code !== "string" || !input.code) fail("Send a verification code first.");
         await rustAccount(request.parent.accountId,"verifyEmail",{email:request.email.address,code:input.code,allowLogin:false},beforeWrite);
       }
       if (option.grainId) {
@@ -142,7 +135,7 @@ export function rustPowerbox(db) {
           ref = {verifiedEmail:{...option.frontendRef.verifiedEmail,address:request.email.address}};
         }
         if (option.cardTemplate === "httpArbitraryPowerboxCard") {
-          if (typeof input.url !== "string" || input.url.length > 2048) fail("Invalid URL.");
+          if (typeof input.url !== "string") fail("Invalid URL.");
           const url = new URL(input.url);
           if (!["http:","https:"].includes(url.protocol) || url.username || url.password) fail("Use an HTTP or HTTPS URL without embedded credentials.");
           ref = {http:{url:url.href,auth:{none:null}}};
@@ -179,7 +172,7 @@ export function rustPowerbox(db) {
         await checkLive();
         let result;
         if (input.nestedOperation === 'begin') {
-          const opened = await api.open({...request.provider,depth:(request.parent.depth || 0)+1},input.nestedInput,checkLive);
+          const opened = await api.open(request.provider,input.nestedInput,checkLive);
           child.handle=opened.handle; result=opened.view;
         } else {
           if (!child.handle || child.handle.delivered) fail('Provider request ended.');
