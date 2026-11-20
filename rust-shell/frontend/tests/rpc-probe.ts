@@ -102,3 +102,26 @@ export async function probe() {
     return { fixtureDisabled, duplicateRejected, oldCancelSafe, cancelled, limitRejected, entries };
   } finally { conn.shutdown(); }
 }
+
+// Cross the former call/capability quotas using real generated clients and callbacks.
+// Pace traffic below the burst/rate limit; this tests retention, not throughput.
+export async function churn() {
+  const socket = new WebSocket(location.origin.replace('http', 'ws') + '/rpc');
+  await new Promise<void>((resolve, reject) => {socket.onopen = () => resolve(); socket.onerror = reject;});
+  const conn = new Conn(new WebSocketTransport(socket, error => conn.shutdown(error)));
+  conn.onError = () => {};
+  const shell = conn.bootstrap(Shell);
+  let callbacks = 0;
+  try {
+    for (let i = 0; i < 1100; ++i) {
+      const observer = new Observer.Server({replace:async () => { ++callbacks; }}).client();
+      const subscription = (await shell.watch(p => {p.observer = observer;}).promise()).subscription;
+      await subscription.cancel().promise();
+      subscription.client.close();
+      observer.client.close();
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+    await shell.dismiss(p => {p.id = 0xffffffff;}).promise();
+    return {connected:socket.readyState === WebSocket.OPEN,callbacks};
+  } finally { conn.shutdown(); }
+}

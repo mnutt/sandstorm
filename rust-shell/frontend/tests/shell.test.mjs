@@ -84,3 +84,23 @@ test('browser ↔ Rust RPC, subscription lifecycle, isolation and admission', { 
     await stop(server);
   }
 });
+
+test('a long-lived RPC connection reclaims completed calls and capabilities', {timeout:150000}, async () => {
+  let browser, server;
+  try {
+    const running = await start('debug/sandstorm-rust-shell', [], {
+      RUST_SHELL_ADDR:'127.0.0.1:0',RUST_SHELL_FIXTURE_SOCKET:'',
+    }, /Rust shell: (http:\/\/\S+)/);
+    server = running.child;
+    browser = await chromium.launch({executablePath:process.env.CHROMIUM || '/usr/bin/chromium',headless:true});
+    const page = await browser.newPage();
+    await page.goto(running.match[1]);
+    await serveProbe(page, './rpc-probe.ts', 'rpc-probe.js');
+    const result = await page.evaluate(async () => (await import('/rpc-probe.js')).churn());
+    assert.equal(result.connected, true);
+    assert.ok(result.callbacks > 0);
+  } finally {
+    await browser?.close();
+    await stop(server);
+  }
+});

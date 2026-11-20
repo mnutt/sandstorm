@@ -158,7 +158,6 @@ async fn serve_rpc(
         _ = outgoing => {},
         _ = synchronize => {},
         _ = maintain => {},
-        _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {},
     }
 }
 

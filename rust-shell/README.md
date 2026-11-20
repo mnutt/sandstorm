@@ -719,17 +719,27 @@ close the connection. Reader traversal/nesting budgets are explicit. Current
 limits are 256 KiB/message, 16 connections, one summary subscription/connection (eight total observations), and 50
 fixture notifications. Browser queues are bounded. Observer delivery has one
 call in flight and a ten-second deadline; timeout/error drops the observer task.
-Connections expire after an hour and reconnect with revalidated authority.
+Connections no longer rotate merely because an hour has elapsed. Linked-session
+expiry, account revocation, transport failure, and failed summary observation
+still end the connection and require revalidation.
 
-The Rust transport also enforces per-connection lifetime budgets: 8 MiB inbound,
-8,192 frames, 1,024 calls/bootstrap requests, and 1,024 capability descriptors
-(maximum 32 descriptors/message). A token bucket allows 128 frames/second with a
-512-frame burst, including ping/pong. There are at most 64 unanswered outbound
-questions; unsolicited/duplicate returns are rejected before reaching capnp-rpc.
-Budget exhaustion closes the connection; clients must revalidate on reconnect,
-and mutations are never replayed automatically. These lifetime budgets remain
-until bounded accounting of live calls/imports/exports can safely replace them;
-rate limits alone do not bound retained protocol state.
+Wire admission bounds live state: 128 inbound calls awaiting Return/Finish,
+64 outbound questions, 1,024 counted capability references in each direction,
+and 64 outstanding disembargo exchanges per direction. Capability tables are
+limited to 32 descriptors/message. Early Finish retains its call slot until the
+Return arrives; result-capability release, explicit partial Release, and
+noFinishNeeded returns reclaim the corresponding state. Unsolicited and duplicate
+returns are rejected before the pinned Rust runtime indexes its question table.
+The accounting follows capnp-rpc 0.25's handling of releaseParamCaps (it ignores
+incoming implicit parameter releases); changing RPC runtime versions requires
+rechecking this behavior.
+
+A replenishing frame bucket permits 128 frames/second with a 512-frame burst,
+including ping/pong. A byte bucket permits 1 MiB/second with an 8 MiB burst.
+Traffic below these limits has no cumulative call, frame, byte, or descriptor
+quota. Exceeding a live-state or rate limit closes the connection; mutations are
+never automatically replayed. These are protocol-state bounds, not a formal
+upper bound on the runtime's entire heap.
 
 Bridge IO admits 32 ordinary requests and a separate 32 maintenance requests
 (watches, lease renewal, cleanup, logout), failing immediately when full. Failed
@@ -766,8 +776,8 @@ Per-source abuse controls at the gateway, sustained adversarial load testing,
 protocol fuzzing, and explicit OS memory/CPU isolation remain outstanding. A
 public visitor can still occupy the eight shared-view slots: admission bounds
 resource use but does not guarantee fair availability. Origin checking is not
-account authentication. Lifetime budgets bound input work, not a formal upper
-bound on every internal RPC allocation.
+account authentication. Live-state and rate limits bound protocol work, not a
+formal upper bound on every internal RPC allocation.
 
 ## Validation
 
