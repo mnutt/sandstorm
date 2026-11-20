@@ -11,6 +11,7 @@ mod rpc_protocol;
 mod service;
 mod shared;
 mod sharing;
+mod template;
 mod transport;
 mod workflow;
 

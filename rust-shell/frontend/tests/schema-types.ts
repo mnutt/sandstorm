@@ -33,3 +33,6 @@ export type StatisticsPayload = Assert<Equal<NotificationHandle_SetStatisticsRep
 export type ProfileReadPayload = Assert<Equal<Account_ReadProfile$Results['result']['value'],AccountProfile>>;
 export type ProfileEditPayload = Assert<Equal<Account_UpdateProfile$Results['result']['value'],AccountProfile>>;
 export type ProfileUploadPayload = Assert<Equal<Account_PreparePictureUpload$Results['result']['value'],Url>>;
+
+import type { GrainSession_RenderTemplate$Results, TemplateToken } from '../src/generated/shell';
+export type TemplatePayload = Assert<Equal<GrainSession_RenderTemplate$Results['result']['value'],TemplateToken>>;

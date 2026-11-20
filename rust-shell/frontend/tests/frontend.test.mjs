@@ -10,7 +10,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
 const { ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
-  ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+  tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
 const profileResult = value => valueResult({...value,pronoun:ProfilePronoun[value.pronoun.toUpperCase()],pictureUrl:value.pictureUrl || '',version:value.version || ''});
 const deferred = () => {
@@ -426,4 +426,20 @@ test('denied upload authorization reports the reason without sending the image',
   await profile.uploadPicture(new Blob(['jpeg'],{type:'image/jpeg'}));
   assert.equal(state.pictureError,'This account cannot upload a picture.');
   assert.equal(globalThis.fetch.mock.callCount(),0);
+});
+
+
+test('template options reject fields that cannot be represented without losing restrictions', () => {
+  const parse = extra => tokenOptions(templateRequest({rpcId:'test',template:'$API_TOKEN',...extra}));
+  assert.deepEqual(parse({}).roleAssignment, {allAccess:null});
+  assert.deepEqual(parse({roleAssignment:{roleId:2,addPermissions:[false,true],removePermissions:[true]}}).roleAssignment,
+    {roleId:2,addPermissions:[false,true],removePermissions:[true]});
+  for (const roleAssignment of [{allAccess:null,roleId:1},{roleId:-1},{roleId:65536},
+    {addPermissions:[1]},{removePermissions:'all'},{unexpected:true}]) {
+    assert.throws(() => parse({roleAssignment}), /Invalid template request/);
+  }
+  for (const unauthenticated of [{options:{dav:[1]}},{options:{extra:true}},
+    {resources:{'/status':{type:'text/plain',body:'ok',extra:'ignored'}}}]) {
+    assert.throws(() => parse({unauthenticated}), /Invalid template request/);
+  }
 });

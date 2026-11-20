@@ -72,7 +72,7 @@ interface GrainSession {
   # Waiting does not retain the lease. Reopening always requires a new session.
   beginPowerbox @2 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
   close @3 () -> ();
-  renderTemplate @4 (options :Text) -> (token :Text, host :Text);
+  renderTemplate @4 (options :TemplateOptions) -> (result :Result(TemplateToken));
   rename @5 (title :Text) -> (title :Text, ownerTitle :Text);
   # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
@@ -426,4 +426,38 @@ interface NotificationHandle {
   setStatisticsReporting @1 (enabled :Bool) -> (result :Result(StatisticsDetails));
   # Only valid for a statistics notice owned by a current administrator.
   # Success deletes reporting notices. Never replay an uncertain write.
+}
+
+# Options for app-requested API credentials. Pointer presence preserves optional
+# discovery fields; canonical validation and token policy remain in Meteor.
+struct TemplateOptions {
+  petname @0 :Text;
+  role @1 :TemplateRole;
+  forSharing @2 :Bool;
+  unauthenticated @3 :TemplateDiscovery;
+}
+struct TemplateRole {
+  union {
+    none @0 :Void;
+    allAccess @1 :Void;
+    roleId @2 :UInt16;
+  }
+  addPermissions @3 :List(Bool);
+  removePermissions @4 :List(Bool);
+}
+struct TemplateDiscovery {
+  options @0 :Options;
+  resources @1 :List(Resource);
+  struct Options { dav @0 :List(Text); }
+  struct Resource {
+    path @0 :Text;
+    type @1 :Text;
+    language @2 :Text;
+    encoding @3 :Text;
+    body @4 :Text;
+  }
+}
+struct TemplateToken {
+  token @0 :Text;
+  host @1 :Text;
 }

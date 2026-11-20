@@ -221,31 +221,27 @@ impl grain_session::Server for Lease {
         params: grain_session::RenderTemplateParams,
         mut results: grain_session::RenderTemplateResults,
     ) -> capnp::Result<()> {
-        if self.closed.get() || *self.scope.ended.borrow() {
-            return Err(capnp::Error::failed("Grain session closed".into()));
-        }
-        let options = params.get()?.get_options()?.to_str()?;
-        let options: serde_json::Value = serde_json::from_str(options)
-            .map_err(|_| capnp::Error::failed("Invalid template options".into()))?;
-        let value = self
-            .scope
-            .session
-            .call(
-                "renderTemplate",
-                json!({
-                    "scope": self.scope.key, "lease": self.lease, "options": options
-                }),
-            )
+        let options = crate::template::options(params.get()?.get_options()?)?;
+        let value = match self
+            .bridge_call("renderTemplate", json!({"options": options}))
             .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
         let token = value["token"]
             .as_str()
+            .filter(|value| !value.is_empty())
             .ok_or_else(|| capnp::Error::failed("Invalid template token".into()))?;
         let host = value["host"]
             .as_str()
+            .filter(|value| !value.is_empty())
             .ok_or_else(|| capnp::Error::failed("Invalid template host".into()))?;
-        results.get().set_token(token);
-        results.get().set_host(host);
+        let mut out = results.get().init_result().init_value();
+        out.set_token(token);
+        out.set_host(host);
         Ok(())
     }
 

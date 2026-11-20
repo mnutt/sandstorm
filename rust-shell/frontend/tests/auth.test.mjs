@@ -29,6 +29,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let leaseClockOffset = 0;
   let renewals = 0;
   let templates = 0;
+  const templateOptions = [];
   let uploadedPicture;
   const grainTitles = {};
   let creations = 0;
@@ -152,7 +153,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
         else Object.assign(sharingGrants[index],input.changes);
         return {};
       },
-      template: async () => ({ id: ++templates, token: 'sensitive-template-token', host: new URL(grainOrigin).host }),
+      template: async (_handle, options) => {
+        templateOptions.push(options);
+        return { id: ++templates, token: 'sensitive-template-token', host: new URL(grainOrigin).host };
+      },
       revokeTemplate: async () => { --templates; },
     },
     authorize: async (id, hash) => {
@@ -844,13 +848,20 @@ test('authenticated notifications: handoff, shared writes, account switching and
       const unauthenticated = { resources: { '/status.php': { type: 'text/json', language: 'en', body: '{"installed":true}' } },
         options: { dav: ['1', '2', '3', 'mkcol-extended'] } };
       for (const [id, template] of [['host','$API_HOST'],['user','$GRAIN_TITLE_SLUG'],['password','$API_TOKEN']]) {
-        parent.postMessage({renderTemplate:{rpcId:'davros-'+id, template, unauthenticated, clipboardButton:'right'}}, '*');
+        parent.postMessage({renderTemplate:{rpcId:'davros-'+id, template, unauthenticated,
+          roleAssignment:{roleId:1,addPermissions:[false,true],removePermissions:[true]}, clipboardButton:'right'}}, '*');
       }
     });
     await expect.poll(() => app.evaluate(() => Object.keys(window.templateReplies).length)).toBe(3);
     const davrosReplies = await app.evaluate(() => window.templateReplies);
     for (const reply of Object.values(davrosReplies)) assert.ok(reply.uri, JSON.stringify(reply));
     assert.equal(templates, 2, 'three matching requests issue only one additional token');
+    assert.deepEqual(templateOptions.at(-1), {
+      petname:'connected external app',forSharing:false,
+      roleAssignment:{roleId:1,addPermissions:[false,true],removePermissions:[true]},
+      unauthenticated:{resources:{'/status.php':{type:'text/json',language:'en',body:'{"installed":true}'}},
+        options:{dav:['1','2','3','mkcol-extended']}},
+    });
     const records = await page.evaluate(replies => Object.values(replies).map(reply =>
       JSON.parse(sessionStorage.getItem('rustOfferTemplate:' + new URL(reply.uri).hash.slice(1)))), davrosReplies);
     assert.equal(new Set(records.map(record => record.token)).size, 1);

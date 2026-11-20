@@ -1,5 +1,6 @@
 import { sharingState, writeRole } from './sharing-client';
-import { unwrap } from './results';
+import { unwrap, applicationErrorMessage } from './results';
+import { writeTokenOptions } from './template-options';
 import { PowerboxRequests } from './powerbox-client';
 import type { PowerboxActions, PowerboxState } from './powerbox-native';
 import type { SharingState } from './sharing';
@@ -171,8 +172,15 @@ export class GrainService {
     const active = this.active;
     if (!session || !active) throw new Error('No active grain.');
     return this.offers.render(input, active.title, async options => {
-      const result = await this.connection.run(session.renderTemplate(params => { params.options = options; }).promise(), 'Render template');
-      return { token: result.token, host: result.host };
+      try {
+        const response = await this.connection.run(session.renderTemplate(params => {
+          writeTokenOptions(params._initOptions(), options);
+        }).promise(), 'Render template');
+        const result = unwrap(response.result);
+        return { token: result.token, host: result.host };
+      } catch (error) {
+        throw new Error(applicationErrorMessage(error, 'Could not confirm API token creation. Please try again.'));
+      }
     });
   }
 }

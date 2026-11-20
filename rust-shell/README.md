@@ -563,8 +563,16 @@ validated and normalized to lowercase; the credential-bearing link remains
 inside the trusted display frame and is removed when the offer expires or is
 cleared. Display options reuse the same token. HTML is displayed as text.
 
-The scoped `GrainSession` capability asks Meteor to create a token using the
-existing `createNewApiToken` permission path. The bridge checks linked-login
+The scoped `GrainSession.renderTemplate` method takes `TemplateOptions` and
+returns `Result(TemplateToken)`. Its role union includes the app-facing
+add/remove permission masks; optional typed discovery fields preserve absent
+versus empty metadata. No JSON-text RPC or compatibility method remains.
+Expected policy errors are typed failures, while transport details stay out of
+app-facing replies. The canonical 4 KiB discovery bound remains; token labels
+have no additional Rust-shell length limit.
+
+The capability asks Meteor to create a token using the existing
+`createNewApiToken` permission path. The bridge checks linked-login
 and grain access, permits one issuance at a time, and
 revokes a late-created token if the lease closes or authorization ends. Tokens
 retain the existing five-minute unused expiry. Issued API access is separate
