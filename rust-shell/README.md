@@ -178,7 +178,15 @@ explicit mark-all action remains separate. Rows share date and action columns,
 so longer cancellation buttons do not shift the dates.
 Grain activity links open in the Rust shell, preserving the app path, query, and
 fragment; app-update links open the native installer. Usage-statistics choices,
-referral details, and account-identity notices open native dialogs. Statistics
+referral details, and account-identity notices open native dialogs. Each dialog
+owns a typed `NotificationHandle`; reads return a statistics/referrals/identity
+union. Reporting preference preserves the distinction between unset and disabled.
+Saving statistics preferences is an explicit typed method. Every operation
+rechecks notice ownership/type; statistics operations also recheck current
+administrator authority. Dismissing
+a notice invalidates subsequent operations through retained handles. Expected
+denials use structured results; transport failures never trigger mutation replay.
+The formatted statistics sample is display text, not an encoded RPC response. Statistics
 reads and writes require current administrator authority; the fixed reportStats
 setting and notice cleanup match the legacy admin UI. Referral projections include
 only the current account’s pending/completed names.
@@ -682,13 +690,13 @@ The 0.5.0 generator specializes branded generic results: `Result(InstallationSta
 exposes an `InstallationState` value, verified by `frontend/tests/schema-types.ts`.
 
 The native frontend uses typed `Installer`/`Installation`, `Account`, `Sharing`,
-and `PowerboxRequest` capabilities. Grain and notification views own independent
+`NotificationHandle`, and `PowerboxRequest` capabilities. Grain and notification views own independent
 query subscriptions. The experimental Rust API has no backward-compatibility
 contract: superseded methods are removed, ordinals can change, and frontend/server
 bindings must be deployed together. The private Meteor adapter still uses JSON
 internally. Sharing roles, grants and edits cross the browser boundary as typed
 structures; label-only edits explicitly preserve existing custom permissions.
-Expected installation, account, sharing, and Powerbox denials use `Result.failure`, with
+Expected installation, account, sharing, notification, and Powerbox denials use `Result.failure`, with
 a typed code and a readable message. Unexpected transport/backend errors remain
 RPC failures; these views display a generic outcome-uncertain message instead of
 protocol details and never automatically retry a mutation.

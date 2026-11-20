@@ -104,7 +104,7 @@ interface Shell {
   account @3 () -> (account :Account);
 
   uploadPicture @4 () -> (uploadUrl :Text);
-  notification @5 (key :Text, operation :Text, enabled :Bool) -> (state :Text);
+  notification @5 (key :Text) -> (notice :NotificationHandle);
   watch @6 (observer :Observer) -> (subscription :Subscription);
   dismiss @7 (id :UInt32) -> ();
   addFixture @8 () -> ();
@@ -389,4 +389,33 @@ interface Sharing {
   # Unchanged preserves custom permissions during label-only edits.
   revoke @3 (id :Text) -> (result :Result(Empty));
   # Mutation outcomes must not be replayed automatically after transport failure.
+}
+
+
+# An account-bound notice handle is a selector, not an enduring permission grant.
+# Every read/write rechecks notice ownership, type, and administrator authority.
+enum ReportingPreference { unset @0; disabled @1; enabled @2; }
+struct StatisticsDetails {
+  preference @0 :ReportingPreference;
+  sample @1 :Text;
+  # A formatted report for display, not a JSON-encoded RPC result.
+}
+struct ReferralPerson { name @0 :Text; pictureUrl @1 :Text; }
+struct ReferralDetails {
+  enabled @0 :Bool;
+  pending @1 :List(ReferralPerson);
+  completed @2 :List(ReferralPerson);
+}
+struct NotificationDetails {
+  union {
+    statistics @0 :StatisticsDetails;
+    referrals @1 :ReferralDetails;
+    identity @2 :Void;
+  }
+}
+interface NotificationHandle {
+  read @0 () -> (result :Result(NotificationDetails));
+  setStatisticsReporting @1 (enabled :Bool) -> (result :Result(StatisticsDetails));
+  # Only valid for a statistics notice owned by a current administrator.
+  # Success deletes reporting notices. Never replay an uncertain write.
 }

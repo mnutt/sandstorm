@@ -26,7 +26,7 @@ export async function rustNotificationAction(accountId, key, operation, enabled,
     const serialized = latest ? JSON.stringify(latest,null,2) : "";
     await checkAuthAsync(db,accountId,undefined);
     return {kind,enabled:typeof preference?.value === "boolean" ? preference.value : null,
-      sample:serialized,sampleLimited:false};
+      sample:serialized};
   }
   if (kind === "referrals") {
     const user = await Meteor.users.findOneAsync(accountId,{fields:{referredAccountIds:1}});
@@ -36,9 +36,8 @@ export async function rustNotificationAction(accountId, key, operation, enabled,
         {fields:{profile:1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
       Meteor.users.find({_id:{$in:ids}},{fields:{profile:1},sort:{"profile.name":1,_id:1}}).fetchAsync(),
     ]);
-    const person = row => ({name:String(row.profile?.name || "Unnamed account").slice(0,160),pictureUrl:rustUserPicture(row)});
-    return {kind,enabled:!!db.isReferralEnabled(),pending:pending.map(person),completed:completed.map(person),
-      limited:false};
+    const person = row => ({name:String(row.profile?.name || "Unnamed account"),pictureUrl:rustUserPicture(row)});
+    return {kind,enabled:!!db.isReferralEnabled(),pending:pending.map(person),completed:completed.map(person)};
   }
   if (kind === "identity") return {kind};
   throw new Meteor.Error(400,"This notification has no native action.");

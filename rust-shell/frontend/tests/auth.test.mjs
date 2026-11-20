@@ -52,6 +52,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const profiles = {alice:{name:'Alice',handle:'alice',pronoun:'neutral'},bob:{name:'Bob',handle:'bob',pronoun:'neutral'}};
   const profileVersion = id => JSON.stringify(profiles[id]);
   const sharingGrants = [];
+  let reportingAllowed = true;
   let shareCreations = 0;
   let providerComplete = false;
   const nativeProviders = new Set();
@@ -159,11 +160,14 @@ test('authenticated notifications: handoff, shared writes, account switching and
       return users[id]?.hash === hash ? users[id] : null;
     },
     notification: async (id,key,operation,enabled,beforeWrite) => {
-      assert.equal(rows.get(key)?.user,id);
-      if (operation === 'setStats') { await beforeWrite(); rows.delete(key); changed(); return {kind:'stats',enabled,sample:'',sampleLimited:false}; }
-      const kind = rows.get(key).nativeAction;
-      if (kind === 'stats') return {kind,enabled:null,sample:'{}',sampleLimited:false};
-      if (kind === 'referrals') return {kind,enabled:true,pending:[{name:'Pending person',pictureUrl:fixtureAvatar}],completed:[{name:'Completed person',pictureUrl:fixtureAvatar}],limited:false};
+      const notice = rows.get(key);
+      if (!notice || notice.user !== id) throw Object.assign(new Error('Notification no longer available.'), {status:404});
+      const kind = notice.nativeAction;
+      if (operation === 'setStats' && kind !== 'stats') throw Object.assign(new Error('This notification cannot change reporting preferences.'), {status:400});
+      if (kind === 'stats' && !reportingAllowed) throw Object.assign(new Error('Administrator access is required.'), {status:403});
+      if (operation === 'setStats') { await beforeWrite(); rows.delete(key); changed(); return {kind:'stats',enabled,sample:''}; }
+      if (kind === 'stats') return {kind,enabled:null,sample:'{}'};
+      if (kind === 'referrals') return {kind,enabled:true,pending:[{name:'Pending person',pictureUrl:fixtureAvatar}],completed:[{name:'Completed person',pictureUrl:fixtureAvatar}]};
       return {kind};
     },
     observe: async (_id, notify, pages, query) => { ++observationStarts; observers.set(notify, {pages, query}); return () => observers.delete(notify); },
@@ -352,9 +356,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
     }
     changed();
     await page.getByRole('button',{name:'Share usage statistics',exact:true}).click();
+    await page.getByText('Not yet chosen', {exact:true}).waitFor();
+    reportingAllowed = false;
+    await page.getByRole('button',{name:'Enable reporting',exact:true}).click();
+    await expect(page.getByRole('dialog').getByRole('alert')).toHaveText('Administrator access is required.');
+    assert.ok(rows.has('stats'), 'a denied write must not dismiss the notice');
+    reportingAllowed = true;
     await page.getByRole('button',{name:'Disable reporting',exact:true}).click();
     await page.getByText('Reporting preference saved.',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Close',exact:true}).click();
+    await serveProbe(page, './notification-probe.ts', 'notification-probe.js');
+    assert.deepEqual(await page.evaluate(() => import('/notification-probe.js').then(probe => probe.checkAuthority())),
+      {referrals:true,wrongKind:true,missing:true,otherAccount:true});
     await page.getByRole('button',{name:'Referral update',exact:true}).click();
     await page.getByText('Completed person',{exact:true}).waitFor();
     await expect.poll(() => rows.get('referrals').unread).toBe(false);

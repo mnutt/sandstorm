@@ -1,6 +1,6 @@
 import { watchGrains, watchNotifications, type GrainQuery } from './queries';
 import { AccountService } from './account';
-import type { NotificationDetails } from './notification-details';
+import { NotificationView } from './notification-details';
 import { InstallService } from './install';
 import { clearStoredTemplateOffers } from './template';
 import { ProfileService, type Profile } from './profile';
@@ -117,12 +117,7 @@ export class ShellService {
       : shell.dismissReal(params => { params.key = id; }).promise());
   }
   addFixture() { return this.mutate(shell => shell.addFixture().promise()); }
-  async notificationDetails(key: string, operation: 'details' | 'setStats' = 'details', enabled = false): Promise<NotificationDetails> {
-    const result = await this.connection.run(this.connection.shell.notification(params => {
-      params.key = key; params.operation = operation; params.enabled = enabled;
-    }).promise(), 'Notification details');
-    return JSON.parse(result.state);
-  }
+  openNotification(key: string) { return new NotificationView(this.connection, key); }
   async readNotification(key: string) {
     if (this.state.fixture || this.state.status !== 'ready') return;
     const account = this.accountKey;

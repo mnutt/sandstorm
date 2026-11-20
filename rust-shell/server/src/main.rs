@@ -3,6 +3,7 @@ mod bridge;
 mod dev;
 mod grain;
 mod interop;
+mod notification;
 mod observation;
 mod powerbox;
 mod rpc_protocol;

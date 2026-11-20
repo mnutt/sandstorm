@@ -1,3 +1,4 @@
+import type { NotificationHandle_Read$Results, NotificationHandle_SetStatisticsReporting$Results, NotificationDetails, StatisticsDetails } from '../src/generated/shell';
 import type {
   Installation_Read$Results, Installer_Catalog$Results, Installer_Upload$Results,
   Account_Read$Results, GrainSession_BeginPowerbox$Results, Sharing_Read$Results, Sharing_Create$Results, SharingState, ShareLink,
@@ -24,3 +25,6 @@ export function rejectWrongPayload(result: Installation_Read$Results, account: A
 
 export type SharingPayload = Assert<Equal<Sharing_Read$Results['result']['value'],SharingState>>;
 export type ShareLinkPayload = Assert<Equal<Sharing_Create$Results['result']['value'],ShareLink>>;
+
+export type NoticePayload = Assert<Equal<NotificationHandle_Read$Results['result']['value'],NotificationDetails>>;
+export type StatisticsPayload = Assert<Equal<NotificationHandle_SetStatisticsReporting$Results['result']['value'],StatisticsDetails>>;

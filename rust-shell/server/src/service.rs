@@ -331,24 +331,14 @@ impl shell::Server for Shell {
     ) -> capnp::Result<()> {
         let session = self
             .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Sign in to view notification details".into()))?;
-        let input = params.get()?;
-        let key = input.get_key()?.to_str()?;
-        let operation = input.get_operation()?.to_str()?;
-        if key.is_empty() || !["details", "setStats"].contains(&operation) {
-            return Err(capnp::Error::failed(
-                "Invalid notification operation".into(),
-            ));
-        }
-        let value = session
-            .call(
-                "notification",
-                serde_json::json!({"key":key,"operation":operation,"enabled":input.get_enabled()}),
-            )
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        results.get().set_state(value.to_string());
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to view notifications".into()))?;
+        let key = params.get()?.get_key()?.to_str()?.to_owned();
+        results
+            .get()
+            .set_notice(capnp_rpc::new_client(crate::notification::Notice::new(
+                session, key,
+            )));
         Ok(())
     }
 
