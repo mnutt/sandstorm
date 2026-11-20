@@ -51,7 +51,7 @@
     renaming = true;
     renameError = '';
     try { await rename(draftTitle.trim()); editing = false; }
-    catch (error) { renameError = `Could not confirm rename. Check the current title before trying again. ${String(error)}`; }
+    catch (error) { renameError = error instanceof Error ? error.message : 'Could not confirm rename. Check the current title before trying again.'; }
     finally { renaming = false; }
   }
   let nativeRequest = $state<PowerboxRequest>();

@@ -349,24 +349,38 @@ impl shell::Server for Shell {
         params: shell::CreateGrainParams,
         mut results: shell::CreateGrainResults,
     ) -> capnp::Result<()> {
-        let session = self
-            .session
-            .as_ref()
-            .ok_or_else(|| capnp::Error::failed("Creation requires a signed-in account".into()))?;
+        let Some(session) = self.session.as_ref() else {
+            return crate::workflow::failure(
+                (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "Sign in to create a grain".into(),
+                ),
+                results.get().init_result().init_failure(),
+            );
+        };
         let input = params.get()?;
         let action = input.get_action_id()?.to_str()?;
         let title = input.get_title()?.to_str()?;
-        let value = session
+        let value = match session
             .call(
                 "createGrain",
-                serde_json::json!({ "actionId": action, "title": title }),
+                serde_json::json!({"actionId":action,"title":title}),
             )
             .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
         let grain_id = value["grainId"]
             .as_str()
             .ok_or_else(|| capnp::Error::failed("Missing created grain ID".into()))?;
-        results.get().set_grain_id(grain_id);
+        results
+            .get()
+            .init_result()
+            .init_value()
+            .set_grain_id(grain_id);
         Ok(())
     }
 

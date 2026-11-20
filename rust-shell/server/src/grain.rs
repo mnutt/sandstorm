@@ -190,29 +190,22 @@ impl grain_session::Server for Lease {
         params: grain_session::RenameParams,
         mut results: grain_session::RenameResults,
     ) -> capnp::Result<()> {
-        if self.closed.get() || *self.scope.ended.borrow() {
-            return Err(capnp::Error::failed("Grain session closed".into()));
-        }
         let title = params.get()?.get_title()?.to_str()?;
-        let value = self
-            .scope
-            .session
-            .call(
-                "renameGrain",
-                json!({
-                    "scope": self.scope.key, "lease": self.lease, "title": title
-                }),
-            )
+        let value = match self
+            .bridge_call("renameGrain", json!({"title":title}))
             .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
-        results
-            .get()
-            .set_owner_title(value["ownerTitle"].as_str().unwrap_or_default());
-        results.get().set_title(
-            value["title"]
-                .as_str()
-                .ok_or_else(|| capnp::Error::failed("Invalid grain title response".into()))?,
-        );
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        };
+        let title = value["title"]
+            .as_str()
+            .ok_or_else(|| capnp::Error::failed("Invalid grain title response".into()))?;
+        let mut out = results.get().init_result().init_value();
+        out.set_title(title);
+        out.set_owner_title(value["ownerTitle"].as_str().unwrap_or_default());
         Ok(())
     }
 

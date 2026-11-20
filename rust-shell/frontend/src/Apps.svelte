@@ -138,6 +138,7 @@
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
   {#if creation.status === 'created'}<p>Grain created.</p><Button onclick={() => created(creation.grainId)}>Open created grain</Button><Button onclick={() => service.acknowledgeCreation()}>Create another grain</Button>{/if}
+  {#if creation.status === 'rejected'}<p role="alert">{creation.error}</p><Button onclick={() => service.acknowledgeCreation()}>Dismiss</Button>{/if}
   {#if uncertain}<p role="alert">{creation.status === 'unknown' ? creation.error : ''}</p><p>The request was not retried. Check your grains before creating another.</p><Button onclick={checkGrains}>Check grains</Button><Button onclick={() => service.acknowledgeCreation()}>I checked my grains</Button>{/if}
 </Panel>
 <style>

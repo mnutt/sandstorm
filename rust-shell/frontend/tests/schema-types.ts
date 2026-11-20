@@ -41,3 +41,7 @@ import type { NotificationHandle_Dismiss$Results, NotificationHandle_MarkRead$Re
 export type NoticeDismissPayload = Assert<Equal<NotificationHandle_Dismiss$Results['result']['value'],Empty>>;
 export type NoticeReadPayload = Assert<Equal<NotificationHandle_MarkRead$Results['result']['value'],Empty>>;
 export type AllNoticesReadPayload = Assert<Equal<Shell_MarkAllRead$Results['result']['value'],Empty>>;
+
+import type { Shell_CreateGrain$Results, GrainSession_Rename$Results, CreatedGrain, GrainTitle } from '../src/generated/shell';
+export type CreatedGrainPayload = Assert<Equal<Shell_CreateGrain$Results['result']['value'],CreatedGrain>>;
+export type GrainTitlePayload = Assert<Equal<GrainSession_Rename$Results['result']['value'],GrainTitle>>;

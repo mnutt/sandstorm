@@ -355,11 +355,18 @@ quota, and package checks retain their existing owner. The Rust bridge rechecks
 the linked login and request connection immediately before inserting the grain.
 It admits one in-flight creation per account to prevent overlapping writes.
 
+`Shell.createGrain` returns `Result(CreatedGrain)` and `GrainSession.rename`
+returns `Result(GrainTitle)`. Policy denials carry typed failures and readable
+messages. A rejected creation is retained as a distinct account-scoped outcome;
+dismissing it allows an explicit new attempt without an unknown-outcome warning.
+Rename errors preserve the title editor and do not expose RPC exception details.
+Neither mutation retains its former unwrapped result API.
+
 Creation is never automatically retried. A lost response may mean the grain was
 created; the UI disables another submission and asks the user to check their
 grains. Navigation or disconnect does not delete a grain that already committed.
 Creation outcomes are retained in the account-scoped service when leaving and
-returning to Apps, including pending, created, and unknown results. A successful
+returning to Apps, including pending, created, rejected, and unknown results. A successful
 result offers reopening that grain or explicitly starting another; an unknown
 result requires acknowledging that the grain list was checked. A stable opaque
 account key from the session endpoint separates accounts with identical names.
@@ -405,7 +412,7 @@ charge; it does not stop the grain.
 owner/recipient naming rules as `updateGrainTitle`: owners change the grain and
 upstream share titles; recipients change only their own share names. Renaming a
 share to match the upstream title restores its default naming behavior. The
-bridge bounds title length and permits one rename at a time per lease, checking
+bridge permits one rename at a time per lease, checking
 login, grain access, and lease lifetime again immediately before the write.
 Failed requests are not automatically replayed or rolled back over later writes.
 

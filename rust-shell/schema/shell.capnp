@@ -73,7 +73,7 @@ interface GrainSession {
   beginPowerbox @2 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
   close @3 () -> ();
   renderTemplate @4 (options :TemplateOptions) -> (result :Result(TemplateToken));
-  rename @5 (title :Text) -> (title :Text, ownerTitle :Text);
+  rename @5 (title :Text) -> (result :Result(GrainTitle));
   # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.
@@ -120,7 +120,7 @@ interface Shell {
   markAllRead @9 () -> (result :Result(Empty));
   openGrain @10 (grainId :Text) -> (view :GrainView, session :GrainSession);
   listApps @11 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
-  createGrain @12 (actionId :Text, title :Text) -> (grainId :Text);
+  createGrain @12 (actionId :Text, title :Text) -> (result :Result(CreatedGrain));
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
 
@@ -465,3 +465,6 @@ struct TemplateToken {
   token @0 :Text;
   host @1 :Text;
 }
+
+struct CreatedGrain { grainId @0 :Text; }
+struct GrainTitle { title @0 :Text; ownerTitle @1 :Text; }

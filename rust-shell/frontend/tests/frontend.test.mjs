@@ -68,7 +68,7 @@ test('creation outcomes survive route changes and are isolated by account', asyn
   await assert.rejects(apps.create('action', 'Title'), /previous creation/);
   apps.selectAccount('bob');
   assert.equal(apps.state.status, 'idle');
-  request.resolve({ grainId: 'created' });
+  request.resolve(valueResult({ grainId: 'created' }));
   await assert.rejects(creating, /Account changed/);
   assert.equal(apps.state.status, 'idle');
   apps.selectAccount('alice');
@@ -102,7 +102,7 @@ test('acknowledging an interrupted creation cannot let its late failure overwrit
   old.reject(new Error('old failure'));
   await assert.rejects(first);
   assert.equal(apps.state.status, 'pending');
-  next.resolve({ grainId: 'new' });
+  next.resolve(valueResult({ grainId: 'new' }));
   await second;
   assert.deepEqual(apps.state, { status: 'created', grainId: 'new' });
 });
@@ -274,7 +274,7 @@ test('workspace isolates tab operations, preserves paths, and discards canceled 
     whenClosed: () => ({promise: () => new Promise(() => {})}),
     close: () => ({promise:async () => { closed.push(id); }}), client:{close:()=>{}},
     rename: fill => { const params = {}; fill(params); renamed.push([id,params.title]);
-      return {promise:async () => ({title:params.title})}; },
+      return {promise:async () => valueResult({title:params.title})}; },
   }});
   const openingA = workspace.open('a','/',[]); await turn(); pending.get('a').resolve(result('a')); await openingA;
   workspace.pathChanged('a','/draft');
@@ -466,4 +466,27 @@ test('notification writes release scoped handles and separate policy failures fr
   assert.doesNotMatch(state.notificationError,/CAPNP/);
   assert.equal(releases,2,'timed-out operations release the handle without waiting for RPC completion');
   assert.equal(calls,2,'neither failure is replayed');
+});
+
+
+test('creation distinguishes policy rejection from unknown outcomes without replay', async () => {
+  let calls = 0, reject = true;
+  const apps = new AppService({run:promise=>promise,shell:{createGrain:()=>({promise:async()=>{
+    ++calls;
+    if (!reject) throw new Error('CAPNP internal failure');
+    return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'Invitation required.'}}};
+  }})}},()=>{});
+  apps.selectAccount('alice');
+  await assert.rejects(apps.create('action','title'), /Invitation required/);
+  assert.deepEqual(apps.state,{status:'rejected',error:'Invitation required.'});
+  apps.selectAccount('bob');
+  assert.equal(apps.state.status,'idle');
+  apps.selectAccount('alice');
+  assert.equal(apps.state.status,'rejected');
+  apps.acknowledge();
+  reject = false;
+  await assert.rejects(apps.create('action','title'));
+  assert.equal(apps.state.status,'unknown');
+  assert.doesNotMatch(apps.state.error,/CAPNP/);
+  assert.equal(calls,2);
 });

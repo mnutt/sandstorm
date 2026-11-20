@@ -1,11 +1,12 @@
 import type { ShellConnection } from './connection';
 import type { AppAction } from './model';
-import { errorMessage } from './operations';
+import { ApplicationError, unwrap } from './results';
 
 export type CreationState =
   | { status: 'idle' }
   | { status: 'pending' }
   | { status: 'unknown'; error: string }
+  | { status: 'rejected'; error: string }
   | { status: 'created'; grainId: string };
 
 // Route components do not own mutation outcomes. Keep them scoped to account
@@ -58,18 +59,19 @@ export class AppService {
     this.attempts.set(account, attempt);
     this.set(account, { status: 'pending' });
     try {
-      const result = await this.connection.run(this.connection.shell.createGrain(params => {
+      const response = await this.connection.run(this.connection.shell.createGrain(params => {
         params.actionId = actionId;
         params.title = title;
       }).promise(), 'Create grain');
+      const result = unwrap(response.result);
       if (this.attempts.get(account) !== attempt) throw new Error('Creation was already acknowledged.');
       this.set(account, { status: 'created', grainId: result.grainId });
       if (this.account !== account || version !== this.accountVersion) throw new Error('Account changed.');
       return result.grainId;
     } catch (error) {
-      if (this.attempts.get(account) === attempt && this.outcomes.get(account)?.status !== 'created') this.set(account, {
-        status: 'unknown', error: `Could not confirm grain creation. ${errorMessage(error)}`,
-      });
+      if (this.attempts.get(account) === attempt && this.outcomes.get(account)?.status !== 'created') this.set(account,
+        error instanceof ApplicationError ? {status:'rejected',error:error.message}
+          : {status:'unknown',error:'Could not confirm grain creation. The request was not retried.'});
       throw error;
     }
   }

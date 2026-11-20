@@ -102,6 +102,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     listApps: async id => ({actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}),
     createGrain: async (id, action, title, beforeCreate) => {
       assert.equal(action,id+'-action');
+      if (title === 'Denied creation') throw Object.assign(new Error('You must be invited to create grains.'), {status:403});
       assert.equal(title,'Created in Rust');
       await beforeCreate(); ++creations;
       if (failCreation) throw new Error('Simulated lost creation result');
@@ -135,7 +136,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
-      rename: async (_handle, title, beforeWrite) => { await beforeWrite(); grainTitles.alice = title; changed(); return { title, ownerTitle: title }; },
+      rename: async (_handle, title, beforeWrite) => { await beforeWrite(); if (title === 'Denied rename') throw Object.assign(new Error('You cannot rename this grain.'), {status:403}); grainTitles.alice = title; changed(); return { title, ownerTitle: title }; },
       sharing: async () => ({roles:[{key:'0',title:'Viewer',description:'Read only'},{key:'1',title:'Editor',description:'Can edit'}],defaultRole:'0',private:true,owner:true,
         grants:[...sharingGrants,{id:'downstream',kind:'person',recipient:'Bob',recipientPictureUrl:fixtureAvatar,label:'Via project link',role:'0',editable:false,inherited:true,created:''}],limited:false}),
       createShare: async (_handle, input, beforeWrite) => {
@@ -547,6 +548,12 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await expect(page.locator('.grain-item')).toHaveCount(1);
     await page.getByRole('button', {name:'New grain',exact:true}).click();
     await page.getByLabel('Installed app action').selectOption('alice-action');
+    await page.getByLabel('Grain title').fill('Denied creation');
+    await page.getByRole('button', {name:'Create grain',exact:true}).click();
+    await expect(page.getByRole('alert')).toHaveText('You must be invited to create grains.');
+    assert.equal(creations,0,'a policy denial must not create or replay a grain');
+    await expect(page.getByText('The request was not retried. Check your grains before creating another.')).toHaveCount(0);
+    await page.getByRole('button', {name:'Dismiss',exact:true}).click();
     await page.getByLabel('Grain title').fill('Created in Rust');
     await page.getByRole('button', {name:'Create grain',exact:true}).click();
     await expect.poll(() => new URL(page.url()).pathname).toBe('/grain/alice-created');
@@ -754,6 +761,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.locator('.grain-title:visible').hover();
     await page.getByRole('button', {name:'Rename grain',exact:true}).click();
 
+    await page.getByLabel('Grain title', {exact:true}).fill('Denied rename');
+    await page.getByRole('button', {name:'Save title',exact:true}).click();
+    await expect(dialog.getByRole('alert')).toHaveText('You cannot rename this grain.');
+    assert.equal(grainTitles.alice,undefined,'a denied rename must not change the title');
     await page.getByLabel('Grain title', {exact:true}).fill('Renamed in Rust with a long title that must fit in the sidebar');
     await page.getByRole('button', {name:'Save title',exact:true}).click();
     await page.getByRole('heading', {name:'Renamed in Rust with a long title that must fit in the sidebar',exact:true}).waitFor();

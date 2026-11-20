@@ -114,13 +114,15 @@ export class GrainService {
     if (this.renaming) throw new Error('A rename is already pending.');
     this.renaming = true;
     try {
-      const result = await this.connection.run(session.rename(params => { params.title = title; }).promise(), 'Rename grain');
+      const response = await this.connection.run(session.rename(params => { params.title = title; }).promise(), 'Rename grain');
+      const result = unwrap(response.result);
       if (generation !== this.generation || !this.active) throw new Error('Grain session changed.');
       this.active = { ...this.active, title: result.title, ownerTitle: result.ownerTitle || this.active.ownerTitle };
       this.changed({ activeGrain: this.active, grainError: '' });
     } catch (error) {
-      if (generation === this.generation) this.changed({ grainError: `Could not confirm rename. Check the current title before trying again. ${errorMessage(error)}` });
-      throw error;
+      const message = applicationErrorMessage(error, 'Could not confirm rename. Check the current title before trying again.');
+      if (generation === this.generation) this.changed({ grainError: message });
+      throw new Error(message);
     } finally { if (generation === this.generation) this.renaming = false; }
   }
   async powerbox(request: string, operation: Parameters<PowerboxActions['call']>[1], input: Record<string, unknown> = {}): Promise<PowerboxState> {
