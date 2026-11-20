@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "bits-ui": "2.21.0",
-    "capnp-es": "npm:@mnutt/capnp-es@0.4.0",
+    "capnp-es": "npm:@mnutt/capnp-es@0.5.0",
     "svelte": "5.58.0"
   },
   "devDependencies": {
