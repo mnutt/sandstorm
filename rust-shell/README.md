@@ -289,12 +289,48 @@ The displayed connected name updates after a successful save or profile refresh.
 This is not full account-settings parity or conflict resolution: saves
 retain the main shell's last-write-wins behavior.
 
+### Native account credentials and sign-in
+
+The account page lists linked login methods and verified email addresses, supports
+primary-email selection, email-code verification, GitHub linking, and credential
+removal/login toggles. Mutations are account-scoped and serialized; removing the
+last login method is rejected. Credential-array updates compare the authorized
+arrays to reject concurrent changes. Email codes are consumed atomically and
+checked for expiry at consumption, using the same helper as the Meteor UI.
+
+`/login` offers enabled development accounts, email codes, LDAP, and GitHub.
+The bridge invokes the real Meteor login methods using a temporary DDP connection
+through a secret-protected loopback upgrade listener into Meteor’s existing DDP
+handler. This avoids dependence on public DNS or gateway redirects. Existing login validators, organization checks,
+account creation, and login-token ownership remain in Meteor. Rust receives the
+linked session and sets its existing HttpOnly cookie; passwords and credential
+resume tokens are never persisted in frontend state or browser storage.
+
+GitHub uses the existing configured callback URL. A bounded, expiring, server-side
+request map binds each flow to its Rust sign-in cookie, linked account, or provider
+session. Only those state tokens use the Rust callback adapter; other OAuth flows
+retain Meteor's handler. The callback retains the OAuth secret on the server and
+redirects its popup to `/oauth-complete`. The opener polls for completion; secrets
+never pass through postMessage, query strings, or localStorage. Cancellation and
+completion consume the request. GitHub configuration is reused without changing
+provider callback registration. Other sign-in providers retain an explicit main
+shell fallback. Email messages still include the canonical Meteor email link;
+the code can be entered directly in the native form.
+
+Lists now have native Previous/Next controls. Grains and notification pages remain
+live through the same bounded subscription, with at most 100 entries per list.
+Switching pages cancels the old long-poll and reads/observes the selected page;
+reconnecting starts at page one. The notification bell reflects unread entries
+across the entire account. Installed actions use bounded pages and app-specific
+queries so direct app routes can find actions beyond the first page. Search and
+sort apply to the displayed page; concurrent writes may move rows between pages.
+
 ### Installed apps and grain creation
 
-The **Apps** page lists up to 100 installed account-owned actions. It refreshes
-on entry/reconnect or **Refresh apps**, rather than maintaining another live
-projection. Choose an action and title to create and open a grain here. Package
-installation and development-only app actions remain in the main shell.
+The **Apps** page lists installed account-owned actions in pages of 100. It refreshes
+on entry/reconnect and page changes. Choose an action and title to create and open
+a grain here. Installation and upgrades also have native UI; development-only app
+actions remain in the main shell.
 
 The browser supplies only an action ID and title. Meteor resolves the command
 and package from that account's installed action, then uses the same
@@ -462,9 +498,11 @@ iframe origin/source validation. It offers a searchable list of matching grains
 and built-in capabilities. Users can grant a UiView with selected permissions,
 open a provider app inside the dialog to choose an object, use an existing
 verified email/network capability, enter an HTTP(S) URL, or paste a local API
-capability link. Newly verified email,
-OAuth authorization and provider flows needing nested
-shell interactions retain **More options in main shell** as an explicit fallback.
+capability link. New email verification and GitHub OAuth authorization are also native. Provider
+iframes can request nested native Powerbox choosers, with four levels at most.
+Each child is bound to its provider session, not the outer requesting grain;
+closing a parent closes its children. Other OAuth providers and unsupported shell
+interactions retain **More options in main shell** as an explicit fallback.
 
 `GrainSession.powerbox` exposes only begin/select/poll/cancel operations. Each
 request is bound to its account, grain lease, and random request ID, expires in
@@ -725,6 +763,14 @@ Rust tests cover framing boundaries, segmented frames and size limits.
 Authentication tests use the production bridge core and HTTP handler with an
 in-memory database adapter: one-use grants, account isolation, shared writes,
 account switching across tabs, logout, expiration, and source-token revocation.
+`tests/tests/rust-auth.js` exercises native development-account sign-in, GitHub
+callback completion and credential linking, account settings, and atomic email-code
+consumption against real Meteor methods and Mongo. Its GitHub credentials and
+provider responses are synthetic; it does not exercise live GitHub consent or send
+email. These checks also run in the packaged grain-session suite, alongside nested
+Powerbox provider-session isolation. The browser suite mocks the GitHub popup and
+checks native pagination and account controls.
+
 The actual Meteor notification regression (`tests/tests/notifications.js`) also
 passed against the fast bundle in an isolated Sandstorm server, covering the
 shared mutation functions and publication scoping. Native Sandstorm CTests pass.
@@ -805,7 +851,8 @@ subscriptions, and popup blocking in addition to the browser integration suite.
 
 Next useful slices:
 
-1. Finish notification presentation parity: avatars, app icons, and localized copy.
+1. Complete remaining provider adapters (Google, OIDC, SAML), notification app
+   icons, and localized copy.
 2. Validate full installed-server update recovery and main-shell visual/behavioral
    parity before migrating production UI.
 3. Extend embedded-app compatibility (Powerbox and other postMessage APIs), with
