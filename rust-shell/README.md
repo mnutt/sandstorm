@@ -729,10 +729,20 @@ contract: superseded methods are removed, ordinals can change, and frontend/serv
 bindings must be deployed together. The private Meteor adapter still uses JSON
 internally. Sharing roles, grants and edits cross the browser boundary as typed
 structures; label-only edits explicitly preserve existing custom permissions.
-Expected installation, account, sharing, notification, and Powerbox denials use `Result.failure`, with
+Expected installation, account, sharing, notification, grain, app-list, shared-view,
+and Powerbox denials use `Result.failure`, with
 a typed code and a readable message. Unexpected transport/backend errors remain
 RPC failures; these views display a generic outcome-uncertain message instead of
-protocol details and never automatically retry a mutation.
+protocol details and never automatically retry a mutation. Grain and notification
+query observers deliver `Result(Page)` and terminate after a policy failure;
+the client preserves that reason when the terminal signal follows. Expired
+resource operations have an explicit `expired` failure code; Meteor storage-quota
+denials use `quotaExceeded` without introducing a new quota.
+
+Installation factories remain pipelinable: `Installer.open` returns a selector
+capability, while its typed operations validate package IDs and recheck policy.
+App lists preserve the page returned by Meteor without a second Rust truncation.
+Template role IDs match Meteor's signed 32-bit `Match.Integer` contract.
 
 Installation catalog/status results include advisory `InstallPermissions`.
 The UI explains invitation, demo, and free-account upload restrictions before
@@ -742,6 +752,49 @@ restrictions, package checks, and account authorization still run on every write
 Rust dependencies use `Cargo.lock`; Cap'n Proto is pinned to the 0.25 family.
 The full baseline Meteor suite has **not** been run, so this is not completion
 of the proposal's Phase 0 or Phase 1 exit gate.
+
+## Completed browser RPC audit
+
+The `shell.capnp` audit backlog is complete for the implemented Rust-shell
+features. This is separate from completing the architecture proposal or porting
+all remaining main-shell features.
+
+| Area | Final contract |
+| --- | --- |
+| Wire payloads | Domain structs, enums, unions, and branded `Result(T)`; no JSON-text browser RPCs or superseded compatibility methods. Display reports, URLs, webkeys, and encoded app Powerbox descriptors remain text by design. |
+| Capability authority | Account, installation, notification, sharing, grain, and Powerbox handles scope operations; IDs are selectors and Meteor rechecks authority. Public shared-view bootstrap cannot expose account Shell authority. |
+| Application failures | Expected denials, validation errors, and expiry are typed values, including shared-link inspection/opening and app lists. Query observers deliver typed terminal failures. Transport/backend faults remain exceptions with safe UI messages. |
+| Factories and pipelining | Pure capability factories remain immediately callable; installation input validation occurs in typed operations. Grain opens return metadata and their lease together on success only. |
+| Observation | Per-view query subscriptions, acknowledged serialized callbacks, explicit cancellation/release, and terminal signals. Typed failure reasons survive subsequent closure; late callbacks after disposal are ignored. |
+| Lifetimes | Late opens release capabilities; malformed grain projections/URLs clean up sessions. Client cancellation deadlines release handles even if the acknowledgment never arrives. Closed Powerbox state terminates instead of polling indefinitely. |
+| Mutations | Follow-up read or authorization failures after a completed write are uncertain outcomes, never apparent policy rejections. No automatic replay. Definite policy rejections remain distinct from unknown outcomes; account/generation guards protect state during navigation and account changes. |
+| Limits | No additional production RPC throughput, connection, question, capability, subscription, grain, or share quotas. Transport framing follows the existing Meteor default; canonical validation and page sizing remain with Meteor. |
+| Bindings | Compiler/runtime pinned together at `@mnutt/capnp-es` 0.5.0; schema-type tests check branded payloads, including capability-bearing opens and observer arguments. Frontend and server deploy together. |
+
+Intentional RPC exceptions remain for malformed protocol data, failed capability
+factories on the wrong bootstrap (such as real-account operations in fixture
+mode), entropy/internal projection failures, transport loss, observer delivery
+failure, and best-effort close/cancel failures. These are not successful domain
+results or reasons to retry a mutation. Connection recovery and root-summary
+subscription failure trigger reauthentication/revalidation rather than retaining
+stale account projections. Fixture-only methods and the C++ interoperability
+fixture remain explicitly gated test surfaces.
+
+Validation covers Rust unit/lifetime tests; frontend state and browser RPC tests;
+public/shared versus account authority; typed failure and callback delivery;
+post-write revocation across account and grain operations;
+real packaged grain creation, permission revocation, sharing, templates, and
+Powerbox; and packaged account/profile/list flows. The full baseline Meteor suite
+is still a separate migration exit gate. The private Meteor adapter deliberately
+continues using JSON over its Unix socket; direct Mongo access and provider
+feature parity are not part of this audit.
+
+Final verification for this audit: `make -C rust-shell test` passed 17 Rust tests
+and 72 frontend/browser tests, along with formatting, Clippy, Svelte and TypeScript
+checks. `make fast` produced the update bundle. `make -C rust-shell test-package`
+passed 100 assertions; `TESTCASE=tests/rust-auth.js tests/run-local.sh
+build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk` passed
+18 account/profile/list assertions. Both packaged suites use isolated servers.
 
 ## Executor and transport
 
