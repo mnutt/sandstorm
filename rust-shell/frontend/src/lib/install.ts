@@ -1,4 +1,4 @@
-import { PackageStage, InstallationObserver, type Installation$Client, type Subscription$Client, type InstallationState } from '../generated/shell';
+import { PackageStage, InstallationObserver, type Installation$Client, type Subscription$Client, type InstallationState, type InstallPermissions as WirePermissions } from '../generated/shell';
 import { unwrap, ApplicationError } from './results';
 import type { ShellConnection } from './connection';
 // Only explicitly returned application errors are safe to display. RPC and
@@ -10,12 +10,17 @@ export function installationError(error: unknown, writing = false): string {
     ? 'Could not confirm the operation. Check the current status before trying again.'
     : 'Could not load app information. Please try again.';
 }
+export interface InstallPermissions {canInstall:boolean;canUpload:boolean;installReason:string;uploadReason:string}
+function permissions(value:WirePermissions):InstallPermissions {
+  return {canInstall:value.canInstall,canUpload:value.canUpload,installReason:value.installReason,uploadReason:value.uploadReason};
+}
 export interface InstallState {
+  permissions: InstallPermissions;
   packageId: string; status: string; progress: number; error: string;
   appId: string; title: string; description: string; version: string; fingerprint: string;
   iconSrc: string; installed: boolean; newerInstalled: boolean; olderGrains: number;
 }
-export interface InstallCatalog { marketUrl: string; updates: {packageId:string;title:string;version:string;url:string}[] }
+export interface InstallCatalog { permissions:InstallPermissions; marketUrl: string; updates: {packageId:string;title:string;version:string;url:string}[] }
 export class InstallService {
   constructor(private connection: ShellConnection) {}
   open(packageId:string,url='') {
@@ -24,7 +29,7 @@ export class InstallService {
   }
   async catalog(): Promise<InstallCatalog> {
     const value=unwrap((await this.connection.run(this.connection.installer.catalog().promise(),'Load app catalog')).result);
-    return {marketUrl:value.marketUrl,updates:[...value.updates].map(row=>({packageId:row.packageId,title:row.title,version:row.version,url:row.url}))};
+    return {permissions:permissions(value.permissions),marketUrl:value.marketUrl,updates:[...value.updates].map(row=>({packageId:row.packageId,title:row.title,version:row.version,url:row.url}))};
   }
   async state(operation: string, packageId: string, url = ''): Promise<InstallState> {
     const installer=this.connection.installer;
@@ -71,7 +76,7 @@ export function installState(value: InstallationState): InstallState {
     [PackageStage.UNPACK]:'unpack',[PackageStage.ANALYZE]:'analyze',[PackageStage.READY]:'ready',
     [PackageStage.FAILED]:'failed',[PackageStage.DELETE]:'delete',
   };
-  return {packageId:value.packageId,status:stages[value.stage] || 'unknown',progress:value.progress,error:value.error,
+  return {permissions:permissions(value.permissions),packageId:value.packageId,status:stages[value.stage] || 'unknown',progress:value.progress,error:value.error,
     appId:value.appId,title:value.title,description:value.description,version:value.version,fingerprint:value.fingerprint,
     iconSrc:value.iconSrc,installed:value.installed,newerInstalled:value.newerInstalled,olderGrains:value.olderGrains};
 }

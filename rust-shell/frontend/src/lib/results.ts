@@ -9,3 +9,7 @@ export function unwrap<T>(result: {readonly _isValue:boolean; readonly _isFailur
   if (!result._isValue) throw new Error('The server returned an unsupported result.');
   return result.value;
 }
+
+export function applicationErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApplicationError ? error.message : fallback;
+}

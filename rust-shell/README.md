@@ -685,6 +685,15 @@ The native frontend now uses typed `Installer`/`Installation`, `Account`, and
 query subscriptions. Existing string/JSON methods retain their original ordinals
 for compatibility while the migration proceeds; the private Meteor adapter still
 uses JSON internally. Sharing and several other domains have not yet migrated.
+Expected installation, account, and Powerbox denials use `Result.failure`, with
+a typed code and a readable message. Unexpected transport/backend errors remain
+RPC failures; these views display a generic outcome-uncertain message instead of
+protocol details and never automatically retry a mutation.
+
+Installation catalog/status results include advisory `InstallPermissions`.
+The UI explains invitation, demo, and free-account upload restrictions before
+offering the corresponding action. These flags confer no authority: download URL
+restrictions, package checks, and account authorization still run on every write.
 
 Rust dependencies use `Cargo.lock`; Cap'n Proto is pinned to the 0.25 family.
 The full baseline Meteor suite has **not** been run, so this is not completion

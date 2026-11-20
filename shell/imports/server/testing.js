@@ -1,3 +1,4 @@
+import { appInstallPermissions } from "/imports/server/install-server";
 import { grainMenu } from "/imports/server/rust-shell-grains";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
 import { finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
@@ -2047,6 +2048,28 @@ if(isTesting) {
         await globalDb.collections.grains.updateAsync(grainId,{$set:{packageId:source.packageId,appVersion:source.appVersion}});
         await globalDb.collections.userActions.updateAsync({userId:this.userId,packageId:pkg._id},{$set:{appVersion:version}},{multi:true});
       }
+    },
+
+    async testRustInstallPermissions() {
+      if (!this.userId) throw new Meteor.Error(403, "Sign in first");
+      const original = Meteor.settings.public.allowUninvited;
+      const account = {type:"account",loginCredentials:[],signupKey:"test"};
+      const require = (value, message) => { if (!value) throw new Error(message); };
+      try {
+        Meteor.settings.public.allowUninvited = false;
+        let policy = await appInstallPermissions(globalDb, account);
+        require(policy.canInstall && policy.canUpload, "Invited account was denied");
+        policy = await appInstallPermissions(globalDb, {...account, signupKey:undefined});
+        require(!policy.canInstall && !policy.canUpload && policy.installReason && policy.uploadReason, "Uninvited account lacks an explanation");
+        policy = await appInstallPermissions(globalDb, {...account,expires:new Date(Date.now()+60000)});
+        require(policy.canInstall && !policy.canUpload, "Demo upload policy changed");
+        Meteor.settings.public.allowUninvited = true;
+        policy = await appInstallPermissions(globalDb, {...account,plan:"free"});
+        require(policy.canInstall && !policy.canUpload && policy.uploadReason, "Free account upload policy changed");
+        policy = await appInstallPermissions(globalDb, {...account,plan:"paid"});
+        require(policy.canInstall && policy.canUpload, "Paid account was denied");
+        return true;
+      } finally { Meteor.settings.public.allowUninvited = original; }
     },
 
     async testRustGrainQueries() {

@@ -69,23 +69,26 @@
   {:else if model.fixture}<p>App installation requires an installed Sandstorm server.</p>
   {:else if loading}<LoadingStatus label="Loading app details…" />
   {:else if !packageId}
-    <div class="install-options"><a class="market" href={marketUrl}>Browse app market</a><label class="upload">Upload an SPK<input type="file" accept=".spk" disabled={busy} onchange={upload} /></label></div>
+    <div class="install-options"><a class="market" href={marketUrl}>Browse app market</a><label class="upload">Upload an SPK<input type="file" accept=".spk" disabled={busy || !catalog?.permissions.canUpload} onchange={upload} /></label></div>
     {#if uploadPercent !== undefined}<LoadingStatus label={uploadPercent < 100 ? 'Uploading package…' : 'Verifying uploaded package…'} /><progress max="100" value={uploadPercent}></progress>{/if}
+    {#if catalog && !catalog.permissions.canInstall}<p>{catalog.permissions.installReason}</p>{/if}
+    {#if catalog && !catalog.permissions.canUpload}<p>{catalog.permissions.uploadReason}</p>{/if}
     <h2>Available updates</h2>
     {#if catalog?.updates.length}<ul>{#each catalog.updates as update (update.packageId)}<li><div><strong>{update.title}</strong><small>{update.version}</small></div><Button variant="secondary" disabled={busy} onclick={() => navigate(installRoute(update.packageId,update.url))}>Review update</Button></li>{/each}</ul>
     {:else}<p>No updates listed by this server’s app index.</p>{/if}
   {:else if pkg}
     {#if pkg.title}<div class="summary"><AppIcon src={pkg.iconSrc} /><div><h2>{pkg.title}</h2><p>{pkg.description}</p><small>Version {pkg.version}</small></div></div>{/if}
+    {#if !pkg.permissions.canInstall}<p>{pkg.permissions.installReason}</p>{/if}
     {#if pkg.status === 'ready'}
       {#if pkg.fingerprint}<p class="fingerprint">Author signing key: {pkg.fingerprint}</p>{/if}
       {#if pkg.newerInstalled}<p>A newer version is already installed. Downgrading is not available.</p>
-      {:else if !pkg.installed}<p>Install this app for your account? Existing grains keep their current version until you choose to upgrade them.</p><Button disabled={busy} onclick={() => act('confirm')}>{busy ? 'Installing…' : 'Install app'}</Button>
+      {:else if !pkg.installed}<p>Install this app for your account? Existing grains keep their current version until you choose to upgrade them.</p><Button disabled={busy || !pkg.permissions.canInstall} onclick={() => act('confirm')}>{busy ? 'Installing…' : 'Install app'}</Button>
       {:else}<p>Installed for your account.</p><div class="actions"><Button disabled={busy} onclick={() => navigate(appRoute(pkg!.appId))}>Open app</Button>
-        {#if pkg.olderGrains}<Button variant="secondary" disabled={busy} onclick={() => act('upgrade')}>{busy ? 'Upgrading…' : `Upgrade ${pkg.olderGrains} existing ${pkg.olderGrains === 1 ? 'grain' : 'grains'}`}</Button>{/if}</div>
+        {#if pkg.olderGrains}<Button variant="secondary" disabled={busy || !pkg.permissions.canInstall} onclick={() => act('upgrade')}>{busy ? 'Upgrading…' : `Upgrade ${pkg.olderGrains} existing ${pkg.olderGrains === 1 ? 'grain' : 'grains'}`}</Button>{/if}</div>
         {#if pkg.olderGrains}<p class="hint">Upgrading restarts your grains using this version. Newer grains are left unchanged.</p>{/if}
       {/if}
-    {:else if pkg.status === 'failed'}<p role="alert">{pkg.error || 'Package installation failed.'}</p><Button disabled={busy || !url} onclick={() => act('retry')}>Retry download</Button>
-    {:else if pkg.status === 'missing'}<p>Download and verify this package before installing it.</p><p class="source">{url || 'No download URL supplied. Upload the SPK or open a link from the app market.'}</p><Button disabled={busy || !url} onclick={() => act('download')}>{busy ? 'Starting…' : 'Download app'}</Button>
+    {:else if pkg.status === 'failed'}<p role="alert">{pkg.error || 'Package installation failed.'}</p><Button disabled={busy || !url || !pkg.permissions.canInstall} onclick={() => act('retry')}>Retry download</Button>
+    {:else if pkg.status === 'missing'}<p>Download and verify this package before installing it.</p><p class="source">{url || 'No download URL supplied. Upload the SPK or open a link from the app market.'}</p><Button disabled={busy || !url || !pkg.permissions.canInstall} onclick={() => act('download')}>{busy ? 'Starting…' : 'Download app'}</Button>
     {:else}<LoadingStatus label={stages[pkg.status] || 'Preparing app…'} />{#if pkg.progress > 0 && pkg.progress <= 1}<progress max="1" value={pkg.progress}></progress>{:else if pkg.progress > 1}<p>{Math.round(pkg.progress / 1024)} KiB downloaded</p>{/if}{/if}
     <div class="back"><Button variant="secondary" disabled={busy} onclick={() => navigate('/install')}>Back to app installation</Button></div>
   {/if}

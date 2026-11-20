@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { applicationErrorMessage } from './lib/results';
   import NestedPowerbox from './PowerboxDialog.svelte';
   import { record, powerboxRequest, rpcId } from './lib/protocol';
   import { authorizeOAuth } from './lib/oauth';
@@ -92,12 +93,12 @@
   async function pollOnce() {
     if (!alive || completed || nested) return;
     try { await accept(await actions.call(id,'poll')); }
-    catch (e) { if (alive) { provider = undefined; error = String(e); } }
+    catch (e) { if (alive) { provider = undefined; error = applicationErrorMessage(e, 'Could not load the connection request. Cancel and try again.'); } }
   }
   onMount(() => {
     void (async () => {
       try { await accept(await actions.call(id,'begin',{query:request.query || []})); }
-      catch (e) { if (alive) error = String(e); }
+      catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not load the connection request. Cancel and try again.'); }
       finally { if (alive) busy = false; }
     })();
     expires = setTimeout(() => done({canceled:true}),300000);
@@ -114,7 +115,7 @@
     webkey = '';
     busy = true;
     try { await accept(await actions.call(id,'select',{mode:'webkey',url:link})); }
-    catch (e) { if (alive) error = `Could not connect using that link. Cancel and request it again. ${String(e)}`; }
+    catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not confirm the connection. Cancel and check the current status before trying again.'); }
     finally { if (alive) busy = false; }
   }
   async function github() {
@@ -131,7 +132,7 @@
         return result.status === 'waiting' ? null : result;
       }, () => actions.call(id,'cancel'), lifetime.signal);
       await accept(result);
-    } catch (failure) { if (alive) error=String(failure); }
+    } catch (failure) { if (alive) error=applicationErrorMessage(failure, 'Could not complete authorization. Cancel and try again.'); }
     finally { if (alive) busy=false; }
   }
   async function connect(mode = 'ref') {
@@ -139,7 +140,7 @@
     busy = true;
     const submittedCode = code; code = '';
     try { await accept(await actions.call(id,'select',{key:selected.key,mode,role,url,email,code:submittedCode})); }
-    catch (e) { if (alive) error = `Could not complete the connection. Cancel and request it again. ${String(e)}`; }
+    catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not confirm the connection. Cancel and check the current status before trying again.'); }
     finally { if (alive) busy = false; }
   }
 </script>

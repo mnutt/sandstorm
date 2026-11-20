@@ -2,6 +2,7 @@ use crate::{
     grain::Lease,
     shell_capnp::{self as api, powerbox_request, powerbox_selection},
 };
+use axum::http::StatusCode;
 use serde_json::{json, Value};
 use std::{cell::Cell, rc::Rc};
 
@@ -36,11 +37,16 @@ impl Request {
         grain: Rc<Lease>,
         mut path: Vec<String>,
         query: Vec<String>,
-    ) -> capnp::Result<(Self, Value)> {
+    ) -> Result<(Self, Value), crate::bridge::Error> {
         if path.len() >= 4 {
-            return Err(capnp::Error::failed("Too many nested requests".into()));
+            return Err((StatusCode::BAD_REQUEST, "Too many nested requests".into()));
         }
-        path.push(nonce()?);
+        path.push(nonce().map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Cannot create request".into(),
+            )
+        })?);
         let request = Self {
             grain,
             path,
@@ -49,9 +55,9 @@ impl Request {
         let value = request.call("begin", json!({"query":query})).await?;
         Ok((request, value))
     }
-    async fn call(&self, operation: &str, mut data: Value) -> capnp::Result<Value> {
+    async fn call(&self, operation: &str, mut data: Value) -> Result<Value, crate::bridge::Error> {
         if self.canceled.get() && operation != "cancel" {
-            return Err(capnp::Error::failed("Connection request closed".into()));
+            return Err((StatusCode::CONFLICT, "Connection request closed".into()));
         }
         let mut operation = operation.to_owned();
         for id in self.path.iter().skip(1).rev() {
@@ -60,7 +66,7 @@ impl Request {
         }
         data["request"] = json!(self.path[0]);
         data["operation"] = json!(operation);
-        let mut value = self.grain.sharing_call("powerbox", data).await?;
+        let mut value = self.grain.bridge_call("powerbox", data).await?;
         for _ in self.path.iter().skip(1) {
             value = value["view"].take();
         }
@@ -149,16 +155,24 @@ impl powerbox_request::Server for Request {
         }
         let mut data = json!({"key":key,"mode":mode});
         data[field] = json!(value);
-        let value = self.call("select", data).await?;
-        write(&value, results.get().init_result().init_value())
+        match self.call("select", data).await {
+            Ok(value) => write(&value, results.get().init_result().init_value()),
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
     }
     async fn poll(
         self: Rc<Self>,
         _: powerbox_request::PollParams,
         mut results: powerbox_request::PollResults,
     ) -> capnp::Result<()> {
-        let value = self.call("poll", json!({})).await?;
-        write(&value, results.get().init_result().init_value())
+        match self.call("poll", json!({})).await {
+            Ok(value) => write(&value, results.get().init_result().init_value()),
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
     }
     async fn cancel(
         self: Rc<Self>,
@@ -166,7 +180,9 @@ impl powerbox_request::Server for Request {
         _: powerbox_request::CancelResults,
     ) -> capnp::Result<()> {
         if !self.canceled.replace(true) {
-            self.call("cancel", json!({})).await?;
+            self.call("cancel", json!({}))
+                .await
+                .map_err(|(_, message)| capnp::Error::failed(message))?;
         }
         Ok(())
     }
@@ -176,16 +192,26 @@ impl powerbox_request::Server for Request {
         mut results: powerbox_request::NestedResults,
     ) -> capnp::Result<()> {
         if self.canceled.get() {
-            return Err(capnp::Error::failed("Connection request closed".into()));
+            return crate::workflow::failure(
+                (StatusCode::CONFLICT, "Connection request closed".into()),
+                results.get().init_result().init_failure(),
+            );
         }
-        let (child, value) = Self::open(
+        let opened = Self::open(
             self.grain.clone(),
             self.path.clone(),
             query(params.get()?.get_query()?)?,
         )
-        .await?;
-        write(&value, results.get().init_result().init_value())?;
-        results.get().set_request(capnp_rpc::new_client(child));
+        .await;
+        match opened {
+            Ok((child, value)) => {
+                write(&value, results.get().init_result().init_value())?;
+                results.get().set_request(capnp_rpc::new_client(child));
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())?
+            }
+        }
         Ok(())
     }
 }

@@ -1,6 +1,5 @@
-import { unwrap } from './results';
+import { unwrap, applicationErrorMessage } from './results';
 import type { ShellConnection } from './connection';
-import { errorMessage } from './operations';
 
 export interface AccountSettings {
   emailEnabled: boolean;
@@ -45,7 +44,7 @@ export class AccountService {
       this.update({value, notice: operation === 'sendEmail' ? 'Verification code sent. Check your email.' : operation === 'state' || value.oauth || operation === 'githubCancel' ? '' : 'Account settings updated.'});
       return value;
     } catch (error) {
-      if (generation === this.generation) this.update({error:operation === 'state' ? errorMessage(error) : `${errorMessage(error)} Check the current settings before trying again.`});
+      if (generation === this.generation) this.update({error:applicationErrorMessage(error, operation === 'state' ? 'Could not load account settings. Please try again.' : 'Could not confirm the change. Check your account settings before trying again.')});
       return false;
     } finally { if (generation === this.generation) this.update({pending:false}); }
   }

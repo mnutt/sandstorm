@@ -41,10 +41,10 @@ export class PowerboxRequests {
       const parentRequest=parent ? this.requests.get(parent)?.client : undefined;
       if (parent && !parentRequest) throw new Error('Provider request closed.');
       const request=parentRequest ? parentRequest.nested(fill) : session.beginPowerbox(fill);
-      const result=await this.connection.run(request.promise(),'Open connection request',{onLateResult:r=>this.release(r.request)});
-      if (generation!==this.generation) {this.release(result.request);throw new Error('Grain session changed.');}
+      const result=await this.connection.run(request.promise(),'Open connection request',{onLateResult:r=>{if(r.result._isValue)this.release(r.request);}});
+      if (generation!==this.generation) {if(result.result._isValue)this.release(result.request);throw new Error('Grain session changed.');}
       try {const view=state(unwrap(result.result));this.requests.set(id,{client:result.request,parent});return view;}
-      catch(error) {this.release(result.request);throw error;}
+      catch(error) {if(result.result._isValue)this.release(result.request);throw error;}
     }
     const current=this.requests.get(id);
     if (!current) {if(operation==='cancel') return {status:'waiting'};throw new Error('Connection request closed.');}

@@ -61,15 +61,26 @@ const localizedTextPattern = {
 // Not all users are allowed to upload apps. We need to manually implement authorization
 // because Meteor.userId() is not available in server-side routes.
 
+// Advisory UI state and upload authorization share the same account policy.
+// Download URL restrictions and package-specific checks still run on each write.
+export async function appInstallPermissions(db, account) {
+  const canInstall = !!account?.loginCredentials && await db.isAccountSignedUpOrDemoAsync(account);
+  let uploadReason = "";
+  if (!await db.isAccountSignedUpAsync(account)) {
+    uploadReason = "Only invited, non-demo accounts can upload apps.";
+  } else if (Meteor.settings.public.allowUninvited &&
+      !account.expires && (!account.plan || account.plan === "free")) {
+    uploadReason = "Only paid accounts can upload custom apps on this server.";
+  }
+  return {canInstall, canUpload:!uploadReason, uploadReason,
+    installReason:canInstall ? "" : "Your account needs an invitation before you can install apps. Ask the server administrator to grant you access."};
+}
+
 export async function newUploadTokenForUser(db, accountId, beforeWrite = async () => {}) {
   const account = await Meteor.users.findOneAsync({ _id: accountId });
-  if (!await db.isAccountSignedUpAsync(account)) {
-    throw new Meteor.Error(403, "Unauthorized", "Only invited users can upload apps.");
-  }
-
-  if (Meteor.settings.public.allowUninvited &&
-      account && !account.expires && (!account.plan || account.plan === "free")) {
-    throw new Meteor.Error(403, "Unauthorized", "Only paid users can upload apps.");
+  const permissions = await appInstallPermissions(db, account);
+  if (!permissions.canUpload) {
+    throw new Meteor.Error(403, "Unauthorized", permissions.uploadReason);
   }
 
   await beforeWrite();

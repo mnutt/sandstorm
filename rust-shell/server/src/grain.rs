@@ -118,19 +118,28 @@ pub(crate) struct Lease {
     closed: Cell<bool>,
 }
 impl Lease {
-    pub(crate) async fn sharing_call(
+    pub(crate) async fn bridge_call(
         &self,
         operation: &str,
         mut input: serde_json::Value,
-    ) -> capnp::Result<serde_json::Value> {
+    ) -> Result<serde_json::Value, crate::bridge::Error> {
         if self.closed.get() {
-            return Err(capnp::Error::failed("Grain session closed".into()));
+            return Err((
+                axum::http::StatusCode::CONFLICT,
+                "Grain session closed".into(),
+            ));
         }
         input["scope"] = json!(self.scope.key);
         input["lease"] = json!(self.lease);
-        self.scope
-            .session
-            .call(operation, input)
+        self.scope.session.call(operation, input).await
+    }
+
+    pub(crate) async fn sharing_call(
+        &self,
+        operation: &str,
+        input: serde_json::Value,
+    ) -> capnp::Result<serde_json::Value> {
+        self.bridge_call(operation, input)
             .await
             .map_err(|(_, error)| capnp::Error::failed(error))
     }
@@ -142,9 +151,15 @@ impl grain_session::Server for Lease {
         mut results: grain_session::BeginPowerboxResults,
     ) -> capnp::Result<()> {
         let query = crate::powerbox::query(params.get()?.get_query()?)?;
-        let (request, value) = crate::powerbox::Request::open(self, Vec::new(), query).await?;
-        crate::powerbox::write(&value, results.get().init_result().init_value())?;
-        results.get().set_request(capnp_rpc::new_client(request));
+        match crate::powerbox::Request::open(self, Vec::new(), query).await {
+            Ok((request, value)) => {
+                crate::powerbox::write(&value, results.get().init_result().init_value())?;
+                results.get().set_request(capnp_rpc::new_client(request));
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())?
+            }
+        }
         Ok(())
     }
 

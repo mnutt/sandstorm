@@ -1,7 +1,7 @@
 import { Meteor } from "meteor/meteor";
 import { globalDb as db } from "/imports/db-deprecated";
 import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
-import { ensureInstalledForUser, newUploadTokenForUser } from "/imports/server/install-server";
+import { ensureInstalledForUser, newUploadTokenForUser, appInstallPermissions } from "/imports/server/install-server";
 
 const text = (value, limit = 256) => String(value || "").slice(0, limit);
 const fail = message => { throw new Meteor.Error(400, message); };
@@ -15,6 +15,7 @@ const httpUrl = value => {
 // Only account identity supplied by the authenticated bridge is used for writes.
 // Package parsing, signature verification and downloads remain with the installer.
 export async function rustInstall(accountId, operation, input, beforeWrite) {
+  const permissions = await appInstallPermissions(db, await Meteor.users.findOneAsync(accountId));
   if (operation === "catalog") {
     const market = await db.collections.settings.findOneAsync("appMarketUrl");
     const index = await db.collections.settings.findOneAsync("appIndexUrl");
@@ -22,7 +23,7 @@ export async function rustInstall(accountId, operation, input, beforeWrite) {
     const versions = new Map();
     for (const row of installed) versions.set(row.appId, Math.max(versions.get(row.appId) ?? -1, row.appVersion));
     const rows = await db.collections.appIndex.find({_id:{$in:[...versions.keys()]}}, {limit:100}).fetchAsync();
-    return {marketUrl:httpUrl(market?.value || "https://apps.sandstorm.io"), updates:rows.filter(row => row.versionNumber > versions.get(row._id)).map(row => ({
+    return {permissions, marketUrl:httpUrl(market?.value || "https://apps.sandstorm.io"), updates:rows.filter(row => row.versionNumber > versions.get(row._id)).map(row => ({
       packageId:row.packageId, title:text(row.name), version:text(row.version),
       url:httpUrl((index?.value || "https://app-index.sandstorm.io") + "/packages/" + row.packageId),
     }))};
@@ -53,12 +54,12 @@ export async function rustInstall(accountId, operation, input, beforeWrite) {
     }
     pkg = await db.collections.packages.findOneAsync(id);
   }
-  if (!pkg) return {packageId:id,status:"missing"};
+  if (!pkg) return {permissions,packageId:id,status:"missing"};
   const manifest = pkg.manifest;
   const actions = pkg.appId ? await db.collections.userActions.find({userId:accountId,appId:pkg.appId}, {fields:{packageId:1,appVersion:1}}).fetchAsync() : [];
   const olderGrains = manifest ? await db.collections.grains.find({userId:accountId,appId:pkg.appId,appVersion:{$lte:manifest.appVersion},packageId:{$ne:id}}).countAsync() : 0;
   const staticPrefix = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("static");
-  return {packageId:id,status:pkg.status,progress:Number(pkg.progress) || 0,error:text(pkg.error,1024),
+  return {permissions,packageId:id,status:pkg.status,progress:Number(pkg.progress) || 0,error:text(pkg.error,1024),
     appId:pkg.appId || "",title:text(manifest?.appTitle?.defaultText),description:text(manifest?.metadata?.shortDescription?.defaultText),
     version:text(manifest?.appMarketingVersion?.defaultText), fingerprint:text(pkg.authorPgpKeyFingerprint),
     iconSrc:manifest ? iconSrcForPackage(pkg,"appGrid",staticPrefix) : "",

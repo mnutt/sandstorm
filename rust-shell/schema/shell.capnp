@@ -167,9 +167,17 @@ struct Failure {
 struct Empty {}
 struct Url { url @0 :Text; }
 
+# Advisory account policy, not a grant. Every mutation revalidates authority.
+struct InstallPermissions {
+  canInstall @0 :Bool;
+  canUpload @1 :Bool;
+  installReason @2 :Text;
+  uploadReason @3 :Text;
+}
 struct InstallCatalog {
   marketUrl @0 :Text;
   updates @1 :List(AppUpdate);
+  permissions @2 :InstallPermissions;
 }
 struct AppUpdate {
   packageId @0 :Text;
@@ -203,6 +211,7 @@ struct InstallationState {
   installed @10 :Bool;
   newerInstalled @11 :Bool;
   olderGrains @12 :UInt32;
+  permissions @13 :InstallPermissions;
 }
 interface Installer {
   open @6 (packageId :Text, url :Text) -> (installation :Installation);

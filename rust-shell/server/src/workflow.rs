@@ -15,7 +15,10 @@ fn boolean(value: &Value, key: &str) -> bool {
 fn count(value: &Value, key: &str) -> u32 {
     value[key].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32
 }
-fn failure(error: bridge::Error, mut out: api::failure::Builder<'_>) -> capnp::Result<()> {
+pub(crate) fn failure(
+    error: bridge::Error,
+    mut out: api::failure::Builder<'_>,
+) -> capnp::Result<()> {
     let (status, message) = error;
     let code = match status.as_u16() {
         400 | 413 | 422 => api::FailureCode::InvalidInput,
@@ -47,7 +50,14 @@ fn url(value: &Value, mut out: api::url::Builder<'_>) -> capnp::Result<()> {
     out.set_url(text(value, "uploadUrl"));
     Ok(())
 }
+fn install_permissions(value: &Value, mut out: api::install_permissions::Builder<'_>) {
+    out.set_can_install(boolean(value, "canInstall"));
+    out.set_can_upload(boolean(value, "canUpload"));
+    out.set_install_reason(text(value, "installReason"));
+    out.set_upload_reason(text(value, "uploadReason"));
+}
 fn catalog(value: &Value, mut out: api::install_catalog::Builder<'_>) -> capnp::Result<()> {
+    install_permissions(&value["permissions"], out.reborrow().init_permissions());
     out.set_market_url(text(value, "marketUrl"));
     let rows = value["updates"]
         .as_array()
@@ -63,6 +73,7 @@ fn catalog(value: &Value, mut out: api::install_catalog::Builder<'_>) -> capnp::
     Ok(())
 }
 fn installation(value: &Value, mut out: api::installation_state::Builder<'_>) -> capnp::Result<()> {
+    install_permissions(&value["permissions"], out.reborrow().init_permissions());
     out.set_stage(match text(value, "status") {
         "missing" => api::PackageStage::Missing,
         "download" => api::PackageStage::Download,
@@ -479,5 +490,45 @@ impl api::installation::Server for Installation {
         )?;
         results.get().set_subscription(subscription);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn expected_failures_keep_their_code_and_transport_failures_hide_details() {
+        for (status, code) in [
+            (StatusCode::BAD_REQUEST, api::FailureCode::InvalidInput),
+            (StatusCode::UNAUTHORIZED, api::FailureCode::SignInRequired),
+            (StatusCode::FORBIDDEN, api::FailureCode::PermissionDenied),
+            (StatusCode::NOT_FOUND, api::FailureCode::NotFound),
+            (StatusCode::CONFLICT, api::FailureCode::Conflict),
+            (StatusCode::TOO_MANY_REQUESTS, api::FailureCode::RateLimited),
+        ] {
+            let mut message = capnp::message::Builder::new_default();
+            failure((status, "Readable explanation".into()), message.init_root()).unwrap();
+            let result = message
+                .get_root_as_reader::<api::failure::Reader>()
+                .unwrap();
+            assert_eq!(result.get_code().unwrap(), code);
+            assert_eq!(
+                result.get_message().unwrap().to_str().unwrap(),
+                "Readable explanation"
+            );
+        }
+        let mut message = capnp::message::Builder::new_default();
+        let error = failure(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Internal database details".into(),
+            ),
+            message.init_root(),
+        )
+        .unwrap_err();
+        assert!(!error.to_string().contains("Internal database details"));
+        assert!(error.to_string().contains("may not have completed"));
     }
 }

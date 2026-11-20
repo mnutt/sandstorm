@@ -56,7 +56,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let providerComplete = false;
   const nativeProviders = new Set();
   const installId = 'a'.repeat(32);
-  const installState = {packageId:installId,status:'missing',appId:'test-app',title:'Install test app',description:'A verified package',version:'2.0',iconSrc:'',fingerprint:'test-key',progress:0,installed:false,newerInstalled:false,olderGrains:2};
+  const installPermissions = {canInstall:true,canUpload:true,installReason:'',uploadReason:''};
+  const installState = {permissions:installPermissions,packageId:installId,status:'missing',appId:'test-app',title:'Install test app',description:'A verified package',version:'2.0',iconSrc:'',fingerprint:'test-key',progress:0,installed:false,newerInstalled:false,olderGrains:2};
   const installCalls = [];
   let denyInstall = true;
   const accountEmails = [{email:'alice@example.test',verified:true,primary:true},{email:'second@example.test',verified:true,primary:false}];
@@ -82,7 +83,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     },
     install: async (id,operation,data,beforeWrite) => {
       assert.equal(id,'alice'); installCalls.push(operation);
-      if (operation === 'catalog') return {marketUrl:'https://apps.example.test/',updates:[{packageId:installId,title:'Install test app',version:'2.0',url:'https://packages.example.test/test.spk'}]};
+      if (operation === 'catalog') return {permissions:installPermissions,marketUrl:'https://apps.example.test/',updates:[{packageId:installId,title:'Install test app',version:'2.0',url:'https://packages.example.test/test.spk'}]};
       if (operation === 'upload') return {uploadUrl:mainOrigin+'/upload/test-token'};
       assert.equal(data.packageId,installId);
       await beforeWrite();
@@ -114,6 +115,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
             if (input.nestedOperation === 'select') return {status:'nested',view:{status:'complete',token:'native-nested-token'}};
             return {status:'nested',view:{}};
           }
+          if (input.mode === 'webkey' && input.url.includes('#denied')) throw Object.assign(new Error('You do not have access to this capability.'), {status:403});
+          if (input.mode === 'webkey' && input.url.includes('#unavailable')) throw Object.assign(new Error('Internal backend detail'), {status:503});
           if (input.mode === 'webkey') { assert.equal(input.url,'https://api.example.test/#source-secret'); return {status:'complete',token:'derived-webkey-token'}; }
           if (input.key === 'view') return {status:'complete',token:'native-view-token',descriptor:'view-descriptor'};
           assert.equal(input.key,'provider'); providerComplete = false; nativeProviders.add(request);
@@ -480,6 +483,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(market.searchParams.get('host'),new URL(page.url()).origin);
     await page.getByRole('button',{name:'Review update'}).click();
     await page.reload();
+    installPermissions.canInstall = false;
+    installPermissions.installReason = 'An invitation is required to install apps.';
+    await expect(page.getByRole('button',{name:'Download app',exact:true})).toBeDisabled();
+    await expect(page.getByText(installPermissions.installReason,{exact:true})).toBeVisible();
+    assert.equal(installCalls.includes('download'), false);
+    installPermissions.canInstall = true;
+    installPermissions.installReason = '';
     await page.getByRole('button',{name:'Download app',exact:true}).click();
     await page.getByRole('button',{name:'Install app',exact:true}).waitFor();
     assert.equal(installState.installed,false,'download does not install without confirmation');
@@ -915,6 +925,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.evaluate(() => JSON.stringify({...sessionStorage,...localStorage}).includes('source-secret')),false);
     assert.equal(context.pages().length,beforePastePages);
     await expect(nativeDialog).toHaveCount(0);
+    for (const failure of ['denied', 'unavailable']) {
+      await app.evaluate(failure => parent.postMessage({powerboxRequest:{rpcId:failure,query:[]}},'*'), failure);
+      await nativeDialog.getByRole('button',{name:'Paste capability link',exact:true}).click();
+      await nativeDialog.getByLabel('API capability link',{exact:true}).fill('https://api.example.test/#' + failure);
+      await nativeDialog.getByRole('button',{name:'Connect using link',exact:true}).click();
+      await expect(nativeDialog.getByRole('alert')).toHaveText(failure === 'denied'
+        ? 'You do not have access to this capability.'
+        : 'Could not confirm the connection. Cancel and check the current status before trying again.');
+      await nativeDialog.getByRole('button',{name:'Cancel request',exact:true}).click();
+      await expect(nativeDialog).toHaveCount(0);
+      assert.equal(await page.locator('iframe').count(), 1, 'a request failure must not close the app');
+    }
     await app.evaluate(() => parent.postMessage({powerboxRequest:{rpcId:'cancel-webkey',query:[]}},'*'));
     await nativeDialog.getByRole('button',{name:'Paste capability link',exact:true}).click();
     await nativeDialog.getByLabel('API capability link',{exact:true}).fill('https://api.example.test/#source-secret');
