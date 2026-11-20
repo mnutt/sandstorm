@@ -67,7 +67,7 @@
       {/each}
     </ul>
     {#each oauthProviders as provider}
-      {#if provider.key === 'github' ? model.value.githubEnabled : model.value.googleEnabled}<Button variant="secondary" disabled={model.pending || !!oauthPending} onclick={() => oauth(provider.key)}>Link {provider.label} account</Button>{/if}
+      {#if model.value[provider.key + 'Enabled' as 'githubEnabled' | 'googleEnabled' | 'oidcEnabled']}<Button variant="secondary" disabled={model.pending || !!oauthPending} onclick={() => oauth(provider.key)}>Link {provider.label} account</Button>{/if}
     {/each}
     {#if oauthPending}<p role="status">Waiting for {oauthProviders.find(provider => provider.key === oauthPending)?.label} authorization…</p>{/if}
     {#if oauthError}<p role="alert">{oauthError}</p>{/if}

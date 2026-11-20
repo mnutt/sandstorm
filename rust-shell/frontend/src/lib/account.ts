@@ -6,6 +6,7 @@ export interface AccountSettings {
   emailEnabled: boolean;
   githubEnabled?: boolean;
   googleEnabled?: boolean;
+  oidcEnabled?: boolean;
   oauth?: {request:string; url?:string; pending?:boolean};
   emails: {email: string; verified: boolean; primary: boolean}[];
   credentials: {id: string; service: string; name: string; pictureUrl: string; login: boolean}[];
@@ -27,8 +28,8 @@ export class AccountService {
     try {
       const account=this.connection.account;
       const email=String(input.email || '');
-      if (operation.startsWith('oauth') && input.provider !== 'github' && input.provider !== 'google') throw new Error('Unsupported OAuth provider.');
-      const provider = input.provider === 'google' ? OAuthProvider.GOOGLE : OAuthProvider.GITHUB;
+      if (operation.startsWith('oauth') && input.provider !== 'github' && input.provider !== 'google' && input.provider !== 'oidc') throw new Error('Unsupported OAuth provider.');
+      const provider = input.provider === 'oidc' ? OAuthProvider.OIDC : input.provider === 'google' ? OAuthProvider.GOOGLE : OAuthProvider.GITHUB;
       const request = operation === 'state' ? account.read()
         : operation === 'primary' ? account.setPrimaryEmail(p=>{p.email=email;})
         : operation === 'sendEmail' ? account.sendEmail(p=>{p.email=email;p.allowLogin=!!input.allowLogin;})
@@ -41,7 +42,7 @@ export class AccountService {
       const result = await this.connection.run(request.promise(), 'Account settings');
       if (generation !== this.generation) return false;
       const data = unwrap(result.result);
-      const value: AccountSettings = {emailEnabled:data.emailEnabled,githubEnabled:data.githubEnabled,googleEnabled:data.googleEnabled,
+      const value: AccountSettings = {emailEnabled:data.emailEnabled,githubEnabled:data.githubEnabled,googleEnabled:data.googleEnabled,oidcEnabled:data.oidcEnabled,
         emails:[...data.emails].map(item=>({email:item.email,verified:item.verified,primary:item.primary})),
         credentials:[...data.credentials].map(item=>({id:item.id,service:item.service,name:item.name,pictureUrl:item.pictureUrl,login:item.login})),
         oauth:data._hasOauth() ? {request:data.oauth.request,url:data.oauth.url,pending:data.oauth.pending} : undefined};

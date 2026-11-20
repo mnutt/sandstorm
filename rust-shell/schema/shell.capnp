@@ -244,7 +244,7 @@ struct OAuthState {
   url @1 :Text;
   pending @2 :Bool;
 }
-enum OAuthProvider { github @0; google @1; }
+enum OAuthProvider { github @0; google @1; oidc @2; }
 struct AccountState {
   emailEnabled @0 :Bool;
   githubEnabled @1 :Bool;
@@ -252,6 +252,7 @@ struct AccountState {
   credentials @3 :List(Credential);
   oauth @4 :OAuthState;
   googleEnabled @5 :Bool;
+  oidcEnabled @6 :Bool;
 }
 interface Account {
   readProfile @9 () -> (result :Result(AccountProfile));

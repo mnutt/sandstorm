@@ -67,7 +67,7 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   const current = await Meteor.users.findOneAsync(accountId);
   const credentials = await Meteor.users.find({_id: {$in: SandstormDb.getUserCredentialIds(current)}}).fetchAsync();
   return {
-    oauth, githubEnabled:oauthEnabled('github'), googleEnabled:oauthEnabled('google'),
+    oauth, githubEnabled:oauthEnabled('github'), googleEnabled:oauthEnabled('google'), oidcEnabled:oauthEnabled('oidc'),
     emailEnabled: !!Accounts.loginServices.email.isEnabled(),
     emails: await SandstormDb.getUserEmailsAsync(current),
     credentials: credentials.map(credential => ({id: credential._id,

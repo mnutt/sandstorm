@@ -130,27 +130,20 @@ export const Oidc = {
     OAuth.retrieveCredential(credentialToken, credentialSecret)
 }
 
-Meteor.methods({
-  async resolveOidcSigninUrl(state) {
-    check(state, String);
+// Shared by the Meteor login form and the native shell. Provider metadata and
+// requested scopes always come from the administrator's configuration.
+export async function resolveOidcSigninUrl(state) {
+  check(state, String);
+  const config = await getConfiguration();
+  const redirectUri = OAuth._redirectUri("oidc", config);
+  const client = getClientConfiguration(config, redirectUri);
+  const scope = config.requestPermissions || ["openid", "profile", "email"];
+  return buildAuthorizationUrl(client, {
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: scope.join(" "),
+    state,
+  }).href;
+}
 
-    // Strictly, this method does not need to run on the server: It just builds
-    // a URL from the information contained in config.issuer. However, the `Issuer`
-    // and `Client` classes cannot easily be used from the browser.
-
-    const config = await ServiceConfiguration.configurations.findOneAsync({ service: "oidc" });
-    if (!config) {
-      throw new ServiceConfiguration.ConfigError("Service oidc not configured.");
-    }
-
-    const redirectUri = OAuth._redirectUri("oidc", config);
-    const client = getClientConfiguration(config, redirectUri);
-    const scope = config.requestPermissions || ["openid", "profile", "email"];
-    return buildAuthorizationUrl(client, {
-      redirect_uri: redirectUri,
-      response_type: "code",
-      scope: scope.join(" "),
-      state,
-    }).href;
-  }
-});
+Meteor.methods({ resolveOidcSigninUrl });

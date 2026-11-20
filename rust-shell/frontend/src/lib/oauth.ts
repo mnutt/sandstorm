@@ -1,4 +1,5 @@
 export const oauthProviders = [
+  {key:'oidc',label:'OpenID Connect',origin:null,path:null},
   {key:'github',label:'GitHub',origin:'https://github.com',path:'/login/oauth/authorize'},
   {key:'google',label:'Google',origin:'https://accounts.google.com',path:'/o/oauth2/auth'},
 ] as const;
@@ -6,7 +7,7 @@ export type OAuthProviderName = typeof oauthProviders[number]['key'];
 export function authorizationUrl(provider: OAuthProviderName, value: string): URL {
   const expected = oauthProviders.find(item => item.key === provider);
   const url = new URL(value);
-  if (!expected || url.origin !== expected.origin || url.pathname !== expected.path || url.username || url.password || url.hash) throw new Error('Invalid authorization URL.');
+  if (!expected || !['https:','http:'].includes(url.protocol) || (expected.origin && (url.origin !== expected.origin || url.pathname !== expected.path)) || url.username || url.password || url.hash) throw new Error('Invalid authorization URL.');
   return url;
 }
 

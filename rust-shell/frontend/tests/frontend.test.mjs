@@ -652,3 +652,9 @@ test('OAuth popup targets are restricted to the selected provider', () => {
   assert.equal(authorizationUrl('github','https://github.com/login/oauth/authorize?state=test').hostname,'github.com');
   for(const url of ['https://github.com/login/oauth/authorize','https://accounts.google.com.evil.test/o/oauth2/auth','https://accounts.google.com/other','https://user@accounts.google.com/o/oauth2/auth','http://accounts.google.com/o/oauth2/auth']) assert.throws(()=>authorizationUrl('google',url));
 });
+
+test('OIDC accepts server-configured web endpoints and rejects unsafe popup URLs', () => {
+  assert.equal(authorizationUrl('oidc','https://identity.example.test/custom/authorize?state=test').pathname,'/custom/authorize');
+  assert.equal(authorizationUrl('oidc','http://localhost:8080/authorize').protocol,'http:');
+  for (const url of ['javascript:alert(1)','data:text/html,test','https://user:secret@identity.example.test/authorize','https://identity.example.test/authorize#fragment']) assert.throws(()=>authorizationUrl('oidc',url));
+});

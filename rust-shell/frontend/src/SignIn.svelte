@@ -5,7 +5,7 @@
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
-  let options = $state<{email:boolean;dev:boolean;ldap:boolean;github:boolean;google:boolean}>();
+  let options = $state<{email:boolean;dev:boolean;ldap:boolean;github:boolean;google:boolean;oidc:boolean}>();
   let pending = $state(false);
   let error = $state('');
   let email = $state('');

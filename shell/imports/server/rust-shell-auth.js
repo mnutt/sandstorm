@@ -31,7 +31,7 @@ function authEndpoint() {
 const enabled = name => !!Accounts.loginServices[name]?.isEnabled();
 const fail = message => { throw new Meteor.Error(400, message); };
 export async function rustNativeAuth(operation, input, flow) {
-  if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:oauthEnabled('github'),google:oauthEnabled('google')};
+  if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:oauthEnabled('github'),google:oauthEnabled('google'),oidc:oauthEnabled('oidc')};
   const fields = {oauthStart:['provider'],oauthFinish:['provider','request'],oauthCancel:['provider','request'],sendEmail:["email"],email:["email","code"],dev:["name"],ldap:["username","password"]};
   if (!Object.hasOwn(fields,operation) || !input || typeof input !== "object" || Array.isArray(input) ||
       Object.keys(input).some(key=>!fields[operation].includes(key)) || fields[operation].some(key=>typeof input[key] !== "string" || !input[key])) fail("Invalid sign-in request.");

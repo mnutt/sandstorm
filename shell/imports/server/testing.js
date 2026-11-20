@@ -1420,7 +1420,7 @@ if(isTesting) {
     },
 
     async testRustOAuth() {
-      for (const provider of ['github','google']) {
+      for (const provider of ['github','google','oidc']) {
         const originalEnabled = Accounts.loginServices[provider].isEnabled;
         const originalOrigin = Meteor.settings.public.rustShellOrigin;
         const configuration = await ServiceConfiguration.configurations.findOneAsync({service:provider});
@@ -1434,10 +1434,10 @@ if(isTesting) {
           Accounts.loginServices[provider].isEnabled = () => true;
           if (!registered) Accounts.oauth.registerService(provider);
           Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
-          if (!configuration) await ServiceConfiguration.configurations.insertAsync({service:provider,clientId:'test-only'});
+          if (!configuration) await ServiceConfiguration.configurations.insertAsync({service:provider,clientId:'test-only',...(provider === 'oidc' ? {secret:'test-secret',issuer:{issuer:'https://identity.example.test',authorization_endpoint:'https://identity.example.test/authorize',token_endpoint:'https://identity.example.test/token'},requestPermissions:['openid','email','custom']} : {})});
           pending = await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
           const url = new URL(pending.url);
-          require(url.origin === (provider === 'github' ? 'https://github.com' : 'https://accounts.google.com'),'Incorrect authorization origin');
+          require(url.origin === (provider === 'oidc' ? 'https://identity.example.test' : provider === 'github' ? 'https://github.com' : 'https://accounts.google.com'),'Incorrect authorization origin');
           require(!JSON.stringify(pending).includes('credentialSecret'),'Secret exposed before authorization');
           let denied = false;
           try { await finishOAuth(provider,'login:foreign',pending.request); } catch (error) { denied=error.error===403; }
@@ -1449,6 +1449,11 @@ if(isTesting) {
           require(denied,'OAuth request accepted a different provider');
           await cancelOAuth(other,'login:'+flow,pending.request);
           require(await finishOAuth(provider,'login:'+flow,pending.request) === null,'A different provider canceled the request');
+          if (provider === 'oidc') {
+            require(url.searchParams.get('scope') === 'openid email custom','OIDC configured permissions changed');
+            require(url.searchParams.get('response_type') === 'code','OIDC must use the authorization-code flow');
+            require(url.searchParams.get('redirect_uri').includes('/_oauth/oidc'),'OIDC callback changed');
+          }
           if (provider === 'google') {
             require(url.searchParams.get('response_type') === 'code','Google must use the authorization-code flow');
             require(url.searchParams.get('scope') === 'email profile','Unexpected Google login permissions');

@@ -3,11 +3,13 @@ import { Accounts } from "meteor/accounts-base";
 import { OAuth } from "meteor/oauth";
 import { ServiceConfiguration } from "meteor/service-configuration";
 import Crypto from "node:crypto";
+import { resolveOidcSigninUrl } from "/imports/oidc/oidc-server";
 
 const requests = new Map();
 const lifetime = 300000;
 const fail = message => { throw new Meteor.Error(400,message); };
 const providers = {
+  oidc: {label:'OpenID Connect',scopes:[]},
   github: {label:'GitHub',url:'https://github.com/login/oauth/authorize',scopes:['user:email']},
   google: {label:'Google',url:'https://accounts.google.com/o/oauth2/auth',scopes:['email','profile']},
 };
@@ -34,12 +36,19 @@ export async function startOAuth(provider, binding, scopes = oauthProvider(provi
   if (!origin || new URL(origin).protocol !== 'https:') throw new Meteor.Error(503,'Rust shell is unavailable.');
   for (const [key,request] of requests) if (request.expires <= Date.now() || request.binding === binding) await discard(key,request);
   const key = Crypto.randomBytes(32).toString('hex');
+  const state = OAuth._generateState('popup',key);
+  if (provider === 'oidc') {
+    const url = new URL(await resolveOidcSigninUrl(state));
+    if (!['https:','http:'].includes(url.protocol) || url.username || url.password || url.hash) fail('Invalid OIDC authorization endpoint.');
+    requests.set(key,{provider,binding,expires:Date.now()+lifetime,origin});
+    return {request:key,url:url.href};
+  }
   requests.set(key,{provider,binding,expires:Date.now()+lifetime,origin});
   const url = new URL(definition.url);
   const parameters = provider === 'google' ? {...config.loginUrlParameters} : {};
   if (provider === 'google') parameters.response_type = 'code';
   Object.assign(parameters,{client_id:config.clientId,redirect_uri:OAuth._redirectUri(provider,config),
-    scope:scopes.join(' '),state:OAuth._generateState('popup',key)});
+    scope:scopes.join(' '),state});
   url.search = new URLSearchParams(parameters).toString();
   return {request:key,url:url.href};
 }

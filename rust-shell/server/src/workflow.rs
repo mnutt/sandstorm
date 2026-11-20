@@ -109,12 +109,14 @@ fn oauth_provider(provider: api::OAuthProvider) -> &'static str {
     match provider {
         api::OAuthProvider::Github => "github",
         api::OAuthProvider::Google => "google",
+        api::OAuthProvider::Oidc => "oidc",
     }
 }
 fn account(value: &Value, mut out: api::account_state::Builder<'_>) -> capnp::Result<()> {
     out.set_email_enabled(boolean(value, "emailEnabled"));
     out.set_github_enabled(boolean(value, "githubEnabled"));
     out.set_google_enabled(boolean(value, "googleEnabled"));
+    out.set_oidc_enabled(boolean(value, "oidcEnabled"));
     if let Some(oauth) = value["oauth"].as_object() {
         let mut target = out.reborrow().init_oauth();
         target.set_request(oauth.get("request").and_then(Value::as_str).unwrap_or(""));
