@@ -27,7 +27,6 @@ export class ShellConnection {
   private stopped = true;
   private retry = 500;
   private generation = 0;
-  private failCurrent: (error: Error) => void = () => {};
 
   constructor(private events: ConnectionEvents) {}
   get signal() { return this.lifetime.signal; }
@@ -38,14 +37,11 @@ export class ShellConnection {
   get installer() { return this.installerClient ??= this.shell.installer().getInstaller(); }
   get account() { return this.accountClient ??= this.shell.account().getAccount(); }
   run<T>(promise: PromiseLike<T>, label: string, options: OperationOptions<T> = {}) {
-    const generation = this.generation;
-    return runOperation(promise, label, {
-      ...options, signal: options.signal ?? this.signal,
-      onTimeout: () => {
-        if (generation === this.generation) this.failCurrent(new Error(`${label} timed out. Reconnecting…`));
-      },
-    });
+    // A UI deadline says nothing about the health of other capabilities or
+    // whether a mutation completed. Transport/subscription failure owns reconnect.
+    return runOperation(promise, label, {...options, signal: options.signal ?? this.signal});
   }
+
   start() {
     if (!this.stopped) return;
     this.stopped = false;
@@ -72,7 +68,7 @@ export class ShellConnection {
     if (this.stopped) return;
     const generation = ++this.generation;
     this.clear();
-    const fail = this.failCurrent = (error: Error) => {
+    const fail = (error: Error) => {
       if (generation !== this.generation || this.stopped) return;
       ++this.generation;
       this.clear();

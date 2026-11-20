@@ -68,6 +68,9 @@ struct GrainView {
   iconSrc @6 :Text;
 }
 interface GrainSession {
+  whenClosed @8 () -> ();
+  # Lifetime signal: revocation or lease failure closes only this grain.
+  # Waiting does not retain the lease. Reopening always requires a new session.
   beginPowerbox @7 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
   close @0 () -> ();
   renderTemplate @1 (options :Text) -> (token :Text, host :Text);

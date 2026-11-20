@@ -401,6 +401,12 @@ element and session. App-provided page titles remain separate from grain names.
 Tests cover owner/shared naming, revocation, cancellation before writing, and
 frame continuity across both Rust and legacy title changes.
 
+Each grain exposes `GrainSession.whenClosed()` as a lifetime signal. A failed
+renewal invalidates only that lease, removes its iframe, and offers an explicit
+reopen; other grains keep their frame state. Renewals run concurrently across the
+bounded set of eight grains. Account revocation or transport failure still closes
+all account-scoped sessions. Pending lifetime calls do not retain the lease.
+
 Iframe messages require both the exact session origin and the active frame's
 source window. The first slice supports display-only `setTitle`, local `setPath`,
 and `getGrainTitle` replies with optional `subscribe: true` updates. The app
@@ -721,7 +727,9 @@ The Rust transport also enforces per-connection lifetime budgets: 8 MiB inbound,
 512-frame burst, including ping/pong. There are at most 64 unanswered outbound
 questions; unsolicited/duplicate returns are rejected before reaching capnp-rpc.
 Budget exhaustion closes the connection; clients must revalidate on reconnect,
-and mutations are never replayed automatically.
+and mutations are never replayed automatically. These lifetime budgets remain
+until bounded accounting of live calls/imports/exports can safely replace them;
+rate limits alone do not bound retained protocol state.
 
 Bridge IO admits 32 ordinary requests and a separate 32 maintenance requests
 (watches, lease renewal, cleanup, logout), failing immediately when full. Failed
@@ -844,8 +852,9 @@ frame/popup owners still enforce exact origin, source window, and popup nonce.
 `SharingDialog.svelte` owns modal state and temporary bearer URLs.
 
 Ordinary RPCs have a ten-second browser deadline and are aborted locally when
-the connection changes. A timeout reconnects that connection, never replays the
-operation. Navigation detaches the frame immediately; remote cleanup is bounded,
+the connection changes. An ordinary operation timeout leaves the connection and
+other capabilities intact; it never replays the operation. Transport or summary
+subscription failure still reconnects the shell. Navigation detaches the frame immediately; remote cleanup is bounded,
 and late open results are released. Connection errors are separate from
 notification/grain operation errors so snapshots cannot erase an unknown-outcome
 warning. A timeout does not prove a mutation failed on the server.

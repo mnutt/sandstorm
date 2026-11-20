@@ -680,6 +680,14 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-workspace-mobile.png'});
     await page.setViewportSize({width:1280,height:720});
     await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();
+    // Losing one background lease must not discard another grain's iframe state.
+    liveGrains.delete(Number(new URL(secondSession).searchParams.get('sessionid')));
+    await expect(page.locator('iframe')).toHaveCount(1, {timeout:20000});
+    assert.equal(await app.getByLabel('App state').inputValue(), 'background draft');
+    await expect(page.getByRole('alert')).toContainText('This grain session ended');
+    await page.getByRole('button',{name:'Reopen grain',exact:true}).click();
+    await expect(page.locator('iframe')).toHaveCount(2);
+    await expect.poll(() => liveGrains.size).toBe(2);
     await page.locator('.open-grains li.current button').click();
     await expect.poll(() => liveGrains.size).toBe(1);
     await expect(page.locator('iframe')).toHaveCount(1);

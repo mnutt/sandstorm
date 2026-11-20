@@ -18,7 +18,7 @@ export class GrainService {
   private cleanup: Promise<void> = Promise.resolve();
   private offers = new TemplateOffers();
   constructor(private connection: ShellConnection, private changed: (state: Partial<GrainState>) => void) {this.requests=new PowerboxRequests(connection);}
-  reset(release = true) {
+  reset(release = true, error?: string) {
     ++this.generation;
     this.requests.reset();
     this.offers.clear();
@@ -28,7 +28,7 @@ export class GrainService {
     this.opening = false;
     this.cleanup = Promise.resolve();
     this.changed({ activeGrain: null, openingGrain: false,
-      ...(this.renaming ? { grainError: 'Could not confirm rename. Check the current title before trying again.' } : {}),
+      ...(error ? {grainError:error} : this.renaming ? { grainError: 'Could not confirm rename. Check the current title before trying again.' } : {}),
     });
     this.renaming = false;
   }
@@ -39,16 +39,14 @@ export class GrainService {
       try { session.client.close(); } catch { /* transport already closed */ }
     });
   }
-  close(reconnectPending = true) {
+  close() {
     const session = this.session;
-    const opening = this.opening;
     const cleanup = this.cleanup;
     this.reset(false);
     this.cleanup = cleanup;
     // Navigating away is local and immediate. A subsequent open waits only for
-    // bounded cleanup; cancelling an in-flight open discards that RPC scope.
-    if (opening && reconnectPending) this.connection.reconnect();
-    else if (session) this.cleanup = this.release(session);
+    // bounded cleanup. Late open results are released by the generation check.
+    if (session) this.cleanup = this.release(session);
   }
   async open(grainId: string, path: string, menu: Grain[]) {
     if (this.opening || this.active) return;
@@ -78,6 +76,11 @@ export class GrainService {
         mainHref: result.view.mainHref || known?.href || location.origin + '/main-shell',
       };
       this.changed({ activeGrain: this.active });
+      const ended = () => {
+        if (generation !== this.generation) return;
+        this.reset(true, 'This grain session ended. Reopen the grain to continue.');
+      };
+      void result.session.whenClosed().promise().then(ended, ended);
     } catch (error) {
       if (generation === this.generation) this.changed({ grainError: `Unable to open grain: ${errorMessage(error)}` });
     } finally {

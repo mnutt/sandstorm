@@ -21,7 +21,7 @@ export class GrainWorkspace {
     // An unfinished open is canceled on navigation; established tabs stay live.
     for (const [key, tab] of this.tabs) if (key !== id && tab.opening) {
       this.tabs.delete(key);
-      tab.service.close(false);
+      tab.service.close();
     }
     this.publish();
   }
@@ -34,7 +34,7 @@ export class GrainWorkspace {
   close(id = this.selected) {
     const tab = id ? this.tabs.get(id) : undefined;
     if (id) this.tabs.delete(id);
-    tab?.service.close(false);
+    tab?.service.close();
     this.publish();
   }
   async open(id: string, path: string, menu: Grain[]) {
@@ -50,6 +50,7 @@ export class GrainWorkspace {
       if ('activeGrain' in patch) tab.grain = patch.activeGrain ?? null;
       if ('openingGrain' in patch) tab.opening = !!patch.openingGrain;
       if (patch.grainError !== undefined) this.changed({grainError:patch.grainError});
+      if (!tab.grain && !tab.opening) this.tabs.delete(id);
       this.publish();
     });
     this.tabs.set(id, tab);

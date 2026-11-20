@@ -6,6 +6,7 @@ use std::{
     rc::Rc,
     time::Duration,
 };
+use tokio::sync::watch;
 
 #[derive(Deserialize)]
 pub struct View {
@@ -30,6 +31,7 @@ pub struct GrainScope {
     key: String,
     active: RefCell<Option<String>>,
     busy: Cell<bool>,
+    ended: watch::Sender<bool>,
 }
 struct Opening<'a>(&'a Cell<bool>);
 impl Drop for Opening<'_> {
@@ -47,6 +49,7 @@ impl GrainScope {
             key: bytes.iter().map(|b| format!("{b:02x}")).collect(),
             active: RefCell::new(None),
             busy: Cell::new(false),
+            ended: watch::channel(false).0,
         }))
     }
     pub async fn open(
@@ -81,6 +84,7 @@ impl GrainScope {
     async fn close(&self, lease: &str) -> capnp::Result<()> {
         if self.active.borrow().as_deref() == Some(lease) {
             *self.active.borrow_mut() = None;
+            self.ended.send_replace(true);
         }
         self.session
             .call("closeGrain", json!({ "scope": self.key, "lease": lease }))
@@ -89,6 +93,7 @@ impl GrainScope {
         Ok(())
     }
     pub async fn close_all(&self) {
+        self.ended.send_replace(true);
         // Also closes a creation still in flight in Meteor after RPC cancellation.
         let _ = self
             .session
@@ -96,7 +101,7 @@ impl GrainScope {
             .await;
         *self.active.borrow_mut() = None;
     }
-    async fn keep(&self) -> bool {
+    async fn keep(&self) {
         let lease = self.active.borrow().clone();
         if let Some(lease) = lease {
             if self
@@ -106,10 +111,12 @@ impl GrainScope {
                 .is_err()
                 && self.active.borrow().as_deref() == Some(lease.as_str())
             {
-                return false;
+                // Invalidate locally before cleanup; an unavailable backend must
+                // never leave the browser using a lease we cannot renew.
+                self.ended.send_replace(true);
+                let _ = self.close(&lease).await;
             }
         }
-        true
     }
 }
 pub(crate) struct Lease {
@@ -123,7 +130,7 @@ impl Lease {
         operation: &str,
         mut input: serde_json::Value,
     ) -> Result<serde_json::Value, crate::bridge::Error> {
-        if self.closed.get() {
+        if self.closed.get() || *self.scope.ended.borrow() {
             return Err((
                 axum::http::StatusCode::CONFLICT,
                 "Grain session closed".into(),
@@ -145,6 +152,20 @@ impl Lease {
     }
 }
 impl grain_session::Server for Lease {
+    async fn when_closed(
+        self: Rc<Self>,
+        _: grain_session::WhenClosedParams,
+        _: grain_session::WhenClosedResults,
+    ) -> capnp::Result<()> {
+        let mut ended = self.scope.ended.subscribe();
+        drop(self);
+        ended
+            .wait_for(|closed| *closed)
+            .await
+            .map_err(|_| capnp::Error::disconnected("Grain session ended".into()))?;
+        Ok(())
+    }
+
     async fn begin_powerbox(
         self: Rc<Self>,
         params: grain_session::BeginPowerboxParams,
@@ -241,7 +262,7 @@ impl grain_session::Server for Lease {
         params: grain_session::RenameParams,
         mut results: grain_session::RenameResults,
     ) -> capnp::Result<()> {
-        if self.closed.get() {
+        if self.closed.get() || *self.scope.ended.borrow() {
             return Err(capnp::Error::failed("Grain session closed".into()));
         }
         let title = params.get()?.get_title()?.to_str()?;
@@ -275,7 +296,7 @@ impl grain_session::Server for Lease {
         params: grain_session::RenderTemplateParams,
         mut results: grain_session::RenderTemplateResults,
     ) -> capnp::Result<()> {
-        if self.closed.get() {
+        if self.closed.get() || *self.scope.ended.borrow() {
             return Err(capnp::Error::failed("Grain session closed".into()));
         }
         let options = params.get()?.get_options()?.to_str()?;
@@ -370,11 +391,43 @@ impl Scope {
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
             let grains = self.grains.borrow().clone();
-            for grain in grains {
-                if !grain.keep().await {
-                    return;
-                }
-            }
+            // At most eight grains; a slow lease must not delay every other renewal.
+            futures::future::join_all(grains.iter().map(|grain| grain.keep())).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pending_lifetime_call_does_not_retain_grain_lease() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let scope = GrainScope::new(Session {
+                    bridge: crate::bridge::Bridge::new("/dev/null/grain-test.sock".into()).unwrap(),
+                    token: "test".into(),
+                })
+                .unwrap();
+                *scope.active.borrow_mut() = Some("lease".into());
+                let client: grain_session::Client = capnp_rpc::new_client(Lease {
+                    scope: scope.clone(),
+                    lease: "lease".into(),
+                    closed: Cell::new(false),
+                });
+                let terminal =
+                    tokio::task::spawn_local(client.when_closed_request().send().promise);
+                tokio::task::yield_now().await;
+                drop(client);
+                tokio::time::timeout(Duration::from_secs(1), terminal)
+                    .await
+                    .expect("releasing the capability must end the grain lease")
+                    .unwrap()
+                    .unwrap();
+                assert!(*scope.ended.borrow());
+                assert!(scope.active.borrow().is_none());
+            })
+            .await;
     }
 }

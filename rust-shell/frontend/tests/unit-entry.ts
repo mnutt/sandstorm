@@ -12,3 +12,5 @@ export * from '../src/lib/workspace';
 export * from '../src/lib/template';
 
 export { notificationDestination } from '../src/lib/router';
+
+export { ShellConnection } from '../src/lib/connection';

@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const deferred = () => {
@@ -197,7 +197,7 @@ test('repeated navigation preserves pending cleanup before opening a replacement
   browserGlobals(t);
   const closing = deferred();
   let opened = 0;
-  const session = { close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
+  const session = { whenClosed: () => ({promise: () => new Promise(() => {})}), close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
   const connection = { run: promise => promise, shell: { openGrain: () => {
     ++opened;
     return { promise: async () => ({ session, view: { url: 'https://grain.test/init', origin: 'https://grain.test', ownerTitle: 'Owner' } }) };
@@ -269,6 +269,7 @@ test('workspace isolates tab operations, preserves paths, and discards canceled 
   } } };
   const workspace = new GrainWorkspace(connection, patch => { state = {...state,...patch}; });
   const result = id => ({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
+    whenClosed: () => ({promise: () => new Promise(() => {})}),
     close: () => ({promise:async () => { closed.push(id); }}), client:{close:()=>{}},
     rename: fill => { const params = {}; fill(params); renamed.push([id,params.title]);
       return {promise:async () => ({title:params.title})}; },
@@ -377,4 +378,19 @@ test('profile notices preserve the displayed values and distinguish own saves fr
   save({profile:{...current,name:'Mine again',version:'four'}}); await later;
   assert.equal(state.stale,true,'A concurrent remote update after our save still shows the banner');
   profile.reset(true); assert.equal(state.stale,false); assert.equal(state.value,null);
+});
+
+
+test('operation deadlines preserve the connection and release late results', async () => {
+  let timeouts = 0, late = 0;
+  const connection = new ShellConnection({reset:()=>{throw new Error('Unexpected reset');}});
+  const pending = deferred();
+  await assert.rejects(connection.run(pending.promise, 'Slow operation', {
+    timeoutMs:5, onTimeout:()=>++timeouts, onLateResult:()=>++late,
+  }), OperationTimeout);
+  assert.equal(timeouts, 1);
+  assert.equal(connection.signal.aborted, false);
+  pending.resolve({}); await turn();
+  assert.equal(late, 1);
+  assert.equal(await connection.run(Promise.resolve('healthy'), 'Another operation'), 'healthy');
 });
