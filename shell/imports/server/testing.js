@@ -2,7 +2,7 @@ import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { appInstallPermissions } from "/imports/server/install-server";
 import { grainMenu } from "/imports/server/rust-shell-grains";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
-import { finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
+import { finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
 import { OAuth } from "meteor/oauth";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
 import Capnp from "/imports/server/capnp";
@@ -1419,69 +1419,115 @@ if(isTesting) {
       }
     },
 
-    async testRustGithub() {
-      const originalEnabled = Accounts.loginServices.github.isEnabled;
-      const originalOrigin = Meteor.settings.public.rustShellOrigin;
-      const configuration = await ServiceConfiguration.configurations.findOneAsync({service:'github'});
-      const identity = 'rust-github-'+Random.id();
-      const registered = Accounts.oauth.serviceNames().includes('github');
-      let pending, linked, linkPending, accountId;
-      const flow = Crypto.randomBytes(32).toString("hex");
-      const require = (value,message) => { if (!value) throw new Error(message); };
-      try {
-        Accounts.loginServices.github.isEnabled = () => true;
-        if (!registered) Accounts.oauth.registerService("github");
-        Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
-        if (!configuration) await ServiceConfiguration.configurations.insertAsync({service:'github',clientId:'test-only'});
-        pending = await rustShellBridge.handle('nativeAuth',{operation:'githubStart',data:{},flow});
-        const url = new URL(pending.url);
-        require(url.origin === 'https://github.com','Incorrect authorization origin');
-        require(!JSON.stringify(pending).includes('credentialSecret'),'Secret exposed before authorization');
-        let denied = false;
-        try { await finishGithub('login:foreign',pending.request); } catch (error) { denied=error.error===403; }
-        require(denied,'OAuth request accepted a foreign flow');
-        require(await finishGithub('login:'+flow,pending.request) === null,'Incomplete OAuth was accepted');
-        // Existing synthetic credentials avoid triggering external avatar downloads.
-        await Meteor.users.insertAsync({_id:identity,type:'credential',services:{github:{id:identity,username:identity}},profile:{name:'Rust GitHub test'}});
-        const secret = Random.secret();
-        await OAuth._storePendingCredential(pending.request,{serviceName:'github',serviceData:{id:identity,username:identity,emails:[]},options:{profile:{name:'Rust GitHub test'}}},secret);
-        let location;
-        await OAuth._endOfLoginResponse({writeHead(status,headers){ require(status===303,'OAuth callback did not redirect'); location=headers.Location; },end(){}},
-          {query:{state:url.searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret}});
-        require(location === 'https://rust.example.test/oauth-complete','Callback did not return to Rust');
-        linked = await rustShellBridge.handle('nativeAuth',{operation:'githubFinish',data:{request:pending.request},flow});
-        require(!!linked.token && !JSON.stringify(linked).includes(secret),'OAuth secret leaked or login failed');
-        denied=false;
-        try { await finishGithub('login:'+flow,pending.request); } catch (_) { denied=true; }
-        require(denied,'OAuth result could be reused');
-        accountId = (await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
-        const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
-        linkPending = (await settings('githubStart')).oauth;
-        await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{github:{id:identity+'-linked',username:identity+'-linked'}},profile:{name:'Linked GitHub test'}});
-        const linkSecret = Random.secret();
-        await OAuth._storePendingCredential(linkPending.request,{serviceName:'github',serviceData:{id:identity+'-linked',username:identity+'-linked',emails:[]},options:{}},linkSecret);
-        await OAuth._endOfLoginResponse({writeHead(){},end(){}},
-          {query:{state:new URL(linkPending.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:linkPending.request,secret:linkSecret}});
-        const settingsResult = await settings('githubFinish',{request:linkPending.request});
-        require(settingsResult.credentials.some(item=>item.id===identity+'-linked' && item.login),'GitHub credential was not linked for login');
-        require(!JSON.stringify(settingsResult).includes(linkSecret),'Linking exposed an OAuth secret');
-        return true;
-      } finally {
-        if (pending) await cancelGithub('login:'+flow,pending.request);
-        if (linkPending) await cancelGithub('link:'+accountId,linkPending.request);
-        if (!registered) Accounts.oauth.unregisterService('github');
-        Accounts.loginServices.github.isEnabled=originalEnabled;
-        Meteor.settings.public.rustShellOrigin=originalOrigin;
-        if (linked?.token) await rustShellBridge.handle('logout',{token:linked.token});
-        const credential = await Meteor.users.findOneAsync({'services.github.id':identity});
-        if (credential) {
-          await Meteor.users.removeAsync({'loginCredentials.id':credential._id});
-          await Meteor.users.removeAsync(credential._id);
+    async testRustOAuth() {
+      for (const provider of ['github','google']) {
+        const originalEnabled = Accounts.loginServices[provider].isEnabled;
+        const originalOrigin = Meteor.settings.public.rustShellOrigin;
+        const configuration = await ServiceConfiguration.configurations.findOneAsync({service:provider});
+        const identity = 'rust-'+provider+'-'+Random.id();
+        const serviceData = id => provider === 'github' ? {id,username:id,emails:[]} : {id,email:id+'@example.invalid',verified_email:true,name:'Rust Google test'};
+        const registered = Accounts.oauth.serviceNames().includes(provider);
+        let pending, linked, linkPending, accountId;
+        const flow = Crypto.randomBytes(32).toString("hex");
+        const require = (value,message) => { if (!value) throw new Error(message); };
+        try {
+          Accounts.loginServices[provider].isEnabled = () => true;
+          if (!registered) Accounts.oauth.registerService(provider);
+          Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+          if (!configuration) await ServiceConfiguration.configurations.insertAsync({service:provider,clientId:'test-only'});
+          pending = await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
+          const url = new URL(pending.url);
+          require(url.origin === (provider === 'github' ? 'https://github.com' : 'https://accounts.google.com'),'Incorrect authorization origin');
+          require(!JSON.stringify(pending).includes('credentialSecret'),'Secret exposed before authorization');
+          let denied = false;
+          try { await finishOAuth(provider,'login:foreign',pending.request); } catch (error) { denied=error.error===403; }
+          require(denied,'OAuth request accepted a foreign flow');
+          require(await finishOAuth(provider,'login:'+flow,pending.request) === null,'Incomplete OAuth was accepted');
+          const other = provider === 'google' ? 'github' : 'google';
+          denied=false;
+          try { await finishOAuth(other,'login:'+flow,pending.request); } catch (error) { denied=error.error===403; }
+          require(denied,'OAuth request accepted a different provider');
+          await cancelOAuth(other,'login:'+flow,pending.request);
+          require(await finishOAuth(provider,'login:'+flow,pending.request) === null,'A different provider canceled the request');
+          if (provider === 'google') {
+            require(url.searchParams.get('response_type') === 'code','Google must use the authorization-code flow');
+            require(url.searchParams.get('scope') === 'email profile','Unexpected Google login permissions');
+            require(url.searchParams.get('redirect_uri').includes('/_oauth/google'),'Google callback changed');
+          }
+
+          // Existing synthetic credentials avoid triggering external avatar downloads.
+          await Meteor.users.insertAsync({_id:identity,type:'credential',services:{[provider]:serviceData(identity)},profile:{name:'Rust OAuth test'}});
+          const secret = Random.secret();
+          await OAuth._storePendingCredential(pending.request,{serviceName:provider,serviceData:serviceData(identity),options:{profile:{name:'Rust OAuth test'}}},secret);
+          let location;
+          await OAuth._endOfLoginResponse({writeHead(status,headers){ require(status===303,'OAuth callback did not redirect'); location=headers.Location; },end(){}},
+            {query:{state:url.searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret}});
+          require(location === 'https://rust.example.test/oauth-complete','Callback did not return to Rust');
+          linked = await rustShellBridge.handle('nativeAuth',{operation:'oauthFinish',data:{provider,request:pending.request},flow});
+          require(!!linked.token && !JSON.stringify(linked).includes(secret),'OAuth secret leaked or login failed');
+          denied=false;
+          try { await finishOAuth(provider,'login:'+flow,pending.request); } catch (_) { denied=true; }
+          require(denied,'OAuth result could be reused');
+          accountId = (await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
+          const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
+          linkPending = (await settings('oauthStart',{provider})).oauth;
+          await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{[provider]:serviceData(identity+'-linked')},profile:{name:'Linked OAuth test'}});
+          const linkSecret = Random.secret();
+          await OAuth._storePendingCredential(linkPending.request,{serviceName:provider,serviceData:serviceData(identity+'-linked'),options:{}},linkSecret);
+          await OAuth._endOfLoginResponse({writeHead(){},end(){}},
+            {query:{state:new URL(linkPending.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:linkPending.request,secret:linkSecret}});
+          const settingsResult = await settings('oauthFinish',{provider,request:linkPending.request});
+          require(settingsResult.credentials.some(item=>item.id===identity+'-linked' && item.login),'OAuth credential was not linked for login');
+          require(!JSON.stringify(settingsResult).includes(linkSecret),'Linking exposed an OAuth secret');
+          // A valid credential from another provider must not complete this flow.
+          const otherEnabled = Accounts.loginServices[other].isEnabled;
+          const otherRegistered = Accounts.oauth.serviceNames().includes(other);
+          const wrongId = identity+'-wrong';
+          try {
+            Accounts.loginServices[other].isEnabled = () => true;
+            if (!otherRegistered) Accounts.oauth.registerService(other);
+            const wrongData = other === 'github' ? {id:wrongId,username:wrongId,emails:[]} :
+              {id:wrongId,email:wrongId+'@example.invalid',verified_email:true,name:'Wrong provider'};
+            await Meteor.users.insertAsync({_id:wrongId,type:'credential',services:{[other]:wrongData},profile:{name:'Wrong provider'}});
+            pending = await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
+            const wrongSecret = Random.secret();
+            await OAuth._storePendingCredential(pending.request,{serviceName:other,serviceData:wrongData,options:{}},wrongSecret);
+            await OAuth._endOfLoginResponse({writeHead(){},end(){}},
+              {query:{state:new URL(pending.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret:wrongSecret}});
+            denied = false;
+            try {
+              await rustShellBridge.handle('nativeAuth',{operation:'oauthFinish',data:{provider,request:pending.request},flow});
+            } catch (error) { denied = /Expected a .* credential/.test(error.reason || error.message); }
+            require(denied,'A different provider credential completed sign-in');
+            require(!await Meteor.users.findOneAsync({'loginCredentials.id':wrongId}),'Wrong-provider sign-in created an account');
+            const wrongCredential = await Meteor.users.findOneAsync(wrongId);
+            require(!wrongCredential.services.resume?.loginTokens?.length,'Wrong-provider credential retained a login token');
+          } finally {
+            Accounts.loginServices[other].isEnabled = otherEnabled;
+            if (!otherRegistered) Accounts.oauth.unregisterService(other);
+            await Meteor.users.removeAsync({'loginCredentials.id':wrongId});
+            await Meteor.users.removeAsync(wrongId);
+          }
+
+        } finally {
+          if (pending) await cancelOAuth(provider,'login:'+flow,pending.request);
+          if (linkPending) await cancelOAuth(provider,'link:'+accountId,linkPending.request);
+          if (!registered) Accounts.oauth.unregisterService(provider);
+          Accounts.loginServices[provider].isEnabled=originalEnabled;
+          Meteor.settings.public.rustShellOrigin=originalOrigin;
+          if (linked?.token) await rustShellBridge.handle('logout',{token:linked.token});
+          const credential = await Meteor.users.findOneAsync({['services.'+provider+'.id']:identity});
+          if (credential) {
+            await Meteor.users.removeAsync({'loginCredentials.id':credential._id});
+            await Meteor.users.removeAsync(credential._id);
+          }
+          await Meteor.users.removeAsync(identity+'-linked');
+          if (!configuration) await ServiceConfiguration.configurations.removeAsync({service:provider});
         }
-        await Meteor.users.removeAsync(identity+'-linked');
-        if (!configuration) await ServiceConfiguration.configurations.removeAsync({service:'github'});
       }
+      return true;
     },
+
 
     async testRustEmailDeliveryFailure() {
       const originalEnabled = Accounts.loginServices.email.isEnabled;

@@ -236,7 +236,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   utils.callMeteorTestMethod(browser, "testRustNativeLogin");
   utils.callMeteorTestMethod(browser, "testRustEmailDeliveryFailure");
   utils.callMeteorTestMethod(browser, "testRustDevAccountIdentity");
-  utils.callMeteorTestMethod(browser, "testRustGithub");
+  utils.callMeteorTestMethod(browser, "testRustOAuth");
   utils.callMeteorTestMethod(browser, "testRustProfile");
   utils.callMeteorTestMethod(browser, "testRegressionEmailCredentialLinkAwaitsFailure");
   browser.frame(null).executeAsync(function (done) {

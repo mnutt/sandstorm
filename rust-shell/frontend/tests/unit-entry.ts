@@ -24,3 +24,5 @@ export { PowerboxRequests } from '../src/lib/powerbox-client';
 export { watchGrains } from '../src/lib/queries';
 
 export { ListCache } from '../src/lib/list-delta';
+
+export { authorizationUrl } from '../src/lib/oauth';

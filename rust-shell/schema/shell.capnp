@@ -244,12 +244,14 @@ struct OAuthState {
   url @1 :Text;
   pending @2 :Bool;
 }
+enum OAuthProvider { github @0; google @1; }
 struct AccountState {
   emailEnabled @0 :Bool;
   githubEnabled @1 :Bool;
   emails @2 :List(EmailAddress);
   credentials @3 :List(Credential);
   oauth @4 :OAuthState;
+  googleEnabled @5 :Bool;
 }
 interface Account {
   readProfile @9 () -> (result :Result(AccountProfile));
@@ -264,9 +266,9 @@ interface Account {
   verifyEmail @3 (email :Text, code :Text, allowLogin :Bool) -> (result :Result(AccountState));
   unlink @4 (credentialId :Text) -> (result :Result(AccountState));
   setLoginAllowed @5 (credentialId :Text, allowed :Bool) -> (result :Result(AccountState));
-  startGithub @6 () -> (result :Result(AccountState));
-  finishGithub @7 (request :Text) -> (result :Result(AccountState));
-  cancelGithub @8 (request :Text) -> (result :Result(AccountState));
+  startOAuth @6 (provider :OAuthProvider) -> (result :Result(AccountState));
+  finishOAuth @7 (provider :OAuthProvider, request :Text) -> (result :Result(AccountState));
+  cancelOAuth @8 (provider :OAuthProvider, request :Text) -> (result :Result(AccountState));
 }
 
 

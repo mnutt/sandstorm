@@ -130,7 +130,7 @@
       }, async () => {
         const result = await actions.call(id,'select',{key,mode:'githubFinish'});
         return result.status === 'waiting' ? null : result;
-      }, () => actions.call(id,'cancel'), lifetime.signal);
+      }, () => actions.call(id,'cancel'), lifetime.signal, 'github');
       await accept(result);
     } catch (failure) { if (alive) error=applicationErrorMessage(failure, 'Could not complete authorization. Cancel and try again.'); }
     finally { if (alive) busy=false; }

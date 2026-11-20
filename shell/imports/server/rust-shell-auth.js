@@ -1,7 +1,7 @@
 import Http from "node:http";
 import Crypto from "node:crypto";
 import { WebApp } from "meteor/webapp";
-import { githubEnabled, startGithub, finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
+import { oauthEnabled, oauthProvider, startOAuth, finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
 import { Meteor } from "meteor/meteor";
 import { Accounts } from "meteor/accounts-base";
 import { DDP } from "meteor/ddp-client";
@@ -31,28 +31,30 @@ function authEndpoint() {
 const enabled = name => !!Accounts.loginServices[name]?.isEnabled();
 const fail = message => { throw new Meteor.Error(400, message); };
 export async function rustNativeAuth(operation, input, flow) {
-  if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:githubEnabled()};
-  const fields = {githubStart:[],githubFinish:['request'],githubCancel:['request'],sendEmail:["email"],email:["email","code"],dev:["name"],ldap:["username","password"]};
+  if (operation === "options") return {email:enabled("email"),dev:enabled("dev"),ldap:enabled("ldap"),github:oauthEnabled('github'),google:oauthEnabled('google')};
+  const fields = {oauthStart:['provider'],oauthFinish:['provider','request'],oauthCancel:['provider','request'],sendEmail:["email"],email:["email","code"],dev:["name"],ldap:["username","password"]};
   if (!Object.hasOwn(fields,operation) || !input || typeof input !== "object" || Array.isArray(input) ||
       Object.keys(input).some(key=>!fields[operation].includes(key)) || fields[operation].some(key=>typeof input[key] !== "string" || !input[key])) fail("Invalid sign-in request.");
+  if (operation.startsWith('oauth')) oauthProvider(input.provider);
   const binding = 'login:'+flow;
-  if (operation === 'githubStart') return startGithub(binding);
-  if (operation === 'githubCancel') { await cancelGithub(binding,input.request); return {}; }
-  if (operation === 'githubFinish') {
-    const oauth = await finishGithub(binding,input.request);
+  if (operation === 'oauthStart') return startOAuth(input.provider,binding);
+  if (operation === 'oauthCancel') { await cancelOAuth(input.provider,binding,input.request); return {}; }
+  if (operation === 'oauthFinish') {
+    const oauth = await finishOAuth(input.provider,binding,input.request);
     if (!oauth) return {pending:true};
-    return loginWithGithub(oauth);
+    return loginWithOAuth(input.provider,oauth);
   }
   const service = operation === "sendEmail" ? "email" : operation;
   if (!enabled(service)) throw new Meteor.Error(403,"That login method is disabled.");
   return loginThroughMeteor(operation,input);
 }
 
-export async function loginWithGithub(oauth, link) {
-  return loginThroughMeteor('oauth',oauth,link);
+export async function loginWithOAuth(provider, oauth, link) {
+  oauthProvider(provider);
+  return loginThroughMeteor('oauth',oauth,link,provider);
 }
 
-async function loginThroughMeteor(operation,input,link) {
+async function loginThroughMeteor(operation,input,link,provider) {
   const endpoint = await authEndpoint();
   let connected;
   const ready = new Promise(resolve => { connected = resolve; });
@@ -76,8 +78,8 @@ async function loginThroughMeteor(operation,input,link) {
         }
         if (operation === 'oauth') {
           credential = await call('login',{oauth:input});
-          const github = await Meteor.users.findOneAsync({_id:credential.id,'services.github':{$exists:true}},{fields:{_id:1}});
-          if (!github) throw new Meteor.Error(403,'Expected a GitHub credential.');
+          const identity = await Meteor.users.findOneAsync({_id:credential.id,['services.'+provider]:{$exists:true}},{fields:{_id:1}});
+          if (!identity) throw new Meteor.Error(403,'Expected a '+oauthProvider(provider).label+' credential.');
           if (link) { await link(credential.id); return {linked:true}; }
         } else if (operation === "dev") {
           // These names are credential identifiers, not just display labels.

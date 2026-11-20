@@ -72,14 +72,15 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const accountEmails = [{email:'alice@example.test',verified:true,primary:true},{email:'second@example.test',verified:true,primary:false}];
   const accountCredentials = [{id:'email-alice',service:'email',name:'alice@example.test',pictureUrl:fixtureAvatar,login:true}];
   const accountCalls = [];
-  let githubReady = false;
+  const oauthReady = {github:false,google:false};
+  const oauthUrl = provider => provider === 'google' ? 'https://accounts.google.com/o/oauth2/auth?state=fixture' : 'https://github.com/login/oauth/authorize?state=fixture';
   let paginated = false, laterTitle = 'Older notification';
   const bridgeOptions = {
     nativeAuth: async (operation,data) => {
-      if (operation === 'options') return {dev:true,email:false,ldap:false,github:true};
-      if (operation === 'githubStart') return {request:'a'.repeat(64),url:'https://github.com/login/oauth/authorize?state=fixture'};
-      if (operation === 'githubFinish') return githubReady ? {accountId:'alice',loginHash:users.alice.hash} : {pending:true};
-      if (operation === 'githubCancel') return {};
+      if (operation === 'options') return {dev:true,email:false,ldap:false,github:true,google:true};
+      if (operation === 'oauthStart') {oauthReady[data.provider]=false;return {request:'a'.repeat(64),url:oauthUrl(data.provider)};}
+      if (operation === 'oauthFinish') return oauthReady[data.provider] ? {accountId:'alice',loginHash:users.alice.hash} : {pending:true};
+      if (operation === 'oauthCancel') return {};
       assert.equal(operation,'dev'); assert.equal(data.name,'Alice');
       return {accountId:'alice',loginHash:users.alice.hash};
     },
@@ -88,7 +89,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
       if (operation === 'primary') for (const email of accountEmails) email.primary=email.email===data.email;
       if (operation === 'verifyEmail') { assert.equal(data.code,'123456'); accountCredentials.push({id:'new-email',service:'email',name:data.email,pictureUrl:'',login:true}); }
       if (operation === 'unlink') accountCredentials.splice(accountCredentials.findIndex(item=>item.id===data.id),1);
-      return {emailEnabled:true,emails:id==='alice'?accountEmails:[],credentials:id==='alice'?accountCredentials:[]};
+      let oauth;
+      if(operation === 'oauthStart'){oauthReady[data.provider]=false;oauth={request:'a'.repeat(64),url:oauthUrl(data.provider)};}
+      if(operation === 'oauthFinish'){
+        if(!oauthReady[data.provider]) oauth={request:data.request,pending:true};
+        else if(!accountCredentials.some(c=>c.id==='oauth-'+data.provider)) accountCredentials.push({id:'oauth-'+data.provider,service:data.provider,name:data.provider+' fixture',pictureUrl:'',login:true});
+      }
+      return {emailEnabled:true,githubEnabled:true,googleEnabled:true,oauth,emails:id==='alice'?accountEmails:[],credentials:id==='alice'?accountCredentials:[]};
     },
     install: async (id,operation,data,beforeWrite) => {
       assert.equal(id,'alice'); installCalls.push(operation);
@@ -303,7 +310,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/usr/bin/chromium',
       headless: true, args: [`--ignore-certificate-errors-spki-list=${proxy.pin}`] });
     const context = await browser.newContext();
-    await context.route('https://github.com/login/oauth/authorize**', async route => { githubReady=true; await route.fulfill({contentType:'text/html',body:'Authorization complete'}); });
+    await context.route('https://github.com/login/oauth/authorize**', async route => { oauthReady.github=true; await route.fulfill({contentType:'text/html',body:'Authorization complete'}); });
+    await context.route('https://accounts.google.com/o/oauth2/auth**', async route => { oauthReady.google=true; await route.fulfill({contentType:'text/html',body:'Authorization complete'}); });
     const page = await context.newPage();
     const errors = [];
     let receivedFrames = 0;
@@ -356,6 +364,12 @@ test('authenticated notifications: handoff, shared writes, account switching and
     const bad = await page.evaluate(async () => (await fetch('/auth/login', { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `code=${'a'.repeat(64)}&state=${'b'.repeat(64)}` })).status);
     assert.equal(bad, 403);
+    const googlePage=await context.newPage();
+    await googlePage.goto(proxy.origin+'/login');
+    await googlePage.getByRole('button',{name:'Sign in with Google',exact:true}).click();
+    await googlePage.getByRole('heading',{name:/Alice notification/}).waitFor();
+    await googlePage.evaluate(()=>fetch('/auth/logout',{method:'POST'}));
+    await googlePage.close();
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).click();
     await page.getByRole('button',{name:'Sign in with GitHub',exact:true}).click();
     await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
@@ -453,6 +467,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await credential.getByRole('button',{name:'Confirm removal'}).click();
     await expect(credential).toHaveCount(0);
     assert.ok(accountCalls.includes('verifyEmail'));
+    await settings.getByRole('button',{name:'Link Google account',exact:true}).click();
+    await settings.getByText('google fixture',{exact:true}).waitFor();
+    await settings.getByRole('button',{name:'Link GitHub account',exact:true}).click();
+    await settings.getByText('github fixture',{exact:true}).waitFor();
+
 
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice');
     await page.getByLabel('Choose an image',{exact:true}).setInputFiles({name:'broken.png',mimeType:'image/png',buffer:Buffer.from('not an image')});

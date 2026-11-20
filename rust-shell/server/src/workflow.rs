@@ -105,9 +105,16 @@ fn installation(value: &Value, mut out: api::installation_state::Builder<'_>) ->
     out.set_older_grains(count(value, "olderGrains"));
     Ok(())
 }
+fn oauth_provider(provider: api::OAuthProvider) -> &'static str {
+    match provider {
+        api::OAuthProvider::Github => "github",
+        api::OAuthProvider::Google => "google",
+    }
+}
 fn account(value: &Value, mut out: api::account_state::Builder<'_>) -> capnp::Result<()> {
     out.set_email_enabled(boolean(value, "emailEnabled"));
     out.set_github_enabled(boolean(value, "githubEnabled"));
+    out.set_google_enabled(boolean(value, "googleEnabled"));
     if let Some(oauth) = value["oauth"].as_object() {
         let mut target = out.reborrow().init_oauth();
         target.set_request(oauth.get("request").and_then(Value::as_str).unwrap_or(""));
@@ -323,50 +330,49 @@ impl api::account::Server for Account {
             .await;
         complete!(value, results.get().init_result(), account)
     }
-    async fn start_github(
+    async fn start_o_auth(
         self: Rc<Self>,
-        params: api::account::StartGithubParams,
-        mut results: api::account::StartGithubResults,
+        params: api::account::StartOAuthParams,
+        mut results: api::account::StartOAuthResults,
     ) -> capnp::Result<()> {
-        let _ = params;
-        let data = json!({});
+        let data = json!({"provider":oauth_provider(params.get()?.get_provider()?)});
         let value = self
             .0
             .call(
                 "accountSettings",
-                json!({"operation":"githubStart","data":data}),
+                json!({"operation":"oauthStart","data":data}),
             )
             .await;
         complete!(value, results.get().init_result(), account)
     }
-    async fn finish_github(
+    async fn finish_o_auth(
         self: Rc<Self>,
-        params: api::account::FinishGithubParams,
-        mut results: api::account::FinishGithubResults,
+        params: api::account::FinishOAuthParams,
+        mut results: api::account::FinishOAuthResults,
     ) -> capnp::Result<()> {
         let input = params.get()?;
-        let data = json!({"request":input.get_request()?.to_str()?});
+        let data = json!({"provider":oauth_provider(input.get_provider()?),"request":input.get_request()?.to_str()?});
         let value = self
             .0
             .call(
                 "accountSettings",
-                json!({"operation":"githubFinish","data":data}),
+                json!({"operation":"oauthFinish","data":data}),
             )
             .await;
         complete!(value, results.get().init_result(), account)
     }
-    async fn cancel_github(
+    async fn cancel_o_auth(
         self: Rc<Self>,
-        params: api::account::CancelGithubParams,
-        mut results: api::account::CancelGithubResults,
+        params: api::account::CancelOAuthParams,
+        mut results: api::account::CancelOAuthResults,
     ) -> capnp::Result<()> {
         let input = params.get()?;
-        let data = json!({"request":input.get_request()?.to_str()?});
+        let data = json!({"provider":oauth_provider(input.get_provider()?),"request":input.get_request()?.to_str()?});
         let value = self
             .0
             .call(
                 "accountSettings",
-                json!({"operation":"githubCancel","data":data}),
+                json!({"operation":"oauthCancel","data":data}),
             )
             .await;
         complete!(value, results.get().init_result(), account)

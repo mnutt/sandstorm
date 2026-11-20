@@ -308,13 +308,13 @@ retain the main shell's last-write-wins behavior.
 ### Native account credentials and sign-in
 
 The account page lists linked login methods and verified email addresses, supports
-primary-email selection, email-code verification, GitHub linking, and credential
+primary-email selection, email-code verification, GitHub/Google linking, and credential
 removal/login toggles. Mutations are account-scoped and serialized; removing the
 last login method is rejected. Credential-array updates compare the authorized
 arrays to reject concurrent changes. Email codes are consumed atomically and
 checked for expiry at consumption, using the same helper as the Meteor UI.
 
-`/login` offers enabled development accounts, email codes, LDAP, and GitHub.
+`/login` offers enabled development accounts, email codes, LDAP, GitHub, and Google.
 The bridge invokes the real Meteor login methods using a temporary DDP connection
 through a secret-protected loopback upgrade listener into Meteor’s existing DDP
 handler. This avoids dependence on public DNS or gateway redirects. Existing login validators, organization checks,
@@ -322,13 +322,13 @@ account creation, and login-token ownership remain in Meteor. Rust receives the
 linked session and sets its existing HttpOnly cookie; passwords and credential
 resume tokens are never persisted in frontend state or browser storage.
 
-GitHub uses the existing configured callback URL. A expiring, server-side
-request map binds each flow to its Rust sign-in cookie, linked account, or provider
+GitHub and Google use their existing configured callback URLs. An expiring, server-side
+request map binds each flow to its provider and Rust sign-in cookie, linked account, or provider
 session. Only those state tokens use the Rust callback adapter; other OAuth flows
 retain Meteor's handler. The callback retains the OAuth secret on the server and
 redirects its popup to `/oauth-complete`. The opener polls for completion; secrets
 never pass through postMessage, query strings, or localStorage. Cancellation and
-completion consume the request. GitHub configuration is reused without changing
+completion consume the request. Provider configuration is reused without changing
 provider callback registration. Other sign-in providers retain an explicit main
 shell fallback. Email messages still include the canonical Meteor email link;
 the code can be entered directly in the native form.
@@ -884,12 +884,12 @@ Rust tests cover framing boundaries, segmented frames and size limits.
 Authentication tests use the production bridge core and HTTP handler with an
 in-memory database adapter: one-use grants, account isolation, shared writes,
 account switching across tabs, logout, expiration, and source-token revocation.
-`tests/tests/rust-auth.js` exercises native development-account sign-in, GitHub
+`tests/tests/rust-auth.js` exercises native development-account sign-in, GitHub/Google
 callback completion and credential linking, account settings, and atomic email-code
-consumption against real Meteor methods and Mongo. Its GitHub credentials and
-provider responses are synthetic; it does not exercise live GitHub consent or send
+consumption against real Meteor methods and Mongo. Its OAuth credentials and
+provider responses are synthetic; it does not exercise live provider consent or send
 email. These checks also run in the packaged grain-session suite, alongside nested
-Powerbox provider-session isolation. The browser suite mocks the GitHub popup and
+Powerbox provider-session isolation. The browser suite mocks both provider popups and
 checks native pagination and account controls.
 
 The actual Meteor notification regression (`tests/tests/notifications.js`) also
@@ -973,7 +973,7 @@ subscriptions, and popup blocking in addition to the browser integration suite.
 
 Next useful slices:
 
-1. Complete remaining provider adapters (Google, OIDC, SAML), notification app
+1. Complete remaining provider adapters (OIDC, SAML), notification app
    icons, and localized copy.
 2. Validate full installed-server update recovery and main-shell visual/behavioral
    parity before migrating production UI.

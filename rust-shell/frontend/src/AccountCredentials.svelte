@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { authorizeOAuth } from './lib/oauth';
+  import { authorizeOAuth, oauthProviders, type OAuthProviderName } from './lib/oauth';
   import type { AccountService, AccountState } from './lib/account';
   import Avatar from './components/ui/Avatar.svelte';
   import Button from './components/ui/Button.svelte';
@@ -15,24 +15,25 @@
   $effect(() => { if (ready) void settings.call(); });
   const lifetime = new AbortController();
   onDestroy(() => lifetime.abort());
-  let githubPending = $state(false);
-  let githubError = $state('');
-  async function github() {
-    githubPending=true; githubError='';
+  let oauthPending = $state<OAuthProviderName | null>(null);
+  let oauthError = $state('');
+  async function oauth(provider:OAuthProviderName) {
+    if (oauthPending) return;
+    oauthPending=provider; oauthError='';
     try {
       await authorizeOAuth(async () => {
-        const result = await settings.call('githubStart');
-        if (!result) throw new Error('Could not start GitHub authorization.');
+        const result = await settings.call('oauthStart',{provider});
+        if (!result) throw new Error('Could not start authorization.');
         const oauth = result.oauth;
         if (!oauth?.url) throw new Error('No authorization URL returned.');
         return {request:oauth.request,url:oauth.url};
       }, async request => {
-        const result = await settings.call('githubFinish',{request});
-        if (!result) throw new Error('Could not finish GitHub authorization.');
+        const result = await settings.call('oauthFinish',{provider,request});
+        if (!result) throw new Error('Could not finish authorization.');
         return result.oauth?.pending ? null : true;
-      }, request => settings.call('githubCancel',{request}), lifetime.signal);
-    } catch (failure) { if (!lifetime.signal.aborted) githubError=String(failure); }
-    finally { if (!lifetime.signal.aborted) githubPending=false; }
+      }, request => settings.call('oauthCancel',{provider,request}), lifetime.signal, provider);
+    } catch (failure) { if (!lifetime.signal.aborted) oauthError=String(failure); }
+    finally { if (!lifetime.signal.aborted) oauthPending=null; }
   }
   async function send(event: SubmitEvent) {
     event.preventDefault();
@@ -65,9 +66,11 @@
         </li>
       {/each}
     </ul>
-    {#if model.value.githubEnabled}<Button variant="secondary" disabled={model.pending || githubPending} onclick={github}>Link GitHub account</Button>{/if}
-    {#if githubPending}<p role="status">Waiting for GitHub authorization…</p>{/if}
-    {#if githubError}<p role="alert">{githubError}</p>{/if}
+    {#each oauthProviders as provider}
+      {#if provider.key === 'github' ? model.value.githubEnabled : model.value.googleEnabled}<Button variant="secondary" disabled={model.pending || !!oauthPending} onclick={() => oauth(provider.key)}>Link {provider.label} account</Button>{/if}
+    {/each}
+    {#if oauthPending}<p role="status">Waiting for {oauthProviders.find(provider => provider.key === oauthPending)?.label} authorization…</p>{/if}
+    {#if oauthError}<p role="alert">{oauthError}</p>{/if}
     <p class="hint">Keep at least one login method so you can sign in again.</p>
     <h3>Email addresses</h3>
     <ul>

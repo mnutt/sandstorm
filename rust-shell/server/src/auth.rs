@@ -136,9 +136,9 @@ pub async fn native_login(
         "email",
         "dev",
         "ldap",
-        "githubStart",
-        "githubFinish",
-        "githubCancel",
+        "oauthStart",
+        "oauthFinish",
+        "oauthCancel",
     ]
     .contains(&input.operation.as_str())
     {

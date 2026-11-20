@@ -1,5 +1,5 @@
-import { githubEnabled, startGithub, finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
-import { loginWithGithub } from "/imports/server/rust-shell-auth";
+import { oauthEnabled, oauthProvider, startOAuth, finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
+import { loginWithOAuth } from "/imports/server/rust-shell-auth";
 import { Meteor } from "meteor/meteor";
 import { Accounts } from "meteor/accounts-base";
 import { SandstormDb } from "/imports/sandstorm-db/db";
@@ -15,15 +15,16 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   if (!account?.loginCredentials) throw new Meteor.Error(403, "Account unavailable.");
   const ids = SandstormDb.getUserCredentialIds(account);
   let oauth;
+  if (operation.startsWith('oauth')) oauthProvider(input.provider);
   const binding = 'link:'+accountId;
-  if (operation === 'githubStart') {
-    await beforeWrite(); oauth = await startGithub(binding);
-  } else if (operation === 'githubCancel') {
-    await cancelGithub(binding,input.request);
-  } else if (operation === 'githubFinish') {
-    const credential = await finishGithub(binding,input.request);
+  if (operation === 'oauthStart') {
+    await beforeWrite(); oauth = await startOAuth(input.provider,binding);
+  } else if (operation === 'oauthCancel') {
+    await cancelOAuth(input.provider,binding,input.request);
+  } else if (operation === 'oauthFinish') {
+    const credential = await finishOAuth(input.provider,binding,input.request);
     if (!credential) oauth = {pending:true,request:input.request};
-    else await loginWithGithub(credential,async id => {
+    else await loginWithOAuth(input.provider,credential,async id => {
       await beforeWrite();
       await Accounts.linkCredentialToAccount(globalDb,globalThis.globalBackend,id,accountId,true);
     });
@@ -66,7 +67,7 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   const current = await Meteor.users.findOneAsync(accountId);
   const credentials = await Meteor.users.find({_id: {$in: SandstormDb.getUserCredentialIds(current)}}).fetchAsync();
   return {
-    oauth, githubEnabled:githubEnabled(),
+    oauth, githubEnabled:oauthEnabled('github'), googleEnabled:oauthEnabled('google'),
     emailEnabled: !!Accounts.loginServices.email.isEnabled(),
     emails: await SandstormDb.getUserEmailsAsync(current),
     credentials: credentials.map(credential => ({id: credential._id,

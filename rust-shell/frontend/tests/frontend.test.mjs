@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { authorizationUrl, ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
@@ -645,4 +645,10 @@ test('gateway readiness updates only its own active grain and ignores a late res
   const late=deferred();session.whenReady=()=>({promise:()=>late.promise});
   await service.open('next','/',[]);service.close();late.resolve(valueResult({}));await turn();
   assert.equal(state.activeGrain,null);
+});
+
+test('OAuth popup targets are restricted to the selected provider', () => {
+  assert.equal(authorizationUrl('google','https://accounts.google.com/o/oauth2/auth?state=test').hostname,'accounts.google.com');
+  assert.equal(authorizationUrl('github','https://github.com/login/oauth/authorize?state=test').hostname,'github.com');
+  for(const url of ['https://github.com/login/oauth/authorize','https://accounts.google.com.evil.test/o/oauth2/auth','https://accounts.google.com/other','https://user@accounts.google.com/o/oauth2/auth','http://accounts.google.com/o/oauth2/auth']) assert.throws(()=>authorizationUrl('google',url));
 });

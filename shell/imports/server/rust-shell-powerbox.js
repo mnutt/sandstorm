@@ -1,4 +1,4 @@
-import { githubEnabled, startGithub, finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
+import { oauthEnabled, startOAuth, finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
 import { rustAccount } from "/imports/server/rust-shell-account";
 import { Accounts } from "meteor/accounts-base";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
@@ -50,7 +50,7 @@ export function rustPowerbox(db) {
             const roles = (grain.cachedViewInfo?.roles || []).map((role, index) => ({key:String(index),title:text(role.title)}));
             candidate = {title:text(titles.title),iconSrc:titles.iconSrc,uiView:!!option.uiView,hostedObject:!!option.hostedObject,roles};
           } catch { continue; }
-        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && option.oauthServiceInfo.service === 'github' && githubEnabled()) {
+        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && option.oauthServiceInfo.service === 'github' && oauthEnabled('github')) {
           candidate = {title:'Connect to GitHub',github:true,detail:text(option.oauthScopes.map(scope=>scope.name).join(', '))};
         } else if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard" && Accounts.loginServices.email.isEnabled()) {
           candidate = {title:"Verify a new email address",emailInput:true};
@@ -87,12 +87,12 @@ export function rustPowerbox(db) {
         if (input.mode === 'githubStart') {
           if (request.github) fail('Authorization is already in progress.');
           const binding = 'powerbox:'+request.parent.sessionId;
-          const oauth = await startGithub(binding,option.oauthScopes.map(scope=>scope.name));
+          const oauth = await startOAuth('github',binding,option.oauthScopes.map(scope=>scope.name));
           request.github = {...oauth,binding,key:input.key};
           return {status:'oauth',...oauth};
         }
         if (input.mode !== 'githubFinish' || request.github?.key !== input.key) fail('Start GitHub authorization first.');
-        githubCredential = await finishGithub(request.github.binding,request.github.request);
+        githubCredential = await finishOAuth('github',request.github.binding,request.github.request);
         if (!githubCredential) return {status:'waiting'};
       }
       if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
@@ -198,7 +198,7 @@ export function rustPowerbox(db) {
       request.closed=true;
       const child=request.nested; request.nested=null;
       if (child?.handle) await api.close(child.handle);
-      if (request.github) await cancelGithub(request.github.binding,request.github.request);
+      if (request.github) await cancelOAuth('github',request.github.binding,request.github.request);
       // Undelivered provider results must not survive cancellation. The requesting
       // session owns delivered tokens, which the existing gateway redeems/cleans up.
       if (request.provider) await db.collections.sessions.updateAsync({_id:request.provider.sessionId}, {$set:{rustPowerboxClosing:true}});

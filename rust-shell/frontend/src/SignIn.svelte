@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { authorizeOAuth } from './lib/oauth';
+  import { authorizeOAuth, oauthProviders, type OAuthProviderName } from './lib/oauth';
   import { onMount } from 'svelte';
   import Panel from './components/ui/Panel.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
-  let options = $state<{email:boolean;dev:boolean;ldap:boolean;github:boolean}>();
+  let options = $state<{email:boolean;dev:boolean;ldap:boolean;github:boolean;google:boolean}>();
   let pending = $state(false);
   let error = $state('');
   let email = $state('');
@@ -25,7 +25,7 @@
     })();
     return () => { lifetime.abort(); password = ''; code = ''; };
   });
-  async function github() {
+  async function oauth(provider:OAuthProviderName) {
     pending = true; error = '';
     const call = async (operation:string,data:Record<string,string>={}) => {
       const response = await fetch('/auth/native',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation,data}),signal:lifetime.signal});
@@ -34,10 +34,10 @@
       return result;
     };
     try {
-      await authorizeOAuth(() => call('githubStart'), async request => {
-        const result = await call('githubFinish',{request});
+      await authorizeOAuth(() => call('oauthStart',{provider}), async request => {
+        const result = await call('oauthFinish',{provider,request});
         return result.pending ? null : result;
-      }, request => call('githubCancel',{request}), lifetime.signal);
+      }, request => call('oauthCancel',{provider,request}), lifetime.signal, provider);
       location.assign('/');
     } catch (failure) { if (!lifetime.signal.aborted) error = String(failure); }
     finally { if (!lifetime.signal.aborted) pending = false; }
@@ -58,7 +58,9 @@
 <Panel aria-labelledby="sign-in-title">
   <h2 id="sign-in-title">Sign in to Sandstorm</h2>
   {#if !options && !error}<LoadingStatus label="Loading sign-in methods…" />{/if}
-  {#if options?.github}<Button disabled={pending} onclick={github}>Sign in with GitHub</Button>{/if}
+  {#each oauthProviders as provider}
+    {#if options?.[provider.key]}<Button disabled={pending} onclick={() => oauth(provider.key)}>Sign in with {provider.label}</Button>{/if}
+  {/each}
   {#if options?.dev}
     <h3>Development accounts</h3>
     <div class="dev-accounts">{#each ['Alice','Bob','Carol','Dave'] as name}<Button variant="secondary" disabled={pending} onclick={() => signIn('dev',{name})}>{name}{name === 'Alice' ? ' (admin)' : ''}</Button>{/each}</div>
