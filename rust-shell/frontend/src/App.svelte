@@ -1,4 +1,6 @@
 <script lang="ts">
+  import SignIn from './SignIn.svelte';
+  import OAuthComplete from './OAuthComplete.svelte';
   import { readSidebarCollapsed, saveSidebarCollapsed } from './lib/preferences';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import GrainIcon from './components/ui/GrainIcon.svelte';
@@ -64,7 +66,7 @@
   let route = $state(navigation.route);
   const connecting = $derived(!model.activeGrain && !['shared', 'missing'].includes(route.page) && ['connecting', 'reconnecting', 'waiting'].includes(model.status));
   const view = $derived(route.page === 'grain' ? 'grains' : route.page);
-  const pageTitle = $derived(model.activeGrain?.title || ({install:'Install app', notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
+  const pageTitle = $derived(model.activeGrain?.title || ({'oauth-complete':'Authorization',login:'Sign in', install:'Install app', notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
   $effect(() => { route; navigation.sync(model); });
   const navigate = (path: string) => navigation.navigate(path);
   onMount(() => {
@@ -96,7 +98,7 @@
     <a class="notifications" href="/notifications" aria-label="Notifications" title="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
       <ShellIcon name="bell" toolbar />
-      {#if model.entries.some(entry => entry.unread)}<span class="unread" aria-label="Unread notifications"></span>{/if}
+      {#if (model.fixture ? model.entries.some(entry => entry.unread) : model.hasUnread)}<span class="unread" aria-label="Unread notifications"></span>{/if}
     </a>
     <AccountMenu {model} navigate={(event, path) => navigation.link(event, path)} disconnect={() => service.logout()} />
   </div>
@@ -155,6 +157,10 @@
   <div class="route-page" hidden={connecting}>
   {#if route.page === 'missing'}
     <Panel><h2>Page not found</h2><Button onclick={() => navigate('/grains')}>Go to grains</Button></Panel>
+  {:else if route.page === 'oauth-complete'}
+    <OAuthComplete />
+  {:else if route.page === 'login'}
+    <SignIn />
   {:else if route.page === 'install'}
     {#key (route.packageId || '') + route.url + model.accountKey}<Install {service} {model} {navigate} packageId={route.packageId} url={route.url} />{/key}
   {:else if route.page === 'shared'}
@@ -164,7 +170,7 @@
     <Panel aria-label="Grain route">
       <h2>Grain</h2>
       {#if model.status === 'signed-out'}
-        <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to open this grain.</p>
+        <p><a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a> to open this grain.</p>
       {:else if model.status === 'waiting'}
         <LoadingStatus label="Waiting for Sandstorm…" detail="Your login will be checked when the server returns." />
       {:else if model.status !== 'ready' || model.openingGrain}<LoadingStatus label="Opening grain…" detail="Starting the app and establishing its session." />

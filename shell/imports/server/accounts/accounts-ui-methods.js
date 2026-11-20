@@ -71,6 +71,30 @@ export async function updateProfileForUser(userId, profile, beforeWrite = async 
   }
 }
 
+export async function setPrimaryEmailForUser(userId, email, beforeWrite = async () => {}) {
+    check(email, String);
+    if (!userId) {
+      throw new Meteor.Error(403, "Not logged in.");
+    }
+
+    const currentUser = Meteor.isServer
+        ? await Meteor.users.findOneAsync({ _id: userId })
+        : Meteor.user();
+    const emails = Meteor.isServer
+        ? await SandstormDb.getUserEmailsAsync(currentUser)
+        : SandstormDb.getUserEmails(currentUser);
+    if (!findWhere(emails, { email: email, verified: true })) {
+      throw new Meteor.Error(403, "Not a verified email of the current user: " + email);
+    }
+
+    await beforeWrite();
+    if (Meteor.isServer) {
+      await Meteor.users.updateAsync({ _id: userId }, { $set: { primaryEmail: email } });
+    } else {
+      Meteor.users.update({ _id: userId }, { $set: { primaryEmail: email } });
+    }
+}
+
 Meteor.methods({
   updateProfile: async function (obsolete, profile) {
     return updateProfileForUser(this.userId, profile);
@@ -104,25 +128,6 @@ Meteor.methods({
   },
 
   setPrimaryEmail: async function (email) {
-    check(email, String);
-    if (!this.userId) {
-      throw new Meteor.Error(403, "Not logged in.");
-    }
-
-    const currentUser = Meteor.isServer
-        ? await Meteor.users.findOneAsync({ _id: this.userId })
-        : Meteor.user();
-    const emails = Meteor.isServer
-        ? await SandstormDb.getUserEmailsAsync(currentUser)
-        : SandstormDb.getUserEmails(currentUser);
-    if (!findWhere(emails, { email: email, verified: true })) {
-      throw new Meteor.Error(403, "Not a verified email of the current user: " + email);
-    }
-
-    if (Meteor.isServer) {
-      await Meteor.users.updateAsync({ _id: this.userId }, { $set: { primaryEmail: email } });
-    } else {
-      Meteor.users.update({ _id: this.userId }, { $set: { primaryEmail: email } });
-    }
+    return setPrimaryEmailForUser(this.userId, email);
   },
 });

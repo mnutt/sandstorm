@@ -26,10 +26,10 @@ const date = (value) => value instanceof Date && Number.isFinite(+value) ? value
 
 // A bounded menu projection, not a grant of access. The existing shell checks
 // the sharing chain when the user follows a grain link.
-export async function grainMenu(db, accountId, mainUrl) {
+export async function grainMenu(db, accountId, mainUrl, page = 0) {
   const owned = await db.collections.grains.find({ userId: accountId,
     trashed: { $exists: false }, suspended: { $exists: false } }, {
-    sort: { lastUsed: -1, _id: 1 }, limit: LIMIT + 1,
+    sort: { lastUsed: -1, _id: 1 }, skip: page * LIMIT, limit: LIMIT + 1,
     fields: { title: 1, appId: 1, packageId: 1, lastUsed: 1, created: 1 },
   }).fetchAsync();
   const shared = await db.collections.apiTokens.rawCollection().aggregate([
@@ -39,12 +39,14 @@ export async function grainMenu(db, accountId, mainUrl) {
     { $sort: { created: 1, _id: 1 } },
     { $group: { _id: "$grainId", owner: { $first: "$owner.user" },
       lastUsed: { $max: { $ifNull: ["$lastUsed", "$created"] } } } },
+    // Exclude self-shares before paging, including owned grains in the trash.
+    { $lookup: { from: "grains", localField: "_id", foreignField: "_id", as: "grain" } },
+    { $match: { "grain.userId": { $ne: accountId } } },
+    { $project: { grain: 0 } },
     { $sort: { lastUsed: -1, _id: 1 } },
+    { $skip: page * LIMIT },
     { $limit: LIMIT + 1 },
   ]).toArray();
-  // Suppress duplicate/self-shared entries, including owned grains in the trash.
-  const selfOwned = new Set((await db.collections.grains.find({ userId: accountId,
-    _id: { $in: shared.map((row) => row._id) } }, { fields: { _id: 1 } }).fetchAsync()).map((row) => row._id));
   const packageIds = [...new Set(owned.slice(0, LIMIT).map((grain) => grain.packageId).filter(Boolean))];
   const packages = new Map((await db.collections.packages.find({ _id: { $in: packageIds } },
       { fields: { appId: 1, "manifest.appTitle": 1, "manifest.actions": 1, "manifest.metadata.icons": 1 } }).fetchAsync())
@@ -74,7 +76,7 @@ export async function grainMenu(db, accountId, mainUrl) {
   });
   return {
     grains: [...owned.slice(0, LIMIT).map((row) => entry(row, true)),
-      ...shared.slice(0, LIMIT).filter((row) => !selfOwned.has(row._id)).map((row) => entry(row, false))]
+      ...shared.slice(0, LIMIT).map((row) => entry(row, false))]
       .sort((a, b) => b.lastUsed.localeCompare(a.lastUsed) || a.key.localeCompare(b.key)),
     grainsLimited: owned.length > LIMIT || shared.length > LIMIT,
   };

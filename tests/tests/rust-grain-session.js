@@ -232,7 +232,12 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
       } catch (e) { done(e.message); }
     }, [], result => browser.assert.equal(result.value,true,'native UiView, URL, pasted webkey authorization and cleanup succeeded'));
   utils.callMeteorTestMethod(browser, "testRegressionRustShellPersistence");
+  utils.callMeteorTestMethod(browser, "testRustNativeLogin");
+  utils.callMeteorTestMethod(browser, "testRustEmailDeliveryFailure");
+  utils.callMeteorTestMethod(browser, "testRustDevAccountIdentity");
+  utils.callMeteorTestMethod(browser, "testRustGithub");
   utils.callMeteorTestMethod(browser, "testRustProfile");
+  utils.callMeteorTestMethod(browser, "testRegressionEmailCredentialLinkAwaitsFailure");
   browser.frame(null).executeAsync(function (done) {
     Meteor.call('testRustRenameGrain', location.pathname.split('/')[2], (error, ok) => done({error:error?.message,ok}));
   }, [], result => {

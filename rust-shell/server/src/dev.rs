@@ -58,6 +58,8 @@ pub async fn frontend(State(dev): State<Frontend>, method: Method, uri: Uri) -> 
             | "/grains"
             | "/apps"
             | "/account"
+            | "/login"
+            | "/oauth-complete"
             | "/install"
             | "/sandstorm-logo.svg"
             | "/favicon.ico"

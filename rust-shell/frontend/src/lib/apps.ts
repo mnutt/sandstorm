@@ -43,8 +43,8 @@ export class AppService {
     this.attempts.delete(this.account);
     this.changed({ status: 'idle' });
   }
-  async list(): Promise<{ actions: AppAction[]; limited: boolean }> {
-    const result = await this.connection.run(this.connection.shell.listApps().promise(), 'Load apps');
+  async list(page = 0, appId = ''): Promise<{ actions: AppAction[]; limited: boolean }> {
+    const result = await this.connection.run(this.connection.shell.listApps(params => { params.page=page; params.appId=appId; }).promise(), 'Load apps');
     const actions: AppAction[] = [];
     for (const action of result.actions) actions.push({ grainCount: action.grainCount, key: action.key, title: action.title, appTitle: action.appTitle, shortDescription: action.shortDescription, appId: action.appId, iconSrc: action.iconSrc, lastUsed: action.lastUsed });
     return { actions, limited: result.limited };

@@ -10,12 +10,13 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, observe, notification, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   let watches = 0;
   const creating = new Set();
   const installing = new Set();
   const notificationWrites = new Set();
   const updatingProfiles = new Set();
+  const accountWrites = new Set();
   const grants = new Map();
   const sessions = sessionStore;
   // One authoritative bridge process admits exchanges serially, including DB
@@ -88,6 +89,16 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
         exchanging = exchange.catch(() => {});
         return exchange;
       }
+      if (action === "nativeAuth") {
+        if (!nativeAuth || !validSecret(input.flow) || !["options","sendEmail","email","dev","ldap","githubStart","githubFinish","githubCancel"].includes(input.operation)) throw Object.assign(new Error("Invalid sign-in request."), {status:400});
+        const result = await nativeAuth(input.operation,input.data,input.flow);
+        if (result.accountId && result.loginHash) {
+          if (signal.aborted) throw Object.assign(new Error("Sign-in disconnected."), {status:409});
+          const code = await this.issue(result.accountId,result.loginHash,input.flow);
+          return this.handle("exchange",{code,state:input.flow,previous:input.previous},signal);
+        }
+        return result;
+      }
       if (action === "logout") {
         if (validSecret(input.token)) {
           await sessions.remove(hash(input.token));
@@ -117,6 +128,31 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
           await session(input.token);
           return result;
         } finally { if (writing) notificationWrites.delete(record.accountId); }
+      }
+      if (action === "accountSettings") {
+        const {operation, data} = input;
+        const fields = {githubStart:[],githubFinish:["request"],githubCancel:["request"],state:[], primary:["email"], sendEmail:["email","allowLogin"],
+          verifyEmail:["email","code","allowLogin"], unlink:["id"], allowLogin:["id","allowLogin"]};
+        if (!accountSettings || !Object.hasOwn(fields, operation) || !data || typeof data !== "object" || Array.isArray(data) ||
+            Object.keys(data).some(key => !fields[operation].includes(key)) || fields[operation].some(key =>
+              key === "allowLogin" ? typeof data[key] !== "boolean" : typeof data[key] !== "string" || !data[key] || data[key].length > 320)) {
+          throw Object.assign(new Error("Invalid account settings request."), {status:400});
+        }
+        const writing = operation !== "state";
+        if (writing && (accountWrites.has(record.accountId) || accountWrites.size >= 8)) {
+          throw Object.assign(new Error("An account update is in progress."), {status:409});
+        }
+        if (writing) accountWrites.add(record.accountId);
+        try {
+          const beforeWrite = async () => {
+            await session(input.token);
+            if (signal.aborted) throw Object.assign(new Error("Account request disconnected."), {status:409});
+          };
+          await beforeWrite();
+          const result = await accountSettings(record.accountId, operation, data, beforeWrite);
+          await beforeWrite();
+          return result;
+        } finally { if (writing) accountWrites.delete(record.accountId); }
       }
       if (action === "install") {
         const {operation, data} = input;
@@ -186,7 +222,10 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       }
       if (action === "listApps") {
         if (!listApps) throw Object.assign(new Error("Apps unavailable."), { status: 503 });
-        const result = await listApps(record.accountId);
+        const page = input.page ?? 0;
+        const appId = input.appId ?? "";
+        if (!Number.isSafeInteger(page) || page < 0 || page > 1000000 || typeof appId !== "string" || appId.length > 128) throw Object.assign(new Error("Invalid app page."), {status:400});
+        const result = await listApps(record.accountId, page, appId);
         await session(input.token);
         return result;
       }
@@ -216,8 +255,14 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
       if (action === "renameGrain") return leases.rename(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
       if (action === "session") return { account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: record.expires };
+      const pages = input.pages ?? {};
+      if ((action === "snapshot" || action === "watch") &&
+          (typeof pages !== "object" || Array.isArray(pages) || Object.keys(pages).some(key =>
+            !["grains", "notifications"].includes(key) || !Number.isSafeInteger(pages[key]) || pages[key] < 0 || pages[key] > 1000000))) {
+        throw Object.assign(new Error("Invalid list page."), {status:400});
+      }
       if (action === "snapshot") {
-        const result = await snapshot(record.accountId);
+        const result = await snapshot(record.accountId, pages);
         await session(input.token); // Do not return data after revocation during DB reads.
         return { ...result, version: hash(JSON.stringify(result)) };
       }
@@ -237,14 +282,14 @@ export function createRustShellBridge({ authorize, snapshot, dismiss, markRead, 
           // Observe before reading: writes during the read or between requests
           // cannot fall through a snapshot/subscription gap.
           aborted();
-          stop = await observe(record.accountId, changed);
+          stop = await observe(record.accountId, changed, pages);
           let result;
           while (true) {
             aborted();
             await session(input.token);
             if (dirty) {
               dirty = false;
-              const projection = await snapshot(record.accountId);
+              const projection = await snapshot(record.accountId, pages);
               result = { ...projection, version: hash(JSON.stringify(projection)) };
             }
             await session(input.token);
@@ -297,7 +342,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|uploadPicture|install|notification)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

@@ -58,7 +58,27 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const installId = 'a'.repeat(32);
   const installState = {packageId:installId,status:'missing',appId:'test-app',title:'Install test app',description:'A verified package',version:'2.0',iconSrc:'',fingerprint:'test-key',progress:0,installed:false,newerInstalled:false,olderGrains:2};
   const installCalls = [];
+  const accountEmails = [{email:'alice@example.test',verified:true,primary:true},{email:'second@example.test',verified:true,primary:false}];
+  const accountCredentials = [{id:'email-alice',service:'email',name:'alice@example.test',pictureUrl:fixtureAvatar,login:true}];
+  const accountCalls = [];
+  let githubReady = false;
+  let paginated = false, laterTitle = 'Older notification';
   const bridgeOptions = {
+    nativeAuth: async (operation,data) => {
+      if (operation === 'options') return {dev:true,email:false,ldap:false,github:true};
+      if (operation === 'githubStart') return {request:'a'.repeat(64),url:'https://github.com/login/oauth/authorize?state=fixture'};
+      if (operation === 'githubFinish') return githubReady ? {accountId:'alice',loginHash:users.alice.hash} : {pending:true};
+      if (operation === 'githubCancel') return {};
+      assert.equal(operation,'dev'); assert.equal(data.name,'Alice');
+      return {accountId:'alice',loginHash:users.alice.hash};
+    },
+    accountSettings: async (id,operation,data,beforeWrite) => {
+      await beforeWrite(); accountCalls.push(operation);
+      if (operation === 'primary') for (const email of accountEmails) email.primary=email.email===data.email;
+      if (operation === 'verifyEmail') { assert.equal(data.code,'123456'); accountCredentials.push({id:'new-email',service:'email',name:data.email,pictureUrl:'',login:true}); }
+      if (operation === 'unlink') accountCredentials.splice(accountCredentials.findIndex(item=>item.id===data.id),1);
+      return {emailEnabled:true,emails:id==='alice'?accountEmails:[],credentials:id==='alice'?accountCredentials:[]};
+    },
     install: async (id,operation,data,beforeWrite) => {
       assert.equal(id,'alice'); installCalls.push(operation);
       if (operation === 'catalog') return {marketUrl:'https://apps.example.test/',updates:[{packageId:installId,title:'Install test app',version:'2.0',url:'https://packages.example.test/test.spk'}]};
@@ -135,9 +155,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
       return {kind};
     },
     observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
-    snapshot: async (id) => {
+    snapshot: async (id, pages = {}) => {
+      if (paginated) return {entries:[{key:'paged-'+(pages.notifications || 0),title:pages.notifications ? laterTitle : 'First page',body:'',href:'',unread:false,ongoing:false,timestamp:''}],total:101,notificationPage:pages.notifications || 0,grainPage:pages.grains || 0,hasUnread:true};
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { accountPictureUrl:profiles[id].pictureUrl || '', profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
+      return { hasUnread:entries.some(entry=>entry.unread), accountPictureUrl:profiles[id].pictureUrl || '', profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', appId: 'test-app', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
@@ -234,6 +255,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/usr/bin/chromium',
       headless: true, args: [`--ignore-certificate-errors-spki-list=${proxy.pin}`] });
     const context = await browser.newContext();
+    await context.route('https://github.com/login/oauth/authorize**', async route => { githubReady=true; await route.fulfill({contentType:'text/html',body:'Authorization complete'}); });
     const page = await context.newPage();
     const errors = [];
     let receivedFrames = 0;
@@ -281,12 +303,24 @@ test('authenticated notifications: handoff, shared writes, account switching and
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `code=${'a'.repeat(64)}&state=${'b'.repeat(64)}` })).status);
     assert.equal(bad, 403);
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).click();
-    await page.getByRole('button', { name: 'Connect Alice' }).click();
+    await page.getByRole('button',{name:'Sign in with GitHub',exact:true}).click();
     await page.getByRole('heading', { name: /Alice notification/ }).waitFor();
     assert.equal(await page.getByRole('heading', { name: /Bob notification/ }).count(), 0);
     await page.getByText('From <script>window.senderInjected = true</script>', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.senderInjected), undefined);
     await expect(page.locator('.notification-item .avatar img')).toHaveAttribute('src',fixtureAvatar);
+    paginated = true; changed();
+    await page.getByRole('heading',{name:'First page',exact:true}).waitFor();
+    const pager = page.getByRole('navigation',{name:'Notifications pages'});
+    await pager.getByRole('button',{name:'Next',exact:true}).click();
+    await page.getByRole('heading',{name:'Older notification',exact:true}).waitFor();
+    await expect(page.getByLabel('Unread notifications')).toBeVisible();
+    laterTitle = 'Older notification updated'; changed();
+    await page.getByRole('heading',{name:laterTitle,exact:true}).waitFor();
+    await pager.getByRole('button',{name:'Previous',exact:true}).click();
+    await page.getByRole('heading',{name:'First page',exact:true}).waitFor();
+    paginated = false; changed();
+    await page.getByRole('heading',{name:/Alice notification/}).waitFor();
     rows.get('alice-real-id').nativePath = '/grain/alice-grain/folder?mode=read#comment';
     add('alice-update','alice','App updates available');
     rows.get('alice-update').nativePath = '/install';
@@ -340,6 +374,21 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByRole('link', {name:'Account',exact:true}).click();
     await expect(page).toHaveTitle('Account · Sandstorm');
     await expect(page.locator('.route-content')).toBeFocused();
+    const settings = page.getByRole('region',{name:'Login methods'});
+    await settings.getByText('second@example.test',{exact:true}).waitFor();
+    await settings.getByRole('button',{name:'Make primary',exact:true}).click();
+    await expect(settings.getByRole('listitem').filter({has:page.getByText('second@example.test',{exact:true})})).toContainText('Primary');
+    await expect(settings.getByRole('button',{name:'Remove',exact:true})).toBeDisabled();
+    await settings.getByLabel('Add an email address').fill('new@example.test');
+    await settings.getByRole('button',{name:'Send verification code'}).click();
+    await settings.getByLabel('Verification code for new@example.test').fill('123456');
+    await settings.getByRole('button',{name:'Verify email',exact:true}).click();
+    const credential = settings.getByRole('listitem').filter({has:page.getByText('new@example.test',{exact:true})});
+    await credential.getByRole('button',{name:'Remove',exact:true}).click();
+    await credential.getByRole('button',{name:'Confirm removal'}).click();
+    await expect(credential).toHaveCount(0);
+    assert.ok(accountCalls.includes('verifyEmail'));
+
     await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice');
     await page.getByLabel('Choose an image',{exact:true}).setInputFiles({name:'broken.png',mimeType:'image/png',buffer:Buffer.from('not an image')});
     await expect(page.locator('.picture [role=alert]')).toContainText('could not be opened');
@@ -982,6 +1031,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     activeMainAccount = 'bob';
     await page.getByRole('button', {name:'Account: Alice',exact:true}).click();
     await page.getByRole('link', { name: 'Switch account' }).click();
+    await page.getByRole('link',{name:'Use main shell sign-in'}).click();
     await page.getByRole('button', { name: 'Connect Bob' }).click();
     await page.getByRole('heading', { name: /Bob notification/ }).waitFor();
     await other.getByRole('heading', { name: /Bob notification/ }).waitFor();
@@ -1001,6 +1051,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await other.getByRole('link', { name: 'Sign in with Sandstorm' }).waitFor();
     assert.equal(await other.locator('.grain-item').count(), 0);
     await page.getByRole('link', { name: 'Sign in with Sandstorm' }).click();
+    await page.getByRole('link',{name:'Use main shell sign-in'}).click();
     await page.getByRole('button', { name: 'Connect Bob' }).click();
     await page.getByRole('heading', { name: /Bob notification/ }).waitFor();
     users.bob.hash = 'revoked-by-main-shell';
@@ -1011,6 +1062,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     activeMainAccount = 'alice';
     await fresh.goto(proxy.origin + '/grain/alice-hidden/clients?tab=sync#url');
     await fresh.getByRole('link', {name:'Sign in with Sandstorm'}).click();
+    await fresh.getByRole('link',{name:'Use main shell sign-in'}).click();
     await fresh.getByRole('button', {name:'Connect Alice'}).click();
     await fresh.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
     assert.equal(new URL(fresh.url()).pathname + new URL(fresh.url()).search + new URL(fresh.url()).hash,

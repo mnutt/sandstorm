@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pagination from './components/ui/Pagination.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import GrainIcon from './components/ui/GrainIcon.svelte';
   import Button from './components/ui/Button.svelte';
@@ -26,7 +27,7 @@
   <Panel aria-label="Grains" padded={model.status !== 'ready' || model.fixture}>
 
     {#if model.status === 'signed-out'}
-      <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your grains.</p>
+      <p><a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your grains.</p>
     {:else if model.status !== 'ready'}
       {#if model.status === 'stopped'}<p>Disconnected from Sandstorm.</p>
       {:else}
@@ -66,7 +67,7 @@
         </table>
       </div>
       {/if}
-      {#if model.grainsLimited}<p>This is a limited preview of your grains. <a href="/main-shell">View all grains in the main shell.</a></p>{/if}
+      <Pagination page={model.grainPage} more={model.grainsLimited} busy={model.paging} label="Grains" change={page => service.selectPage('grains',page)} />
     {/if}
     {#if model.openingGrain}<p role="status">Opening grain…</p>{/if}
   </Panel>

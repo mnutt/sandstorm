@@ -18,6 +18,9 @@ struct Projection {
     grains: Vec<crate::bridge::Grain>,
     grains_limited: bool,
     profile_version: String,
+    grain_page: u32,
+    notification_page: u32,
+    has_unread: bool,
     account_picture_url: String,
 }
 
@@ -28,6 +31,7 @@ pub struct Shell {
     watching: Rc<Cell<bool>>,
     session: Option<crate::bridge::Session>,
     version: String,
+    pages: watch::Sender<(u32, u32)>,
     pub grain: Option<Rc<crate::grain::Scope>>,
 }
 
@@ -71,6 +75,9 @@ impl Shell {
                 .as_ref()
                 .map(|s| s.account_picture_url.clone())
                 .unwrap_or_default(),
+            has_unread: initial.as_ref().is_some_and(|s| s.has_unread),
+            grain_page: 0,
+            notification_page: 0,
             revision: 0,
             next_id: 2,
             entries,
@@ -91,6 +98,7 @@ impl Shell {
             watching: Rc::new(Cell::new(false)),
             session,
             version,
+            pages: watch::channel((0, 0)).0,
         })
     }
 
@@ -99,11 +107,17 @@ impl Shell {
             return std::future::pending().await;
         };
         let mut version = self.version.clone();
+        let mut pages = self.pages.subscribe();
         loop {
             // Mongo observation wakes this bounded long-poll on legacy or Rust writes.
             // The bridge revalidates authority while waiting and before returning data.
-            let Ok(snapshot) = session.watch(&version).await else {
-                return;
+            let (grains, notifications) = *pages.borrow_and_update();
+            let snapshot = tokio::select! {
+                result = session.watch(&version, serde_json::json!({"grains":grains,"notifications":notifications})) => {
+                    let Ok(snapshot) = result else { return; };
+                    snapshot
+                },
+                _ = pages.changed() => { version = "0".repeat(64); continue; }
             };
             version = snapshot.version.clone();
             self.state.send_if_modified(|state| {
@@ -117,7 +131,10 @@ impl Shell {
                         real: Some(real),
                     })
                     .collect();
-                if state.account_picture_url == snapshot.account_picture_url
+                if state.has_unread == snapshot.has_unread
+                    && state.grain_page == snapshot.grain_page
+                    && state.notification_page == snapshot.notification_page
+                    && state.account_picture_url == snapshot.account_picture_url
                     && state.profile_version == snapshot.profile_version
                     && state.entries == entries
                     && state.total == snapshot.total
@@ -126,6 +143,9 @@ impl Shell {
                 {
                     return false;
                 }
+                state.has_unread = snapshot.has_unread;
+                state.grain_page = snapshot.grain_page;
+                state.notification_page = snapshot.notification_page;
                 state.account_picture_url = snapshot.account_picture_url;
                 state.profile_version = snapshot.profile_version;
                 state.grains = snapshot.grains;
@@ -257,6 +277,73 @@ impl shell::Server for Shell {
         Ok(())
     }
 
+    async fn select_page(
+        self: Rc<Self>,
+        params: shell::SelectPageParams,
+        _: shell::SelectPageResults,
+    ) -> capnp::Result<()> {
+        if self.session.is_none() {
+            return Err(capnp::Error::failed("Sign in to browse lists".into()));
+        }
+        let input = params.get()?;
+        let kind = input.get_kind()?.to_str()?;
+        let page = input.get_page();
+        if !["grains", "notifications"].contains(&kind) || page > 1_000_000 {
+            return Err(capnp::Error::failed("Invalid list page".into()));
+        }
+        self.pages.send_modify(|pages| {
+            if kind == "grains" {
+                pages.0 = page;
+            } else {
+                pages.1 = page;
+            }
+        });
+        Ok(())
+    }
+
+    async fn account_settings(
+        self: Rc<Self>,
+        params: shell::AccountSettingsParams,
+        mut results: shell::AccountSettingsResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| capnp::Error::failed("Account settings require sign-in".into()))?;
+        let input = params.get()?;
+        let operation = input.get_operation()?.to_str()?;
+        let data = input.get_input()?.to_str()?;
+        if ![
+            "state",
+            "githubStart",
+            "githubFinish",
+            "githubCancel",
+            "primary",
+            "sendEmail",
+            "verifyEmail",
+            "unlink",
+            "allowLogin",
+        ]
+        .contains(&operation)
+            || data.len() > 2048
+        {
+            return Err(capnp::Error::failed(
+                "Invalid account settings request".into(),
+            ));
+        }
+        let data: serde_json::Value = serde_json::from_str(data)
+            .map_err(|_| capnp::Error::failed("Invalid account settings input".into()))?;
+        let value = session
+            .call(
+                "accountSettings",
+                serde_json::json!({"operation":operation,"data":data}),
+            )
+            .await
+            .map_err(|(_, error)| capnp::Error::failed(error))?;
+        results.get().set_state(value.to_string());
+        Ok(())
+    }
+
     async fn install(
         self: Rc<Self>,
         params: shell::InstallParams,
@@ -341,15 +428,21 @@ impl shell::Server for Shell {
 
     async fn list_apps(
         self: Rc<Self>,
-        _: shell::ListAppsParams,
+        params: shell::ListAppsParams,
         mut results: shell::ListAppsResults,
     ) -> capnp::Result<()> {
         let session = self
             .session
             .as_ref()
             .ok_or_else(|| capnp::Error::failed("Apps require a signed-in account".into()))?;
+        let input = params.get()?;
+        let page = input.get_page();
+        let app_id = input.get_app_id()?.to_str()?;
+        if page > 1_000_000 || app_id.len() > 128 {
+            return Err(capnp::Error::failed("Invalid app page".into()));
+        }
         let value = session
-            .call("listApps", serde_json::json!({}))
+            .call("listApps", serde_json::json!({"page":page,"appId":app_id}))
             .await
             .map_err(|(_, error)| capnp::Error::failed(error))?;
         let list: crate::bridge::AppList = serde_json::from_value(value)
@@ -490,6 +583,9 @@ impl shell::Server for Shell {
                     let mut out = request.get().init_snapshot();
                     out.set_account_picture_url(&snapshot.account_picture_url);
                     out.set_profile_version(&snapshot.profile_version);
+                    out.set_has_unread(snapshot.has_unread);
+                    out.set_grain_page(snapshot.grain_page);
+                    out.set_notification_page(snapshot.notification_page);
                     out.set_revision(snapshot.revision);
                     out.set_total(snapshot.total);
                     out.set_grains_limited(snapshot.grains_limited);

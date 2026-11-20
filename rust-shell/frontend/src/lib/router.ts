@@ -1,4 +1,4 @@
-export type Route = { page: 'install'; packageId?: string; url: string } | { page: 'apps'; appId?: string } | { page: 'notifications' | 'grains' | 'account' | 'missing' } | { page: 'grain'; grainId: string; path: string } | { page: 'shared'; webkey: string; path: string };
+export type Route = { page: 'install'; packageId?: string; url: string } | { page: 'apps'; appId?: string } | { page: 'notifications' | 'grains' | 'account' | 'login' | 'oauth-complete' | 'missing' } | { page: 'grain'; grainId: string; path: string } | { page: 'shared'; webkey: string; path: string };
 export function appPath(value: string): string | null {
   if (!value || value.length > 2048 || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(value)) return null;
   const url = new URL(value, 'https://app.invalid');
@@ -7,6 +7,8 @@ export function appPath(value: string): string | null {
 export function readRoute(url = new URL(location.href)): Route {
   if (url.pathname === '/' || url.pathname === '/notifications') return { page: 'notifications' };
   if (url.pathname === '/grains') return { page: 'grains' };
+  if (url.pathname === '/oauth-complete') return {page:'oauth-complete'};
+  if (url.pathname === '/login') return {page:'login'};
   if (url.pathname === '/account') return { page: 'account' };
   if (url.pathname === '/install') return { page: 'install', url: '' };
   const install = url.pathname.match(/^\/install\/([a-f0-9]{32})\/?$/);
@@ -36,13 +38,13 @@ export function routeKey(route: Route) { return route.page === 'install' ? (rout
 const returnKey = 'rustShellReturnRoute';
 export function rememberRoute() {
   const route = readRoute();
-  if (route.page === 'missing') return;
+  if (route.page === 'missing' || route.page === 'login' || route.page === 'oauth-complete') return;
   try { sessionStorage.setItem(returnKey, JSON.stringify({ path: routeKey(route), expires: Date.now() + 300000 })); } catch {}
 }
 export function initialRoute() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(returnKey) || 'null');
-    sessionStorage.removeItem(returnKey);
+    if (location.pathname === '/' || saved?.expires <= Date.now()) sessionStorage.removeItem(returnKey);
     if (location.pathname === '/' && saved?.expires > Date.now() && typeof saved.path === 'string' && saved.path.startsWith('/') && !saved.path.startsWith('//')) {
       const url = new URL(saved.path, location.origin);
       if (url.origin === location.origin && readRoute(url).page !== 'missing') history.replaceState(null, '', saved.path);

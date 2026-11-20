@@ -1,3 +1,5 @@
+import { rustNativeAuth } from "/imports/server/rust-shell-auth";
+import { rustAccount } from "/imports/server/rust-shell-account";
 import { rustUserPicture } from "/imports/server/rust-shell-users";
 import { createHash } from "node:crypto";
 import { rustNotificationAction } from "/imports/server/rust-shell-notification-actions";
@@ -52,6 +54,8 @@ async function accountProfile(accountId) {
 }
 
 export const rustShellBridge = createRustShellBridge({
+  nativeAuth: rustNativeAuth,
+  accountSettings: rustAccount,
   notification: rustNotificationAction,
   getProfile: accountProfile,
   async uploadPicture(accountId, beforeWrite) {
@@ -112,10 +116,10 @@ export const rustShellBridge = createRustShellBridge({
     revokeTemplate: result => globalDb.removeApiTokens({ _id: result.id }),
   },
   authorize: authorizeRustShellAccount,
-  async snapshot(accountId) {
+  async snapshot(accountId, pages = {}) {
     const query = { userId: accountId };
     const rows = await globalDb.collections.notifications.find(query,
-        { sort: { timestamp: -1, _id: 1 }, limit: 100 }).fetchAsync();
+        { sort: { timestamp: -1, _id: 1 }, skip: (pages.notifications || 0) * 100, limit: 100 }).fetchAsync();
     const entries = await Promise.all(rows.map(async (row) => {
       let title = "Notification";
       let body = row.text?.defaultText || "";
@@ -172,9 +176,11 @@ export const rustShellBridge = createRustShellBridge({
     }));
     const ownProfile = await accountProfile(accountId);
     return { accountPictureUrl: ownProfile.pictureUrl, profileVersion: ownProfile.version, entries, total: await globalDb.collections.notifications.find(query).countAsync(),
-      ...await grainMenu(globalDb, accountId, process.env.ROOT_URL) };
+      hasUnread:!!await globalDb.collections.notifications.findOneAsync({...query,isUnread:true},{fields:{_id:1}}),
+      notificationPage:pages.notifications || 0, grainPage:pages.grains || 0,
+      ...await grainMenu(globalDb, accountId, process.env.ROOT_URL, pages.grains || 0) };
   },
-  async observe(accountId, changed) {
+  async observe(accountId, changed, pages = {}) {
     const handles = [];
     const stop = async () => { await Promise.all(handles.map((handle) => handle.stop())); };
     try {
@@ -188,7 +194,7 @@ export const rustShellBridge = createRustShellBridge({
           .observeChangesAsync(callbacks));
       const owned = await globalDb.collections.grains.find({ userId: accountId,
         trashed: { $exists: false }, suspended: { $exists: false } }, {
-        sort: { lastUsed: -1, _id: 1 }, limit: 50, fields: { packageId: 1 },
+        sort: { lastUsed: -1, _id: 1 }, skip: (pages.grains || 0) * 50, limit: 50, fields: { packageId: 1 },
       }).fetchAsync();
       const packageIds = [...new Set(owned.map((grain) => grain.packageId).filter(Boolean))];
       if (packageIds.length) {
@@ -198,7 +204,7 @@ export const rustShellBridge = createRustShellBridge({
       // Notification observation is already active. A new referenced sender
       // changes the snapshot, causing the next watch to attach its profile observer.
       const notifications = await globalDb.collections.notifications.find({ userId: accountId },
-          { sort: { timestamp: -1, _id: 1 }, limit: 100, fields: { initiatingAccount: 1 } }).fetchAsync();
+          { sort: { timestamp: -1, _id: 1 }, skip: (pages.notifications || 0) * 100, limit: 100, fields: { initiatingAccount: 1 } }).fetchAsync();
       const senders = [...new Set(notifications.map((row) => row.initiatingAccount).filter(Boolean))];
       if (senders.length) {
         handles.push(await Meteor.users.find({ _id: { $in: senders } }, { fields: { profile: 1 } })

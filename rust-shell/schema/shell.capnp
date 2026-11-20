@@ -39,6 +39,9 @@ struct Snapshot {
   grainsLimited @4 :Bool;
   profileVersion @5 :Text;
   accountPictureUrl @6 :Text;
+  grainPage @7 :UInt32;
+  notificationPage @8 :UInt32;
+  hasUnread @9 :Bool;
   # Each callback replaces the entire projection. First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }
@@ -98,6 +101,8 @@ struct AccountProfile {
   version @5 :Text;
 }
 interface Shell {
+  selectPage @15 (kind :Text, page :UInt32) -> ();
+  accountSettings @14 (operation :Text, input :Text) -> (state :Text);
   uploadPicture @13 () -> (uploadUrl :Text);
   install @11 (operation :Text, input :Text) -> (state :Text);
   notification @12 (key :Text, operation :Text, enabled :Bool) -> (state :Text);
@@ -112,7 +117,7 @@ interface Shell {
   dismissReal @4 (key :Text) -> ();
   markRead @5 (key :Text) -> ();
   openGrain @6 (grainId :Text) -> (view :GrainView, session :GrainSession);
-  listApps @7 () -> (actions :List(AppAction), limited :Bool);
+  listApps @7 (page :UInt32, appId :Text) -> (actions :List(AppAction), limited :Bool);
   createGrain @8 (actionId :Text, title :Text) -> (grainId :Text);
   getProfile @9 () -> (profile :AccountProfile);
   updateProfile @10 (name :Text, handle :Text, pronoun :Text) -> (profile :AccountProfile);

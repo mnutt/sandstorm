@@ -1,3 +1,6 @@
+import { rustNativeAuth } from "/imports/server/rust-shell-auth";
+import { finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
+import { OAuth } from "meteor/oauth";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
 import Capnp from "/imports/server/capnp";
 import { createRustShellBridge } from "./rust-shell-bridge-core.mjs";
@@ -444,7 +447,7 @@ if(isTesting) {
         services: {
           email: {
             email,
-            tokens: [{ digest: SHA256(token), algorithm: "sha-256" }],
+            tokens: [{ digest: SHA256(token), algorithm: "sha-256", createdAt: new Date() }],
           },
         },
       });
@@ -466,7 +469,23 @@ if(isTesting) {
             },
           }, [email, token, false]);
         } catch (err) {
-          if (err && err.error === "test-link-failed") return true;
+          if (err && err.error === "test-link-failed") {
+            let linked = 0;
+            Accounts.linkCredentialToAccount = async () => { ++linked; };
+            await Meteor.users.updateAsync(credentialId, {$set:{'services.email.tokens':[
+              {digest:SHA256(token),algorithm:'sha-256',createdAt:new Date()},
+            ]}});
+            const invoke = () => handler.apply({userId:accountId,connection:{sandstormDb:globalDb,sandstormBackend:globalThis.globalBackend}},[email,token,false]);
+            const outcomes = await Promise.allSettled([invoke(),invoke()]);
+            if (linked !== 1 || outcomes.filter(result=>result.status==='fulfilled').length !== 1) throw new Error('Email token was consumed more than once');
+            await Meteor.users.updateAsync(credentialId, {$set:{'services.email.tokens':[
+              {digest:SHA256(token),algorithm:'sha-256',createdAt:new Date(Date.now()-7200000)},
+            ]}});
+            let expired = false;
+            try { await invoke(); } catch (error) { expired = error.error === 403; }
+            if (!expired || linked !== 1) throw new Error('Expired email token was accepted');
+            return true;
+          }
           throw err;
         }
 
@@ -1397,9 +1416,144 @@ if(isTesting) {
       }
     },
 
+    async testRustGithub() {
+      const originalEnabled = Accounts.loginServices.github.isEnabled;
+      const originalOrigin = Meteor.settings.public.rustShellOrigin;
+      const configuration = await ServiceConfiguration.configurations.findOneAsync({service:'github'});
+      const identity = 'rust-github-'+Random.id();
+      const registered = Accounts.oauth.serviceNames().includes('github');
+      let pending, linked, linkPending, accountId;
+      const flow = Crypto.randomBytes(32).toString("hex");
+      const require = (value,message) => { if (!value) throw new Error(message); };
+      try {
+        Accounts.loginServices.github.isEnabled = () => true;
+        if (!registered) Accounts.oauth.registerService("github");
+        Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+        if (!configuration) await ServiceConfiguration.configurations.insertAsync({service:'github',clientId:'test-only'});
+        pending = await rustShellBridge.handle('nativeAuth',{operation:'githubStart',data:{},flow});
+        const url = new URL(pending.url);
+        require(url.origin === 'https://github.com','Incorrect authorization origin');
+        require(!JSON.stringify(pending).includes('credentialSecret'),'Secret exposed before authorization');
+        let denied = false;
+        try { await finishGithub('login:foreign',pending.request); } catch (error) { denied=error.error===403; }
+        require(denied,'OAuth request accepted a foreign flow');
+        require(await finishGithub('login:'+flow,pending.request) === null,'Incomplete OAuth was accepted');
+        // Existing synthetic credentials avoid triggering external avatar downloads.
+        await Meteor.users.insertAsync({_id:identity,type:'credential',services:{github:{id:identity,username:identity}},profile:{name:'Rust GitHub test'}});
+        const secret = Random.secret();
+        await OAuth._storePendingCredential(pending.request,{serviceName:'github',serviceData:{id:identity,username:identity,emails:[]},options:{profile:{name:'Rust GitHub test'}}},secret);
+        let location;
+        await OAuth._endOfLoginResponse({writeHead(status,headers){ require(status===303,'OAuth callback did not redirect'); location=headers.Location; },end(){}},
+          {query:{state:url.searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret}});
+        require(location === 'https://rust.example.test/oauth-complete','Callback did not return to Rust');
+        linked = await rustShellBridge.handle('nativeAuth',{operation:'githubFinish',data:{request:pending.request},flow});
+        require(!!linked.token && !JSON.stringify(linked).includes(secret),'OAuth secret leaked or login failed');
+        denied=false;
+        try { await finishGithub('login:'+flow,pending.request); } catch (_) { denied=true; }
+        require(denied,'OAuth result could be reused');
+        accountId = (await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
+        const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
+        linkPending = (await settings('githubStart')).oauth;
+        await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{github:{id:identity+'-linked',username:identity+'-linked'}},profile:{name:'Linked GitHub test'}});
+        const linkSecret = Random.secret();
+        await OAuth._storePendingCredential(linkPending.request,{serviceName:'github',serviceData:{id:identity+'-linked',username:identity+'-linked',emails:[]},options:{}},linkSecret);
+        await OAuth._endOfLoginResponse({writeHead(){},end(){}},
+          {query:{state:new URL(linkPending.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:linkPending.request,secret:linkSecret}});
+        const settingsResult = await settings('githubFinish',{request:linkPending.request});
+        require(settingsResult.credentials.some(item=>item.id===identity+'-linked' && item.login),'GitHub credential was not linked for login');
+        require(!JSON.stringify(settingsResult).includes(linkSecret),'Linking exposed an OAuth secret');
+        return true;
+      } finally {
+        if (pending) await cancelGithub('login:'+flow,pending.request);
+        if (linkPending) await cancelGithub('link:'+accountId,linkPending.request);
+        if (!registered) Accounts.oauth.unregisterService('github');
+        Accounts.loginServices.github.isEnabled=originalEnabled;
+        Meteor.settings.public.rustShellOrigin=originalOrigin;
+        if (linked?.token) await rustShellBridge.handle('logout',{token:linked.token});
+        const credential = await Meteor.users.findOneAsync({'services.github.id':identity});
+        if (credential) {
+          await Meteor.users.removeAsync({'loginCredentials.id':credential._id});
+          await Meteor.users.removeAsync(credential._id);
+        }
+        await Meteor.users.removeAsync(identity+'-linked');
+        if (!configuration) await ServiceConfiguration.configurations.removeAsync({service:'github'});
+      }
+    },
+
+    async testRustEmailDeliveryFailure() {
+      const originalEnabled = Accounts.loginServices.email.isEnabled;
+      const email = 'rust-email-failure-' + Random.id() + '@example.invalid';
+      const flow = Crypto.randomBytes(32).toString('hex');
+      let attempts = 0;
+      try {
+        Accounts.loginServices.email.isEnabled = () => true;
+        setTokenEmailSenderForTests(async () => {
+          ++attempts;
+          throw Object.assign(new Error('test transport failure'), {code:'ECONNREFUSED'});
+        });
+        for (let i = 0; i < 4; ++i) {
+          let failure;
+          try { await rustShellBridge.handle('nativeAuth',{operation:'sendEmail',data:{email},flow}); }
+          catch (error) { failure = error; }
+          if (failure?.error !== 503 || !failure.reason.includes('SMTP settings')) {
+            throw new Error('Email transport failure did not return actionable advice');
+          }
+          const user = await Meteor.users.findOneAsync({'services.email.email':email});
+          if (user?.services.email.tokens.length !== 0) throw new Error('Failed delivery retained a pending code');
+        }
+        if (attempts !== 4) throw new Error('Failed email deliveries exhausted the pending-code allowance');
+        return true;
+      } finally {
+        Accounts.loginServices.email.isEnabled = originalEnabled;
+        setTokenEmailSenderForTests(null);
+        await Meteor.users.removeAsync({'services.email.email':email});
+      }
+    },
+
+    async testRustDevAccountIdentity() {
+      for (const [name, legacyName] of Object.entries({Alice:'Alice Dev Admin',Bob:'Bob Dev User',Carol:'Carol Dev User',Dave:'Dave Dev User'})) {
+        let credential = await Meteor.users.findOneAsync({'services.dev.name':legacyName});
+        let account = credential && await Meteor.users.findOneAsync({'loginCredentials.id':credential._id});
+        const createdCredential = !credential;
+        const createdAccount = !account;
+        let login;
+        try {
+          if (!credential) {
+            credential = {_id:Random.id(),type:'credential',services:{dev:{name:legacyName,isAdmin:name==='Alice'}},profile:{name:legacyName}};
+            await Meteor.users.insertAsync(credential);
+          }
+          if (!account) {
+            account = {_id:Random.id(),type:'account',loginCredentials:[{id:credential._id}],nonloginCredentials:[],profile:{name:'Customized display name'},hasCompletedSignup:true};
+            await Meteor.users.insertAsync(account);
+          }
+          login = await rustNativeAuth('dev',{name},Crypto.randomBytes(32).toString('hex'));
+          if (login.accountId !== account._id) throw new Error(name+' did not reopen the legacy account');
+        } finally {
+          if (login) await Meteor.users.updateAsync(login.accountId,{$pull:{'services.resume.loginTokens':{hashedToken:login.loginHash}}});
+          if (createdAccount && account) await Meteor.users.removeAsync(account._id);
+          if (createdCredential && credential) await Meteor.users.removeAsync(credential._id);
+        }
+      }
+      return true;
+    },
+
+    async testRustNativeLogin() {
+      const flow = Crypto.randomBytes(32).toString('hex');
+      const options = await rustShellBridge.handle('nativeAuth',{operation:'options',data:{},flow});
+      if (!options.dev) throw new Error('Dev sign-in was not advertised');
+      const result = await rustShellBridge.handle('nativeAuth',{operation:'dev',data:{name:'Alice'},flow});
+      try {
+        const session = await rustShellBridge.handle('session',{token:result.token});
+        if (!session.account.name.includes('Alice')) throw new Error('Native login selected the wrong account');
+        if (result.loginHash || result.accountId) throw new Error('Native login exposed credential internals');
+      } finally { await rustShellBridge.handle('logout',{token:result.token}); }
+      return true;
+    },
+
     async testRustProfile() {
       const accountId = "rust_profile_" + Random.id();
       const hash = Crypto.randomBytes(32).toString("hex");
+      const credentialIds = [accountId + "_email1", accountId + "_email2"];
       let token;
       const require = (condition, message) => { if (!condition) throw new Error(message); };
       try {
@@ -1455,6 +1609,30 @@ if(isTesting) {
         catch (error) { reused=error.response?.statusCode === 404; }
         require(reused,"Consumed picture upload token was reusable");
 
+        for (const [index,id] of credentialIds.entries()) {
+          await Meteor.users.insertAsync({_id:id,type:'credential',profile:{name:'Email '+index},
+            services:{email:{email:id+'@example.test',tokens:[]}}});
+        }
+        await Meteor.users.updateAsync(accountId,{$set:{loginCredentials:credentialIds.map(id=>({id}))}});
+        const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token,operation,data,accountId:this.userId});
+        const accountState = await settings('state');
+        require(accountState.credentials.length === 2,'Own credentials were not projected');
+        require(!JSON.stringify(accountState).includes('tokens'),'Credential secrets leaked in account settings');
+        await settings('primary',{email:credentialIds[1]+'@example.test'});
+        require((await Meteor.users.findOneAsync(accountId)).primaryEmail === credentialIds[1]+'@example.test','Primary email was not saved');
+        let denied=false;
+        try { await settings('primary',{email:'foreign@example.test'}); } catch (_) { denied=true; }
+        require(denied,'Unverified primary email was accepted');
+        denied=false;
+        try { await settings('unlink',{id:this.userId}); } catch (_) { denied=true; }
+        require(denied,'Foreign credential unlink was accepted');
+        await settings('allowLogin',{id:credentialIds[1],allowLogin:false});
+        denied=false;
+        try { await settings('unlink',{id:credentialIds[0]}); } catch (_) { denied=true; }
+        require(denied,'Last login credential could be removed');
+        await settings('unlink',{id:credentialIds[1]});
+        require((await settings('state')).credentials.length === 1,'Credential was not unlinked');
+
         await rustShellBridge.handle("logout", { token });
         let revoked = false;
         try { await rustShellBridge.handle("updateProfile", { token, profile }); }
@@ -1469,7 +1647,7 @@ if(isTesting) {
         const uploadedUser = await Meteor.users.findOneAsync(accountId);
         if (uploadedUser?.profile?.picture && uploadedUser.profile.picture !== 'preserved-picture') await globalDb.unrefStaticAsset(uploadedUser.profile.picture);
         await globalDb.collections.assetUploadTokens.removeAsync({rustShellAccount:accountId});
-        await Meteor.users.removeAsync(accountId);
+        await Meteor.users.removeAsync({_id:{$in:[accountId,...credentialIds]}});
       }
     },
 

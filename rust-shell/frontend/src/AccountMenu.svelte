@@ -32,10 +32,10 @@
           <div class="identity"><Avatar name={model.account || ''} src={model.accountPictureUrl} size={28} /><strong>{model.account ? `Connected as ${model.account}` : label}</strong></div>
           <a href="/account" onclick={event => { navigating = isPlainNavigation(event); navigate(event, '/account'); open = false; }}>Account</a>
           {#if model.account}
-            <a href="/auth/start" onclick={rememberRoute}>Switch account</a>
+            <a href="/login" onclick={rememberRoute}>Switch account</a>
             <Button variant="secondary" onclick={() => { open = false; disconnect(); }}>Disconnect</Button>
           {:else if !model.fixture}
-            <a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a>
+            <a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a>
           {:else}
             <p>Test data, private to this connection.</p>
           {/if}

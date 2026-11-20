@@ -87,6 +87,76 @@ pub async fn status(State(state): State<AppState>, headers: HeaderMap) -> Respon
     }
 }
 
+pub async fn options(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(bridge) = &state.auth.bridge else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let flow = match cookie(&headers, FLOW).map(Ok).unwrap_or_else(secret) {
+        Ok(value) => value,
+        Err(status) => return status.into_response(),
+    };
+    match bridge
+        .call(
+            "nativeAuth",
+            json!({"operation":"options","data":{},"flow":flow}),
+        )
+        .await
+    {
+        Ok(value) => {
+            let mut response = Json(value).into_response();
+            set_cookie(&mut response, FLOW, &flow, 600);
+            response
+        }
+        Err(err) => error(err),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NativeLogin {
+    operation: String,
+    data: serde_json::Value,
+}
+
+pub async fn native_login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<NativeLogin>,
+) -> Response {
+    if headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(state.origin.as_str()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(flow) = cookie(&headers, FLOW) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let Some(bridge) = &state.auth.bridge else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if ![
+        "sendEmail",
+        "email",
+        "dev",
+        "ldap",
+        "githubStart",
+        "githubFinish",
+        "githubCancel",
+    ]
+    .contains(&input.operation.as_str())
+        || input.data.to_string().len() > 4096
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match bridge.call("nativeAuth",json!({"operation":input.operation,"data":input.data,"flow":flow,"previous":cookie(&headers,SESSION)})).await {
+        Ok(value) => {
+            if let Some(token) = value["token"].as_str().filter(|value| valid(value)) {
+                let mut response = Json(json!({"signedIn":true})).into_response();
+                set_cookie(&mut response,SESSION,token,12*60*60);
+                set_cookie(&mut response,FLOW,"",0);
+                response
+            } else { Json(value).into_response() }
+        }, Err(err) => error(err),
+    }
+}
+
 pub async fn start(State(state): State<AppState>) -> Response {
     if state.auth.bridge.is_none() {
         return Redirect::to("/").into_response();

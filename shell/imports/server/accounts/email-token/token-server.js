@@ -79,14 +79,12 @@ const checkToken = function (tokens, token) {
 
 const consumeToken = async function (user, token) {
   const hashedToken = hashToken(token);
-  const foundToken = checkToken(user.services.email.tokens, hashedToken);
-
-  if (foundToken !== undefined) {
-    await Meteor.users.updateAsync({ _id: user._id },
-        { $pull: { "services.email.tokens": hashedToken } });
-  }
-
-  return foundToken;
+  const foundToken = checkToken(user.services.email.tokens || [], hashedToken);
+  if (!foundToken || +foundToken.createdAt <= Date.now() - TOKEN_EXPIRATION_MS) return undefined;
+  const consumed = await Meteor.users.updateAsync({ _id: user._id,
+    "services.email.tokens": { $elemMatch: { ...hashedToken, createdAt: { $gt: new Date(Date.now() - TOKEN_EXPIRATION_MS) } } },
+  }, { $pull: { "services.email.tokens": hashedToken } });
+  return consumed ? foundToken : undefined;
 };
 
 const makeBox = function (token, plaintext) {
@@ -188,10 +186,10 @@ export const emailTokenLoginHandler = async function (options) {
 
 Accounts.registerLoginHandler("email", emailTokenLoginHandler);
 
-const makeTokenUrl = function (email, token, options) {
+const makeTokenUrl = function (email, token, options, accountId) {
   if (options.linking) {
     return options.rootUrl + "/_emailLinkCredential/" + encodeURIComponent(email) + "/" +
-      encodeURIComponent(token) + "/" + Meteor.userId() +
+      encodeURIComponent(token) + "/" + accountId +
       "?allowLogin=" + options.linking.allowLogin;
   } else {
     return options.rootUrl + "/_emailLogin/" + encodeURIComponent(email) + "/" + encodeURIComponent(token);
@@ -201,7 +199,7 @@ const makeTokenUrl = function (email, token, options) {
 ///
 /// EMAIL VERIFICATION
 ///
-const sendTokenEmail = async function (db, email, token, options) {
+const sendTokenEmail = async function (db, email, token, options, accountId) {
   let subject;
   let text;
 
@@ -216,7 +214,7 @@ const sendTokenEmail = async function (db, email, token, options) {
   }
 
   text = text + rootHostname + ", click on the following link:\n\n" +
-      makeTokenUrl(email, token, options) + "\n\n" +
+      makeTokenUrl(email, token, options, accountId) + "\n\n" +
       "Alternatively, enter the following one-time authentication code into the log-in form:\n\n" +
       token;
 
@@ -235,7 +233,7 @@ const parsedRootUrl = Url.parse(process.env.ROOT_URL);
 /// CREATING USERS
 ///
 // returns the user id
-const createAndEmailTokenForUser = async function (db, email, options) {
+export const createAndEmailTokenForUser = async function (db, email, options, accountId = null) {
   check(email, String);
   check(options, {
     resumePath: String,
@@ -292,13 +290,53 @@ const createAndEmailTokenForUser = async function (db, email, options) {
       },
     };
 
-    userId = Accounts.insertUserDoc(options, user);
+    userId = await Accounts.insertUserDoc(options, user);
   }
 
-  await sendTokenEmail(db, email, token, options);
+  try {
+    await sendTokenEmail(db, email, token, options, accountId);
+  } catch (error) {
+    // A failed delivery must not use up the pending-code allowance. Remove only
+    // this attempt's code, preserving any previously delivered codes.
+    await Meteor.users.updateAsync({ "services.email.email": email },
+        { $pull: { "services.email.tokens": hashToken(token) } });
+    console.error("Login email delivery failed:", error.code || error.name || "unknown");
+    throw new Meteor.Error(503,
+        "Could not send the email. Ask the server administrator to check outgoing SMTP settings, then try again.");
+  }
 
   return userId;
 };
+
+export async function linkEmailCredentialForAccount(db, backend, accountId, email, token, allowLogin, beforeWrite = async () => {}) {
+    check(email, String);
+    check(token, String);
+    check(allowLogin, Boolean);
+    const account = await Meteor.users.findOneAsync({ _id: accountId });
+    if (!account || !account.loginCredentials) {
+      throw new Meteor.Error(403, "Must be logged in to an account to link an email credential.");
+    }
+
+    const credential = await Meteor.users.findOneAsync({ "services.email.email": email },
+                                                       { fields: { "services.email": 1 } });
+    if (!credential) {
+      throw new Meteor.Error(403, "Invalid authentication code.");
+    }
+
+    await beforeWrite();
+    const maybeToken = await consumeToken(credential, token.trim());
+    if (!maybeToken) {
+      throw new Meteor.Error(403, "Invalid authentication code.");
+    }
+
+    await beforeWrite();
+    await Accounts.linkCredentialToAccount(db, backend,
+                                           credential._id, account._id, allowLogin);
+
+    // Return the resume path, if we have one.
+    const resumePath = tryUnbox(maybeToken.secureBox, token);
+    return resumePath;
+}
 
 Meteor.methods({
   createAndEmailTokenForUser: async function (email, options) {
@@ -317,36 +355,12 @@ Meteor.methods({
       throw new Meteor.Error(403, "Email login service is disabled.");
     }
     // Create user. result contains id and token.
-    await createAndEmailTokenForUser(this.connection.sandstormDb, email, options);
+    await createAndEmailTokenForUser(this.connection.sandstormDb, email, options, this.userId);
   },
 
   linkEmailCredentialToAccount: async function (email, token, allowLogin) {
     // Links the email credential with address `email` and login token `token` to the current
     // account.
-    check(email, String);
-    check(token, String);
-    check(allowLogin, Boolean);
-    const account = await Meteor.users.findOneAsync({ _id: this.userId });
-    if (!account || !account.loginCredentials) {
-      throw new Meteor.Error(403, "Must be logged in to an account to link an email credential.");
-    }
-
-    const credential = await Meteor.users.findOneAsync({ "services.email.email": email },
-                                                       { fields: { "services.email": 1 } });
-    if (!credential) {
-      throw new Meteor.Error(403, "Invalid authentication code.");
-    }
-
-    const maybeToken = await consumeToken(credential, token.trim());
-    if (!maybeToken) {
-      throw new Meteor.Error(403, "Invalid authentication code.");
-    }
-
-    await Accounts.linkCredentialToAccount(this.connection.sandstormDb, this.connection.sandstormBackend,
-                                           credential._id, account._id, allowLogin);
-
-    // Return the resume path, if we have one.
-    const resumePath = tryUnbox(maybeToken.secureBox, token);
-    return resumePath;
+    return linkEmailCredentialForAccount(this.connection.sandstormDb, this.connection.sandstormBackend, this.userId, email, token, allowLogin);
   },
 });

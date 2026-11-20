@@ -405,3 +405,35 @@ test('picture upload issuance is scoped to the linked account and rechecks revok
   await assert.rejects(bridge.handle('uploadPicture',{token}),{status:401});
   assert.equal(issued,1);
 });
+
+test('account settings bind identity, validate fields, serialize writes, and recheck revocation', async () => {
+  let authorized = true, writes = 0, release, entered;
+  let gate;
+  const bridge = createRustShellBridge({
+    authorize: async () => authorized ? {name:'Alice',expires:Date.now()+60000} : null,
+    accountSettings: async (id, operation, data, beforeWrite) => {
+      assert.equal(id,'alice');
+      if (gate) { entered(); await gate; }
+      await beforeWrite();
+      if (operation !== 'state') ++writes;
+      return {emails:[],credentials:[],emailEnabled:true};
+    },
+  });
+  const state = 'a'.repeat(64);
+  const code = await bridge.issue('alice','login',state);
+  const {token} = await bridge.handle('exchange',{code,state});
+  const call = (operation, data = {}) => bridge.handle('accountSettings',{token,accountId:'bob',operation,data});
+  await call('state');
+  for (const [operation,data] of [['constructor',{}],['state',{id:'foreign'}],['primary',{email:42}],['unlink',{id:'x',accountId:'bob'}],['verifyEmail',{email:'a@b',code:'code',allowLogin:'yes'}]]) {
+    await assert.rejects(call(operation,data),{status:400});
+  }
+  await call('primary',{email:'a@b'});
+  const waiting = new Promise(resolve => { entered=resolve; });
+  gate = new Promise(resolve => { release=resolve; });
+  const pending = call('unlink',{id:'credential'});
+  await waiting;
+  await assert.rejects(call('unlink',{id:'credential'}),{status:409});
+  authorized = false; release();
+  await assert.rejects(pending,{status:401});
+  assert.equal(writes,1);
+});

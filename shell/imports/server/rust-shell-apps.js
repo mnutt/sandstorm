@@ -4,9 +4,9 @@ import { globalDb } from "/imports/db-deprecated";
 import { createGrainForUser } from "/imports/server/grain-server";
 
 const text = value => Buffer.from(String(value || "")).subarray(0, 160).toString();
-export async function rustAppActions(accountId) {
-  const rows = await globalDb.collections.userActions.find({ userId: accountId },
-    { sort: { appId: 1, _id: 1 }, limit: 101,
+export async function rustAppActions(accountId, page = 0, appId = "") {
+  const rows = await globalDb.collections.userActions.find({ userId: accountId, ...(appId ? {appId} : {}) },
+    { sort: { appId: 1, _id: 1 }, skip: page * 100, limit: 101,
       fields: { title: 1, appTitle: 1, appId: 1, packageId: 1 } }).fetchAsync();
   const actions = rows.slice(0, 100);
   const appIds = [...new Set(actions.map(row => row.appId).filter(Boolean))];

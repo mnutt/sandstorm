@@ -1,3 +1,4 @@
+import { emptyAccount, type AccountState } from './account';
 import { emptyProfile, type ProfileState } from './profile';
 import type { CreationState } from './apps';
 
@@ -52,6 +53,10 @@ export interface ShellState {
   openingGrain: boolean;
   grains: Grain[];
   grainsLimited: boolean;
+  grainPage: number;
+  notificationPage: number;
+  paging: boolean;
+  hasUnread: boolean;
   status: ConnectionStatus;
   entries: Notification[];
   revision: number;
@@ -66,10 +71,11 @@ export interface ShellState {
   total: number;
   creation: CreationState;
   profile: ProfileState;
+  accountSettings: AccountState;
 }
 export function initialShellState(): ShellState {
   return {
-    profile: emptyProfile(), status: 'connecting', entries: [], grains: [], grainsLimited: false,
+    accountSettings: emptyAccount(), profile: emptyProfile(), hasUnread:false, grainPage:0, notificationPage:0, paging:false, status: 'connecting', entries: [], grains: [], grainsLimited: false,
     activeGrain: null, openGrains: [], openingGrain: false, revision: 0,
     connectionError: '', notificationError: '', grainError: '', pending: false,
     fixture: true, accountPictureUrl: '', account: null, accountKey:null, total: 0, creation: { status: 'idle' },

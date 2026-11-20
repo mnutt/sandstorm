@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pagination from './components/ui/Pagination.svelte';
   import Avatar from './components/ui/Avatar.svelte';
   import NotificationDialog from './NotificationDialog.svelte';
   import Button from './components/ui/Button.svelte';
@@ -14,7 +15,7 @@
     <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{model.status}</span>
     <div class="actions">
       {#if model.status === 'signed-out'}
-        <a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a>
+        <a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a>
       {:else}
         {#if model.fixture}
           <Button onclick={() => service.addFixture()} disabled={model.status !== 'ready' || model.pending}>Add test notification</Button>
@@ -52,7 +53,7 @@
         {/each}
       </ul>
     {/if}
-    {#if model.total > model.entries.length && model.status === 'ready'}<p>Showing {model.entries.length} of {model.total} notifications. <a href="/main-shell">View all in the main shell.</a></p>{/if}
+    {#if model.status === 'ready'}<Pagination page={model.notificationPage} more={(model.notificationPage + 1) * 100 < model.total} busy={model.paging} label="Notifications" change={page => service.selectPage('notifications',page)} />{/if}
   </Panel>
 {#if selected}
   {#key selected.key}<NotificationDialog notificationKey={selected.key} title={selected.title} {service} returnFocus={selected.trigger} onclose={() => selected = undefined} />{/key}

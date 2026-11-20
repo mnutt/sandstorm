@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AccountCredentials from './AccountCredentials.svelte';
   import ProfilePicture from './ProfilePicture.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
@@ -37,7 +38,7 @@
 <Panel aria-labelledby="account-title">
   <h2 id="account-title">Account</h2>
   {#if model.status === 'signed-out'}
-    <p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to edit your profile.</p>
+    <p><a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a> to edit your profile.</p>
   {:else if model.fixture}
     <p>Profile settings require an installed Sandstorm account.</p>
   {:else if model.status !== 'ready'}
@@ -63,7 +64,7 @@
         </NativeSelect>
         <Button type="submit" disabled={profile.saving || !dirty || !name.trim()}>{profile.saving ? 'Saving profile…' : 'Save profile'}</Button>
       </form>
-      <p><a href={profile.value.mainHref}>Manage login methods and email in the main shell ↗</a></p>
+      {#key model.accountKey}<AccountCredentials state={model.accountSettings} settings={service.accountSettings} ready={model.status === 'ready'} />{/key}
     {/if}
   {/if}
   {#if profile.error}<p class="error" role="alert">{profile.error}</p>{/if}

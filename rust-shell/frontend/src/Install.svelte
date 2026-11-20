@@ -63,7 +63,7 @@
   });
 </script>
 <Panel aria-label="App installation">
-  {#if model.status === 'signed-out'}<p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to install apps.</p>
+  {#if model.status === 'signed-out'}<p><a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a> to install apps.</p>
   {:else if model.status !== 'ready'}<LoadingStatus label="Connecting to Sandstorm…" />
   {:else if model.fixture}<p>App installation requires an installed Sandstorm server.</p>
   {:else if loading}<LoadingStatus label="Loading app details…" />

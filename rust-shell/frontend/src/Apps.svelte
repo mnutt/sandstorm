@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pagination from './components/ui/Pagination.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import Grains from './Grains.svelte';
   import { isPlainNavigation } from './lib/navigation';
@@ -24,6 +25,7 @@
   $effect(() => { appId; selected = ''; });
   let actions: AppAction[] = $state([]);
   let limited = $state(false);
+  let page = $state(0);
   let loading = $state(false);
   const creating = $derived(creation.status === 'pending');
   let error = $state('');
@@ -53,13 +55,13 @@
   }
   let epoch = 0;
   let alive = true;
-  async function load() {
+  async function load(nextPage = 0) {
     const current = ++epoch;
     loading = true;
     try {
-      const result = await service.listApps();
+      const result = await service.listApps(nextPage, appId || '');
       if (current !== epoch) return;
-      actions = result.actions; limited = result.limited;
+      actions = result.actions; limited = result.limited; page = nextPage;
     } catch (failure) { if (current === epoch) error = String(failure); }
     finally { if (current === epoch) loading = false; }
   }
@@ -81,7 +83,7 @@
   }
 </script>
 <Panel aria-label="Apps">
-  {#if status === 'signed-out'}<p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your installed apps.</p>
+  {#if status === 'signed-out'}<p><a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a> to see your installed apps.</p>
   {:else if status !== 'ready'}<LoadingStatus label="Connecting to Sandstorm…" />
   {:else if fixture}<p>App creation requires an installed Sandstorm server.</p>
   {:else}
@@ -132,7 +134,7 @@
       {/if}
     {/if}
     {#if appId && selectedApp}<div class="app-grains"><Grains model={appGrains} {service} {navigate} /></div>{/if}
-    {#if limited}<p>Showing the first 100 installed actions. Use the main shell for the full list.</p>{/if}
+    <Pagination {page} more={limited} busy={loading} label="Apps" change={load} />
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
   {#if creation.status === 'created'}<p>Grain created.</p><Button onclick={() => created(creation.grainId)}>Open created grain</Button><Button onclick={() => service.acknowledgeCreation()}>Create another grain</Button>{/if}

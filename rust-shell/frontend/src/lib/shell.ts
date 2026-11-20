@@ -1,3 +1,4 @@
+import { AccountService } from './account';
 import type { NotificationDetails } from './notification-details';
 import { InstallService } from './install';
 import { clearStoredTemplateOffers } from './template';
@@ -17,18 +18,23 @@ export class ShellService {
   private connection: ShellConnection;
   private grains: GrainWorkspace;
   private apps: AppService;
+  readonly accountSettings: AccountService;
   readonly installation: InstallService;
   private profile: ProfileService;
   private accountKey: string | null = null;
   private notificationOperation = 0;
+  private requestedPage?: {kind: 'grains' | 'notifications'; page:number};
 
   constructor(private changed: (state: ShellState) => void) {
     clearStoredTemplateOffers();
     this.connection = new ShellConnection({
       reset: () => {
         this.grains.reset();
+        this.requestedPage = undefined;
+        this.update({paging:false,grainPage:0,notificationPage:0});
         clearStoredTemplateOffers();
         this.profile.reset();
+        this.accountSettings.reset();
         this.apps.interrupt();
         if (this.state.pending) this.update({ pending: false, notificationError: 'Connection changed. The action was not retried; its outcome may be unknown.' });
         ++this.notificationOperation;
@@ -38,6 +44,7 @@ export class ShellService {
         if (key !== this.accountKey) {
           this.accountKey = key;
           this.profile.reset(true);
+          this.accountSettings.reset();
           this.update({ notificationError: '', grainError: '' });
         }
         this.apps.selectAccount(key);
@@ -48,6 +55,7 @@ export class ShellService {
       }),
       snapshot: snapshot => this.snapshot(snapshot),
     });
+    this.accountSettings = new AccountService(this.connection, accountSettings => this.update({accountSettings}));
     this.installation = new InstallService(this.connection);
     this.grains = new GrainWorkspace(this.connection, state => {
       this.update(state);
@@ -75,7 +83,8 @@ export class ShellService {
       key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
       href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
     });
-    this.update({ accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
+    if (this.requestedPage && (this.requestedPage.kind === 'grains' ? snapshot.grainPage : snapshot.notificationPage) === this.requestedPage.page) this.requestedPage = undefined;
+    this.update({hasUnread:snapshot.hasUnread, grainPage:snapshot.grainPage, notificationPage:snapshot.notificationPage, paging:!!this.requestedPage, accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
       revision: snapshot.revision, total: snapshot.total, connectionError: '' });
     this.grains.applyMenu(grains);
   }
@@ -95,7 +104,14 @@ export class ShellService {
   uploadProfilePicture(image: Blob) { return this.profile.uploadPicture(image); }
   loadProfile() { return this.profile.load(); }
   saveProfile(profile: Pick<Profile, 'name' | 'handle' | 'pronoun'>) { return this.profile.save(profile); }
-  listApps() { return this.apps.list(); }
+  async selectPage(kind: 'grains' | 'notifications', page: number) {
+    if (this.state.paging) return;
+    this.requestedPage = {kind,page}; this.update({paging:true});
+    try {
+      await this.connection.run(this.connection.shell.selectPage(params => { params.kind=kind; params.page=page; }).promise(), 'Load list page');
+    } catch (error) { this.requestedPage=undefined; this.update({paging:false,notificationError:errorMessage(error)}); }
+  }
+  listApps(page = 0, appId = '') { return this.apps.list(page, appId); }
   createGrain(action: string, title: string) { return this.apps.create(action, title); }
   acknowledgeCreation() { this.apps.acknowledge(); }
   clearErrors() { this.update({ notificationError: '', grainError: '' }); }

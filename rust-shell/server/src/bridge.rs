@@ -81,7 +81,13 @@ impl Bridge {
         let mut response = self
             .client
             .post(format!("http://bridge/{action}"))
-            .timeout(Duration::from_secs(if action == "watch" { 30 } else { 5 }))
+            .timeout(Duration::from_secs(if action == "watch" {
+                30
+            } else if action == "nativeAuth" {
+                20
+            } else {
+                5
+            }))
             .json(&input)
             .send()
             .await
@@ -122,8 +128,9 @@ impl Session {
     pub async fn snapshot(&self) -> Result<Snapshot, Error> {
         self.projection("snapshot", json!({})).await
     }
-    pub async fn watch(&self, version: &str) -> Result<Snapshot, Error> {
-        self.projection("watch", json!({ "after": version })).await
+    pub async fn watch(&self, version: &str, pages: Value) -> Result<Snapshot, Error> {
+        self.projection("watch", json!({ "after": version, "pages": pages }))
+            .await
     }
     async fn projection(&self, action: &str, input: Value) -> Result<Snapshot, Error> {
         serde_json::from_value(self.call(action, input).await?).map_err(|_| {
@@ -178,6 +185,12 @@ pub struct Snapshot {
     pub account_picture_url: String,
     #[serde(default, rename = "profileVersion")]
     pub profile_version: String,
+    #[serde(default, rename = "grainPage")]
+    pub grain_page: u32,
+    #[serde(default, rename = "notificationPage")]
+    pub notification_page: u32,
+    #[serde(default, rename = "hasUnread")]
+    pub has_unread: bool,
     #[serde(default)]
     pub grains: Vec<Grain>,
     #[serde(default, rename = "grainsLimited")]

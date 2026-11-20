@@ -101,7 +101,7 @@
           <p>Choose whether this app can see your Sandstorm identity. Access remains limited to this sharing link.</p>
           <div class="choices"><Button onclick={() => open(true)}><Avatar name={info.accountName} src={info.accountPictureUrl} /> Open as {info.accountName}</Button>
             {#if info.guestsAllowed}<Button variant="secondary" onclick={() => open(false)}>Open anonymously</Button>{/if}</div>
-        {:else}<p>This server requires you to sign in before viewing shared grains.</p><a href="/auth/start" onclick={rememberRoute}>Sign in with Sandstorm</a>{/if}
+        {:else}<p>This server requires you to sign in before viewing shared grains.</p><a href="/login" onclick={rememberRoute}>Sign in with Sandstorm</a>{/if}
       {/if}
     </Panel></div>
   {/if}
