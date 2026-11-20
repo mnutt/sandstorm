@@ -1,3 +1,4 @@
+import { confirmMutation } from "./rust-shell-mutations.mjs";
 import { createSharedLeases } from "./rust-shell-shared-leases.mjs";
 import { memorySessionStore } from "./rust-shell-session-store.mjs";
 import { createGrainLeases } from "./rust-shell-grain-leases.mjs";
@@ -115,7 +116,8 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
           };
           await beforeWrite();
           const result = await notification(record.accountId,input.key,input.operation,input.enabled,beforeWrite);
-          await session(input.token);
+          if (writing) await confirmMutation(() => session(input.token));
+          else await session(input.token);
           return result;
         } finally { if (writing) notificationWrites.delete(record.accountId); }
       }
@@ -140,7 +142,8 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
           };
           await beforeWrite();
           const result = await accountSettings(record.accountId, operation, data, beforeWrite);
-          await beforeWrite();
+          if (writing) await confirmMutation(beforeWrite);
+          else await beforeWrite();
           return result;
         } finally { if (writing) accountWrites.delete(record.accountId); }
       }
@@ -164,7 +167,8 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
           };
           await beforeWrite();
           const result = await install(record.accountId, operation, data, beforeWrite);
-          await session(input.token);
+          if (mutating) await confirmMutation(() => session(input.token));
+          else await session(input.token);
           return result;
         } finally { if (mutating) installing.delete(record.accountId); }
       }
@@ -178,7 +182,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
             if (signal.aborted) throw Object.assign(new Error("Picture upload request disconnected."), {status:409});
           };
           const result = await uploadPicture(record.accountId,beforeWrite);
-          await beforeWrite();
+          await confirmMutation(beforeWrite);
           return result;
         } finally { updatingProfiles.delete(record.accountId); }
       }
@@ -206,9 +210,12 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
             await updateProfile(record.accountId, profile, beforeWrite);
           } finally { updatingProfiles.delete(record.accountId); }
         }
-        const result = await getProfile(record.accountId);
-        await session(input.token);
-        return result;
+        const read = async () => {
+          const result = await getProfile(record.accountId);
+          await session(input.token);
+          return result;
+        };
+        return action === "updateProfile" ? confirmMutation(read) : read();
       }
       if (action === "listApps") {
         if (!listApps) throw Object.assign(new Error("Apps unavailable."), { status: 503 });
@@ -234,7 +241,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
             if (signal.aborted) throw Object.assign(new Error("Creation request disconnected."), { status: 409 });
           };
           const grainId = await createGrain(record.accountId, input.actionId, input.title.trim(), beforeCreate);
-          await session(input.token);
+          await confirmMutation(() => session(input.token));
           return { grainId };
         } finally { creating.delete(record.accountId); }
       }

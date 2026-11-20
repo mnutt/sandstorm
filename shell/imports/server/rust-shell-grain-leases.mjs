@@ -1,3 +1,4 @@
+import { confirmMutation } from "./rust-shell-mutations.mjs";
 import { randomBytes } from "node:crypto";
 
 const valid = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
@@ -77,7 +78,7 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
       try {
         await beforeWrite();
         const result = await rename(handle, input.title.trim(), beforeWrite);
-        await beforeWrite();
+        await confirmMutation(beforeWrite);
         return result;
       } finally { record.renaming = false; }
     },
@@ -142,7 +143,8 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
       try {
         await beforeWrite();
         result = await callback(handle, input, beforeWrite);
-        await beforeWrite();
+        if (operation === "updateShare") await confirmMutation(beforeWrite);
+        else await beforeWrite();
         return operation === "createShare" ? { token: result.token } : result;
       } catch (error) {
         // A canceled issuance must not leave an undisclosed working bearer token.

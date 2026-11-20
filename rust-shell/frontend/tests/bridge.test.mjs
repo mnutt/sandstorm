@@ -480,3 +480,27 @@ test('private bridge accepts request and response bodies above the prototype cei
   }})(request, response);
   assert.deepEqual(result, output);
 });
+
+test('revocation after a completed write hides its result without claiming rejection', async () => {
+  const operations = [
+    ['createGrain',{actionId:'action',title:'New grain'}],
+    ['updateProfile',{profile:{name:'Alice',handle:'alice',pronoun:'neutral'}}],
+    ['accountSettings',{operation:'primary',data:{email:'alice@example.test'}}],
+    ['install',{operation:'confirm',data:{packageId:'a'.repeat(32)}}],
+    ['notification',{operation:'setStats',key:'stats',enabled:true}],
+    ['uploadPicture',{}],
+  ];
+  for (const [action,input] of operations) {
+    let authorized=true,writes=0;
+    const commit=async (...args)=>{await args.at(-1)();++writes;authorized=false;return {};};
+    const bridge=createRustShellBridge({
+      authorize:async()=>authorized?{name:'Alice',expires:Date.now()+60000}:null,
+      createGrain:commit,updateProfile:commit,accountSettings:commit,install:commit,
+      notification:commit,uploadPicture:commit,getProfile:async()=>({name:'Alice',handle:'alice',pronoun:'neutral'}),
+    });
+    const state='b'.repeat(64), code=await bridge.issue('alice','hash',state);
+    const {token}=await bridge.handle('exchange',{state,code});
+    await assert.rejects(bridge.handle(action,{token,...input}),{status:500},action);
+    assert.equal(writes,1,action+' must not replay or undo a committed write');
+  }
+});

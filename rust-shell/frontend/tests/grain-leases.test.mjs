@@ -258,3 +258,13 @@ test('Powerbox closes late providers and discards undelivered results after canc
     assert.equal(handles[0].delivered,false);
   }
 });
+
+test('revocation after rename preserves an uncertain outcome', async () => {
+  let writes=0;
+  const f=await fixture({rename:async(_handle,title,beforeWrite)=>{
+    await beforeWrite();++writes;f.revokeShare();return {title};
+  }});
+  const view=await f.call('openGrain',{grainId:'allowed'});
+  await assert.rejects(f.call('renameGrain',{lease:view.lease,title:'Committed title'}),{status:500});
+  assert.equal(writes,1);
+});
