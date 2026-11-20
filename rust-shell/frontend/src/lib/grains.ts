@@ -1,3 +1,4 @@
+import { PowerboxRequests } from './powerbox-client';
 import type { PowerboxActions, PowerboxState } from './powerbox-native';
 import type { SharingState, ShareChanges } from './sharing';
 import type { GrainSession$Client } from '../generated/shell';
@@ -8,6 +9,7 @@ import { errorMessage, runOperation } from './operations';
 
 interface GrainState { activeGrain: ActiveGrain | null; openingGrain: boolean; grainError: string }
 export class GrainService {
+  private requests: PowerboxRequests;
   private session?: GrainSession$Client;
   private active: ActiveGrain | null = null;
   private opening = false;
@@ -15,9 +17,10 @@ export class GrainService {
   private generation = 0;
   private cleanup: Promise<void> = Promise.resolve();
   private offers = new TemplateOffers();
-  constructor(private connection: ShellConnection, private changed: (state: Partial<GrainState>) => void) {}
+  constructor(private connection: ShellConnection, private changed: (state: Partial<GrainState>) => void) {this.requests=new PowerboxRequests(connection);}
   reset(release = true) {
     ++this.generation;
+    this.requests.reset();
     this.offers.clear();
     try { if (release) this.session?.client.close(); } catch { /* already disconnected */ }
     this.session = undefined;
@@ -115,12 +118,11 @@ export class GrainService {
     const session = this.session;
     const generation = this.generation;
     if (!session) throw new Error('No active grain.');
-    const result = await this.connection.run(session.powerbox(params => {
-      params.request = request; params.operation = operation; params.input = JSON.stringify(input);
-    }).promise(), 'Powerbox');
+    const result = await this.requests.call(session,request,operation,input);
     if (generation !== this.generation) throw new Error('Grain session changed.');
-    return JSON.parse(result.state) as PowerboxState;
+    return result;
   }
+
   async sharingState(): Promise<SharingState> {
     const session = this.session;
     const generation = this.generation;

@@ -1,4 +1,4 @@
-use crate::shell_capnp::{shell, subscription};
+use crate::shell_capnp::shell;
 use std::{cell::Cell, rc::Rc, time::Duration};
 use tokio::sync::watch;
 
@@ -29,6 +29,7 @@ pub struct Shell {
     interop: Rc<crate::interop::Link>,
     state: watch::Sender<Projection>,
     watching: Rc<Cell<bool>>,
+    pub observations: crate::observation::Scope,
     session: Option<crate::bridge::Session>,
     version: String,
     pages: watch::Sender<(u32, u32)>,
@@ -96,6 +97,7 @@ impl Shell {
             interop,
             state,
             watching: Rc::new(Cell::new(false)),
+            observations: crate::observation::Scope::default(),
             session,
             version,
             pages: watch::channel((0, 0)).0,
@@ -171,63 +173,160 @@ impl Shell {
     }
 }
 
-struct Subscription {
-    task: tokio::task::JoinHandle<()>,
-    closed: watch::Sender<Option<String>>,
-    watching: Rc<Cell<bool>>,
-    active: Cell<bool>,
-}
-impl Subscription {
-    fn stop(&self) {
-        if self.active.replace(false) {
-            self.task.abort();
-            self.watching.set(false);
-            self.closed.send_if_modified(|state| {
-                if state.is_some() {
-                    return false;
-                }
-                *state = Some(String::new());
-                true
-            });
-        }
-    }
-}
-impl Drop for Subscription {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-impl subscription::Server for Subscription {
-    async fn when_closed(
+impl shell::Server for Shell {
+    async fn watch_grains(
         self: Rc<Self>,
-        _: subscription::WhenClosedParams,
-        _: subscription::WhenClosedResults,
+        params: shell::WatchGrainsParams,
+        mut results: shell::WatchGrainsResults,
     ) -> capnp::Result<()> {
-        let mut receiver = self.closed.subscribe();
-        let reason = receiver
-            .wait_for(|state| state.is_some())
-            .await
-            .map_err(|_| capnp::Error::disconnected("Subscription ended".into()))?
+        let input = params.get()?;
+        let query = input.get_query()?;
+        let page = query.get_page();
+        let search = query.get_search()?.to_str()?.to_owned();
+        let app_id = query.get_app_id()?.to_str()?.to_owned();
+        if page > 1_000_000 || search.len() > 160 || app_id.len() > 128 {
+            return Err(capnp::Error::failed("Invalid grain query".into()));
+        }
+        let sort = match query.get_sort()? {
+            crate::shell_capnp::GrainSort::Recent => "recent",
+            crate::shell_capnp::GrainSort::Title => "title",
+        };
+        let ownership = match query.get_ownership()? {
+            crate::shell_capnp::GrainOwnership::All => "all",
+            crate::shell_capnp::GrainOwnership::Owned => "owned",
+            crate::shell_capnp::GrainOwnership::Shared => "shared",
+        };
+        let filter =
+            serde_json::json!({"search":search,"appId":app_id,"sort":sort,"ownership":ownership});
+        let observer = input.get_observer()?;
+        let session = self
+            .session
             .clone()
-            .unwrap();
-        if reason.is_empty() {
-            Ok(())
-        } else {
-            Err(capnp::Error::failed(reason))
-        }
-    }
-
-    async fn cancel(
-        self: Rc<Self>,
-        _: subscription::CancelParams,
-        _: subscription::CancelResults,
-    ) -> capnp::Result<()> {
-        self.stop();
+            .ok_or_else(|| capnp::Error::failed("Sign in to browse grains".into()))?;
+        let subscription = self.observations.spawn(
+            async move {
+                let mut version = "0".repeat(64);
+                let mut previous = None;
+                loop {
+                    let snapshot = session
+                        .watch_query(
+                            &version,
+                            serde_json::json!({"grains":page}),
+                            Some(filter.clone()),
+                        )
+                        .await
+                        .map_err(|(_, e)| capnp::Error::failed(e))?;
+                    version = snapshot.version.clone();
+                    let signature = (snapshot.grains.clone(), snapshot.grains_limited);
+                    if previous.as_ref() == Some(&signature) {
+                        continue;
+                    }
+                    let mut request = observer.replace_request();
+                    {
+                        let mut out = request.get().init_page();
+                        out.set_page(page);
+                        out.set_has_more(snapshot.grains_limited);
+                        let mut list = out.init_grains(snapshot.grains.len() as u32);
+                        for (i, grain) in snapshot.grains.iter().enumerate() {
+                            write_grain(grain, list.reborrow().get(i as u32));
+                        }
+                    }
+                    tokio::time::timeout(Duration::from_secs(10), request.send().promise)
+                        .await
+                        .map_err(|_| capnp::Error::failed("Grain observer timed out".into()))??;
+                    previous = Some(signature);
+                }
+            },
+            || {},
+        )?;
+        results.get().set_subscription(subscription);
         Ok(())
     }
-}
+    async fn watch_notifications(
+        self: Rc<Self>,
+        params: shell::WatchNotificationsParams,
+        mut results: shell::WatchNotificationsResults,
+    ) -> capnp::Result<()> {
+        let input = params.get()?;
+        let page = input.get_page();
+        if page > 1_000_000 {
+            return Err(capnp::Error::failed("Invalid page".into()));
+        }
+        let observer = input.get_observer()?;
+        let session = self
+            .session
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to browse notifications".into()))?;
+        let subscription = self.observations.spawn(
+            async move {
+                let mut version = "0".repeat(64);
+                let mut previous = None;
+                loop {
+                    let snapshot = session
+                        .watch_query(&version, serde_json::json!({"notifications":page}), None)
+                        .await
+                        .map_err(|(_, e)| capnp::Error::failed(e))?;
+                    version = snapshot.version.clone();
+                    let signature = (snapshot.entries.clone(), snapshot.total);
+                    if previous.as_ref() == Some(&signature) {
+                        continue;
+                    }
+                    let mut request = observer.replace_request();
+                    {
+                        let mut out = request.get().init_page();
+                        out.set_page(page);
+                        out.set_total(snapshot.total);
+                        let mut list = out.init_entries(snapshot.entries.len() as u32);
+                        for (i, entry) in snapshot.entries.iter().enumerate() {
+                            write_notification(entry, list.reborrow().get(i as u32));
+                        }
+                    }
+                    tokio::time::timeout(Duration::from_secs(10), request.send().promise)
+                        .await
+                        .map_err(|_| {
+                            capnp::Error::failed("Notification observer timed out".into())
+                        })??;
+                    previous = Some(signature);
+                }
+            },
+            || {},
+        )?;
+        results.get().set_subscription(subscription);
+        Ok(())
+    }
 
-impl shell::Server for Shell {
+    async fn installer(
+        self: Rc<Self>,
+        _: shell::InstallerParams,
+        mut results: shell::InstallerResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to install apps".into()))?;
+        results
+            .get()
+            .set_installer(capnp_rpc::new_client(crate::workflow::Installer(
+                session,
+                self.observations.clone(),
+            )));
+        Ok(())
+    }
+    async fn account(
+        self: Rc<Self>,
+        _: shell::AccountParams,
+        mut results: shell::AccountResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to manage your account".into()))?;
+        results
+            .get()
+            .set_account(capnp_rpc::new_client(crate::workflow::Account(session)));
+        Ok(())
+    }
+
     async fn upload_picture(
         self: Rc<Self>,
         _: shell::UploadPictureParams,
@@ -365,13 +464,21 @@ impl shell::Server for Shell {
         }
         let data: serde_json::Value = serde_json::from_str(data)
             .map_err(|_| capnp::Error::failed("Invalid installation input".into()))?;
-        let value = session
+        let result = session
             .call(
                 "install",
                 serde_json::json!({"operation":operation,"data":data}),
             )
-            .await
-            .map_err(|(_, error)| capnp::Error::failed(error))?;
+            .await;
+        let value = match result {
+            Ok(value) => value,
+            Err((status, message))
+                if matches!(status.as_u16(), 400 | 401 | 403 | 404 | 413 | 422 | 429) =>
+            {
+                serde_json::json!({"failure": {"message": message}})
+            }
+            Err((_, message)) => return Err(capnp::Error::failed(message)),
+        };
         results.get().set_state(value.to_string());
         Ok(())
     }
@@ -573,78 +680,74 @@ impl shell::Server for Shell {
             ));
         }
         let mut receiver = self.state.subscribe();
-        let (closed, _) = watch::channel(None);
-        let ended = closed.clone();
-        let task = tokio::task::spawn_local(async move {
-            loop {
-                let snapshot = receiver.borrow_and_update().clone();
-                let mut request = observer.replace_request();
-                {
-                    let mut out = request.get().init_snapshot();
-                    out.set_account_picture_url(&snapshot.account_picture_url);
-                    out.set_profile_version(&snapshot.profile_version);
-                    out.set_has_unread(snapshot.has_unread);
-                    out.set_grain_page(snapshot.grain_page);
-                    out.set_notification_page(snapshot.notification_page);
-                    out.set_revision(snapshot.revision);
-                    out.set_total(snapshot.total);
-                    out.set_grains_limited(snapshot.grains_limited);
+        let watching = self.watching.clone();
+        let subscription = self.observations.spawn(
+            async move {
+                loop {
+                    let snapshot = receiver.borrow_and_update().clone();
+                    let mut request = observer.replace_request();
                     {
-                        let mut grains = out.reborrow().init_grains(snapshot.grains.len() as u32);
-                        for (i, grain) in snapshot.grains.iter().enumerate() {
-                            let mut out = grains.reborrow().get(i as u32);
-                            out.set_key(&grain.key);
-                            out.set_title(&grain.title);
-                            out.set_owner_title(&grain.owner_title);
-                            out.set_href(&grain.href);
-                            out.set_owned(grain.owned);
-                            out.set_last_used(&grain.last_used);
-                            out.set_app_title(&grain.app_title);
-                            out.set_app_id(&grain.app_id);
-                            out.set_icon_src(&grain.icon_src);
+                        let mut out = request.get().init_snapshot();
+                        out.set_account_picture_url(&snapshot.account_picture_url);
+                        out.set_profile_version(&snapshot.profile_version);
+                        out.set_has_unread(snapshot.has_unread);
+                        out.set_grain_page(snapshot.grain_page);
+                        out.set_notification_page(snapshot.notification_page);
+                        out.set_revision(snapshot.revision);
+                        out.set_total(snapshot.total);
+                        out.set_grains_limited(snapshot.grains_limited);
+                        {
+                            let mut grains =
+                                out.reborrow().init_grains(snapshot.grains.len() as u32);
+                            for (i, grain) in snapshot.grains.iter().enumerate() {
+                                let mut out = grains.reborrow().get(i as u32);
+                                out.set_key(&grain.key);
+                                out.set_title(&grain.title);
+                                out.set_owner_title(&grain.owner_title);
+                                out.set_href(&grain.href);
+                                out.set_owned(grain.owned);
+                                out.set_last_used(&grain.last_used);
+                                out.set_app_title(&grain.app_title);
+                                out.set_app_id(&grain.app_id);
+                                out.set_icon_src(&grain.icon_src);
+                            }
+                        }
+                        let mut entries = out.init_entries(snapshot.entries.len() as u32);
+                        for (i, entry) in snapshot.entries.iter().enumerate() {
+                            let mut out = entries.reborrow().get(i as u32);
+                            out.set_id(entry.id);
+                            out.set_title(&entry.title);
+                            out.set_body(&entry.body);
+                            if let Some(real) = &entry.real {
+                                out.set_key(&real.key);
+                                out.set_unread(real.unread);
+                                out.set_ongoing(real.ongoing);
+                                out.set_href(&real.href);
+                                out.set_timestamp(&real.timestamp);
+                                out.set_sender_picture_url(&real.sender_picture_url);
+                                out.set_sender_name(&real.sender_name);
+                                out.set_native_path(&real.native_path);
+                                out.set_native_action(&real.native_action);
+                            }
                         }
                     }
-                    let mut entries = out.init_entries(snapshot.entries.len() as u32);
-                    for (i, entry) in snapshot.entries.iter().enumerate() {
-                        let mut out = entries.reborrow().get(i as u32);
-                        out.set_id(entry.id);
-                        out.set_title(&entry.title);
-                        out.set_body(&entry.body);
-                        if let Some(real) = &entry.real {
-                            out.set_key(&real.key);
-                            out.set_unread(real.unread);
-                            out.set_ongoing(real.ongoing);
-                            out.set_href(&real.href);
-                            out.set_timestamp(&real.timestamp);
-                            out.set_sender_picture_url(&real.sender_picture_url);
-                            out.set_sender_name(&real.sender_name);
-                            out.set_native_path(&real.native_path);
-                            out.set_native_action(&real.native_action);
-                        }
+                    // At most one callback in flight. watch retains only the latest full snapshot.
+                    if !matches!(
+                        tokio::time::timeout(Duration::from_secs(10), request.send().promise).await,
+                        Ok(Ok(_))
+                    ) {
+                        return Err(capnp::Error::failed(
+                            "Live update delivery failed or timed out".into(),
+                        ));
+                    }
+                    if receiver.changed().await.is_err() {
+                        return Err(capnp::Error::failed("Live update source closed".into()));
                     }
                 }
-                // At most one callback in flight. watch retains only the latest full snapshot.
-                if !matches!(
-                    tokio::time::timeout(Duration::from_secs(10), request.send().promise).await,
-                    Ok(Ok(_))
-                ) {
-                    ended.send_replace(Some("Live update delivery failed or timed out".into()));
-                    break;
-                }
-                if receiver.changed().await.is_err() {
-                    ended.send_replace(Some("Live update source closed".into()));
-                    break;
-                }
-            }
-        });
-        results
-            .get()
-            .set_subscription(capnp_rpc::new_client(Subscription {
-                task,
-                closed,
-                watching: self.watching.clone(),
-                active: Cell::new(true),
-            }));
+            },
+            move || watching.set(false),
+        )?;
+        results.get().set_subscription(subscription);
         Ok(())
     }
 
@@ -701,4 +804,32 @@ impl shell::Server for Shell {
         });
         Ok(())
     }
+}
+
+fn write_grain(grain: &crate::bridge::Grain, mut out: crate::shell_capnp::grain::Builder<'_>) {
+    out.set_key(&grain.key);
+    out.set_title(&grain.title);
+    out.set_owner_title(&grain.owner_title);
+    out.set_href(&grain.href);
+    out.set_owned(grain.owned);
+    out.set_last_used(&grain.last_used);
+    out.set_app_title(&grain.app_title);
+    out.set_app_id(&grain.app_id);
+    out.set_icon_src(&grain.icon_src);
+}
+fn write_notification(
+    entry: &crate::bridge::Entry,
+    mut out: crate::shell_capnp::notification::Builder<'_>,
+) {
+    out.set_key(&entry.key);
+    out.set_title(&entry.title);
+    out.set_body(&entry.body);
+    out.set_unread(entry.unread);
+    out.set_ongoing(entry.ongoing);
+    out.set_href(&entry.href);
+    out.set_timestamp(&entry.timestamp);
+    out.set_sender_name(&entry.sender_name);
+    out.set_sender_picture_url(&entry.sender_picture_url);
+    out.set_native_path(&entry.native_path);
+    out.set_native_action(&entry.native_action);
 }

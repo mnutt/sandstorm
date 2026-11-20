@@ -1,5 +1,5 @@
 import { Conn } from 'capnp-es';
-import { Observer, Shell, type Shell$Client, type Subscription$Client, type Snapshot } from '../generated/shell';
+import { Observer, Shell, type Shell$Client, type Installer$Client, type Account$Client, type Subscription$Client, type Snapshot } from '../generated/shell';
 import type { ConnectionStatus } from './model';
 import { runOperation, type OperationOptions, errorMessage } from './operations';
 import { WebSocketTransport } from './transport';
@@ -18,6 +18,8 @@ export class ShellConnection {
   private conn?: Conn;
   private socket?: WebSocket;
   private client?: Shell$Client;
+  private installerClient?: Installer$Client;
+  private accountClient?: Account$Client;
   private subscription?: Subscription$Client;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private startupTimer?: ReturnType<typeof setTimeout>;
@@ -33,6 +35,8 @@ export class ShellConnection {
     if (!this.client) throw new Error('Connect to Sandstorm first.');
     return this.client;
   }
+  get installer() { return this.installerClient ??= this.shell.installer().getInstaller(); }
+  get account() { return this.accountClient ??= this.shell.account().getAccount(); }
   run<T>(promise: PromiseLike<T>, label: string, options: OperationOptions<T> = {}) {
     const generation = this.generation;
     return runOperation(promise, label, {
@@ -54,6 +58,8 @@ export class ShellConnection {
     this.events.reset();
     this.subscription = undefined;
     this.client = undefined;
+    this.installerClient = undefined;
+    this.accountClient = undefined;
     this.conn?.shutdown();
     this.conn = undefined;
     if (this.socket) {

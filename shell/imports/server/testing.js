@@ -1,3 +1,4 @@
+import { grainMenu } from "/imports/server/rust-shell-grains";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
 import { finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
 import { OAuth } from "meteor/oauth";
@@ -2045,6 +2046,54 @@ if(isTesting) {
         await globalDb.collections.grains.removeAsync({_id:{$in:[foreign,newer]}});
         await globalDb.collections.grains.updateAsync(grainId,{$set:{packageId:source.packageId,appVersion:source.appVersion}});
         await globalDb.collections.userActions.updateAsync({userId:this.userId,packageId:pkg._id},{$set:{appVersion:version}},{multi:true});
+      }
+    },
+
+    async testRustGrainQueries() {
+      if (!this.userId) throw new Meteor.Error(403, "Sign in first");
+      const accountId = "rust-query-" + Random.id();
+      const grains = globalDb.collections.grains;
+      const tokens = globalDb.collections.apiTokens;
+      const ids = Array.from({length:105}, (_, i) => accountId + "-" + i);
+      const sharedId = accountId + "-shared";
+      const tokenIds = [accountId + "-token", accountId + "-duplicate"];
+      const require = (ok, message) => { if (!ok) throw new Error(message); };
+      const query = (changes = {}, page = 0) => grainMenu(globalDb, accountId, process.env.ROOT_URL,
+        page, {search:"",appId:"",ownership:"all",sort:"title",...changes});
+      try {
+        await Promise.all(ids.map((_id, i) => grains.insertAsync({_id, userId:accountId,
+          title:"Document " + String(i).padStart(3,"0"), appId:i === 104 ? "rare-app" : "common-app",
+          created:new Date(i * 1000)})));
+        await grains.insertAsync({_id:sharedId,userId:"other-account",title:"Private owner title"});
+        await Promise.all(tokenIds.map((_id, i) => tokens.insertAsync({_id,grainId:sharedId,created:new Date(i),
+          owner:{user:{accountId,title:"Personal [draft].*",upstreamTitle:"Upstream",renamed:true,
+            denormalizedGrainMetadata:{appId:"shared-app",appTitle:{defaultText:"Shared App"}}}}})));
+        let result = await query();
+        require(result.grains.length === 100 && result.grainsLimited, "First query page was not bounded");
+        result = await query({}, 1);
+        require(result.grains.length === 6 && !result.grainsLimited, "Combined pagination duplicated or lost grains");
+        require(result.grains.filter(g => g.key === sharedId).length === 1, "Shared links were not deduplicated");
+        result = await query({search:"104"});
+        require(result.grains.length === 1 && result.grains[0].key === ids[104], "Search applied after pagination");
+        result = await query({appId:"rare-app"});
+        require(result.grains.length === 1 && result.grains[0].key === ids[104], "App filter applied after pagination");
+        result = await query({search:"[draft].*"});
+        require(result.grains.length === 1 && result.grains[0].key === sharedId, "Search did not treat metacharacters literally");
+        require((await query({search:".*"})).grains.length === 1, "Search accepted a regular expression");
+        result = await query({ownership:"owned",sort:"recent"});
+        require(result.grains[0].key === ids[104] && result.grains.every(g => g.owned), "Recent or ownership ordering failed");
+        result = await query({ownership:"shared"});
+        require(result.grains.length === 1 && result.grains[0].title === "Personal [draft].*", "Shared title override was lost");
+        await tokens.updateAsync({_id:{$in:tokenIds}}, {$set:{"owner.user.renamed":false}}, {multi:true});
+        require((await query({search:"Upstream"})).grains.length === 1, "Owner rename not reflected in search");
+        await tokens.updateAsync({_id:{$in:tokenIds}}, {$set:{revoked:true}}, {multi:true});
+        require((await query({ownership:"shared"})).grains.length === 0, "Revoked share leaked into query");
+        await grains.updateAsync(ids[104], {$set:{trashed:new Date()}});
+        require((await query({appId:"rare-app"})).grains.length === 0, "Trashed grain leaked into query");
+        return true;
+      } finally {
+        await tokens.removeAsync({_id:{$in:tokenIds}});
+        await grains.removeAsync({_id:{$in:[...ids,sharedId]}});
       }
     },
 

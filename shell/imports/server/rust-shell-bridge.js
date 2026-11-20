@@ -116,7 +116,7 @@ export const rustShellBridge = createRustShellBridge({
     revokeTemplate: result => globalDb.removeApiTokens({ _id: result.id }),
   },
   authorize: authorizeRustShellAccount,
-  async snapshot(accountId, pages = {}) {
+  async snapshot(accountId, pages = {}, grainQuery) {
     const query = { userId: accountId };
     const rows = await globalDb.collections.notifications.find(query,
         { sort: { timestamp: -1, _id: 1 }, skip: (pages.notifications || 0) * 100, limit: 100 }).fetchAsync();
@@ -178,23 +178,25 @@ export const rustShellBridge = createRustShellBridge({
     return { accountPictureUrl: ownProfile.pictureUrl, profileVersion: ownProfile.version, entries, total: await globalDb.collections.notifications.find(query).countAsync(),
       hasUnread:!!await globalDb.collections.notifications.findOneAsync({...query,isUnread:true},{fields:{_id:1}}),
       notificationPage:pages.notifications || 0, grainPage:pages.grains || 0,
-      ...await grainMenu(globalDb, accountId, process.env.ROOT_URL, pages.grains || 0) };
+      ...await grainMenu(globalDb, accountId, process.env.ROOT_URL, pages.grains || 0, grainQuery) };
   },
-  async observe(accountId, changed, pages = {}) {
+  async observe(accountId, changed, pages = {}, grainQuery) {
     const handles = [];
     const stop = async () => { await Promise.all(handles.map((handle) => handle.stop())); };
     try {
       const callbacks = { added: changed, changed, removed: changed };
       handles.push(await globalDb.collections.notifications.find({ userId: accountId })
           .observeChangesAsync(callbacks));
-      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1, packageId: 1, lastUsed: 1, created: 1, trashed: 1, suspended: 1 } })
+      handles.push(await globalDb.collections.grains.find({ userId: accountId }, { fields: { title: 1, appId: 1, packageId: 1, lastUsed: 1, created: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
       handles.push(await globalDb.collections.apiTokens.find({ "owner.user.accountId": accountId },
           { fields: { grainId: 1, "owner.user": 1, created: 1, lastUsed: 1, revoked: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
       const owned = await globalDb.collections.grains.find({ userId: accountId,
         trashed: { $exists: false }, suspended: { $exists: false } }, {
-        sort: { lastUsed: -1, _id: 1 }, skip: (pages.grains || 0) * 50, limit: 50, fields: { packageId: 1 },
+        // A query can match any installed package title, including grains outside the current page.
+        ...(grainQuery ? {} : {sort: { lastUsed: -1, _id: 1 }, skip: (pages.grains || 0) * 50, limit: 50}),
+        fields: { packageId: 1 },
       }).fetchAsync();
       const packageIds = [...new Set(owned.map((grain) => grain.packageId).filter(Boolean))];
       if (packageIds.length) {

@@ -3,11 +3,16 @@ mod bridge;
 mod dev;
 mod grain;
 mod interop;
+mod observation;
+mod powerbox;
 mod rpc_budget;
 mod service;
 mod shared;
 mod transport;
+mod workflow;
 
+// capnpc 0.25 emits an unused generic parameter in annotation introspection.
+#[allow(clippy::extra_unused_type_parameters)]
 pub mod shell_capnp {
     include!(concat!(env!("OUT_DIR"), "/shell_capnp.rs"));
 }

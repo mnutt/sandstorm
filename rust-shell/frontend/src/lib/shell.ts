@@ -1,3 +1,4 @@
+import { watchGrains, watchNotifications, type GrainQuery } from './queries';
 import { AccountService } from './account';
 import type { NotificationDetails } from './notification-details';
 import { InstallService } from './install';
@@ -88,6 +89,8 @@ export class ShellService {
       revision: snapshot.revision, total: snapshot.total, connectionError: '' });
     this.grains.applyMenu(grains);
   }
+  watchGrains(query:GrainQuery,changed:(grains:Grain[],more:boolean)=>void,failed:(error:unknown)=>void) {return watchGrains(this.connection,query,changed,failed);}
+  watchNotifications(page:number,changed:(entries:Notification[],total:number)=>void,failed:(error:unknown)=>void) {return watchNotifications(this.connection,page,changed,failed);}
   start() { this.connection.start(); }
   stop() { this.connection.stop(); }
   reconnect() { this.connection.reconnect(); }

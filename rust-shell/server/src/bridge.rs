@@ -132,6 +132,18 @@ impl Session {
         self.projection("watch", json!({ "after": version, "pages": pages }))
             .await
     }
+    pub async fn watch_query(
+        &self,
+        version: &str,
+        pages: Value,
+        query: Option<Value>,
+    ) -> Result<Snapshot, Error> {
+        let mut input = json!({"after":version,"pages":pages});
+        if let Some(query) = query {
+            input["query"] = query;
+        }
+        self.projection("watch", input).await
+    }
     async fn projection(&self, action: &str, input: Value) -> Result<Snapshot, Error> {
         serde_json::from_value(self.call(action, input).await?).map_err(|_| {
             (

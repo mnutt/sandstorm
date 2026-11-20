@@ -112,13 +112,13 @@ impl GrainScope {
         true
     }
 }
-struct Lease {
+pub(crate) struct Lease {
     scope: Rc<GrainScope>,
     lease: String,
     closed: Cell<bool>,
 }
 impl Lease {
-    async fn sharing_call(
+    pub(crate) async fn sharing_call(
         &self,
         operation: &str,
         mut input: serde_json::Value,
@@ -136,6 +136,18 @@ impl Lease {
     }
 }
 impl grain_session::Server for Lease {
+    async fn begin_powerbox(
+        self: Rc<Self>,
+        params: grain_session::BeginPowerboxParams,
+        mut results: grain_session::BeginPowerboxResults,
+    ) -> capnp::Result<()> {
+        let query = crate::powerbox::query(params.get()?.get_query()?)?;
+        let (request, value) = crate::powerbox::Request::open(self, Vec::new(), query).await?;
+        crate::powerbox::write(&value, results.get().init_result().init_value())?;
+        results.get().set_request(capnp_rpc::new_client(request));
+        Ok(())
+    }
+
     async fn powerbox(
         self: Rc<Self>,
         params: grain_session::PowerboxParams,

@@ -68,6 +68,7 @@ struct GrainView {
   iconSrc @6 :Text;
 }
 interface GrainSession {
+  beginPowerbox @7 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
   close @0 () -> ();
   renderTemplate @1 (options :Text) -> (token :Text, host :Text);
   rename @2 (title :Text) -> (title :Text, ownerTitle :Text);
@@ -101,6 +102,12 @@ struct AccountProfile {
   version @5 :Text;
 }
 interface Shell {
+  watchGrains @18 (query :GrainQuery, observer :GrainObserver) -> (subscription :Subscription);
+  watchNotifications @19 (page :UInt32, observer :NotificationObserver) -> (subscription :Subscription);
+
+  installer @16 () -> (installer :Installer);
+  account @17 () -> (account :Account);
+
   selectPage @15 (kind :Text, page :UInt32) -> ();
   accountSettings @14 (operation :Text, input :Text) -> (state :Text);
   uploadPicture @13 () -> (uploadUrl :Text);
@@ -140,3 +147,196 @@ interface SharedShell {
   inspect @0 (webkey :Text) -> (info :SharedInfo);
   open @1 (webkey :Text, revealIdentity :Bool) -> (view :GrainView, session :SharedSession);
 }
+
+# Expected application failures are values. Transport/internal failures remain
+# RPC exceptions: callers must not infer that an interrupted mutation rolled back.
+enum FailureCode {
+  invalidInput @0;
+  signInRequired @1;
+  permissionDenied @2;
+  notFound @3;
+  conflict @4;
+  rateLimited @5;
+  unavailable @6;
+}
+struct Failure {
+  code @0 :FailureCode;
+  message @1 :Text;
+  # Safe fallback text. UI behavior must use code, not parse message.
+}
+struct Empty {}
+struct Url { url @0 :Text; }
+
+struct InstallCatalog {
+  marketUrl @0 :Text;
+  updates @1 :List(AppUpdate);
+}
+struct AppUpdate {
+  packageId @0 :Text;
+  title @1 :Text;
+  version @2 :Text;
+  url @3 :Text;
+}
+enum PackageStage {
+  unknown @0;
+  missing @1;
+  download @2;
+  verify @3;
+  unpack @4;
+  analyze @5;
+  ready @6;
+  failed @7;
+  delete @8;
+}
+struct InstallationState {
+  packageId @0 :Text;
+  stage @1 :PackageStage;
+  progress @2 :Float64;
+  # Legacy installer progress: fraction (0,1], or bytes when greater than one.
+  error @3 :Text;
+  appId @4 :Text;
+  title @5 :Text;
+  description @6 :Text;
+  version @7 :Text;
+  fingerprint @8 :Text;
+  iconSrc @9 :Text;
+  installed @10 :Bool;
+  newerInstalled @11 :Bool;
+  olderGrains @12 :UInt32;
+}
+interface Installer {
+  open @6 (packageId :Text, url :Text) -> (installation :Installation);
+  # Opening observes a package; it does not initiate a download or installation.
+
+  catalog @0 () -> (result :Result(InstallCatalog));
+  status @1 (packageId :Text) -> (result :Result(InstallationState));
+  download @2 (packageId :Text, url :Text, retry :Bool = false) -> (result :Result(InstallationState));
+  confirm @3 (packageId :Text) -> (result :Result(InstallationState));
+  upgrade @4 (packageId :Text) -> (result :Result(InstallationState));
+  upload @5 () -> (result :Result(Url));
+}
+struct EmailAddress {
+  email @0 :Text;
+  verified @1 :Bool;
+  primary @2 :Bool;
+}
+struct Credential {
+  id @0 :Text;
+  service @1 :Text;
+  name @2 :Text;
+  pictureUrl @3 :Text;
+  login @4 :Bool;
+}
+struct OAuthState {
+  request @0 :Text;
+  url @1 :Text;
+  pending @2 :Bool;
+}
+struct AccountState {
+  emailEnabled @0 :Bool;
+  githubEnabled @1 :Bool;
+  emails @2 :List(EmailAddress);
+  credentials @3 :List(Credential);
+  oauth @4 :OAuthState;
+}
+interface Account {
+  read @0 () -> (result :Result(AccountState));
+  setPrimaryEmail @1 (email :Text) -> (result :Result(AccountState));
+  sendEmail @2 (email :Text, allowLogin :Bool) -> (result :Result(AccountState));
+  verifyEmail @3 (email :Text, code :Text, allowLogin :Bool) -> (result :Result(AccountState));
+  unlink @4 (credentialId :Text) -> (result :Result(AccountState));
+  setLoginAllowed @5 (credentialId :Text, allowed :Bool) -> (result :Result(AccountState));
+  startGithub @6 () -> (result :Result(AccountState));
+  finishGithub @7 (request :Text) -> (result :Result(AccountState));
+  cancelGithub @8 (request :Text) -> (result :Result(AccountState));
+}
+
+
+
+
+
+struct PowerboxRole { key @0 :Text; title @1 :Text; }
+struct PowerboxCandidate {
+  key @0 :Text;
+  title @1 :Text;
+  detail @2 :Text;
+  iconSrc @3 :Text;
+  uiView @4 :Bool;
+  hostedObject @5 :Bool;
+  urlInput @6 :Bool;
+  emailInput @7 :Bool;
+  github @8 :Bool;
+  roles @9 :List(PowerboxRole);
+}
+struct PowerboxChoices { candidates @0 :List(PowerboxCandidate); limited @1 :Bool; legacy @2 :Bool; }
+struct PowerboxProvider { title @0 :Text; origin @1 :Text; url @2 :Text; }
+struct PowerboxCompletion { token @0 :Text; descriptor @1 :Text; }
+struct PowerboxState {
+  union {
+    waiting @0 :Void;
+    choices @1 :PowerboxChoices;
+    provider @2 :PowerboxProvider;
+    oauth @3 :OAuthState;
+    email @4 :Text;
+    complete @5 :PowerboxCompletion;
+    closed @6 :Void;
+  }
+}
+struct PowerboxSelection {
+  key @0 :Text;
+  union {
+    direct @1 :Void;
+    view @2 :Text;
+    # Permission role key supplied by the selected candidate; "all" grants all access.
+    hosted @3 :Void;
+    webkey @4 :Text;
+    url @5 :Text;
+    sendEmail @6 :Text;
+    verifyEmail @7 :Text;
+    startGithub @8 :Void;
+    finishGithub @9 :Void;
+  }
+}
+interface PowerboxRequest {
+  select @0 (selection :PowerboxSelection) -> (result :Result(PowerboxState));
+  poll @1 () -> (result :Result(PowerboxState));
+  cancel @2 () -> ();
+  nested @3 (query :List(Text)) -> (request :PowerboxRequest, result :Result(PowerboxState));
+  # Child authority is derived from the active provider session, never a browser ID.
+  # Explicit cancellation invalidates descendants. Release also cleans up when
+  # there are no in-flight calls or child capabilities retaining this object.
+}
+
+struct Result(T) {
+  union {
+    unset @0 :Void;
+    value @1 :T;
+    failure @2 :Failure;
+  }
+}
+
+interface InstallationObserver { changed @0 (result :Result(InstallationState)) -> (); }
+interface Installation {
+  read @0 () -> (result :Result(InstallationState));
+  download @1 (retry :Bool = false) -> (result :Result(InstallationState));
+  confirm @2 () -> (result :Result(InstallationState));
+  upgrade @3 () -> (result :Result(InstallationState));
+  watch @4 (observer :InstallationObserver) -> (subscription :Subscription);
+  # Release/cancel ends observation only. Confirmed installations and shared
+  # package downloads persist. There is deliberately no cancel-download method.
+}
+
+enum GrainSort { recent @0; title @1; }
+enum GrainOwnership { all @0; owned @1; shared @2; }
+struct GrainQuery {
+  search @0 :Text;
+  appId @1 :Text;
+  sort @2 :GrainSort;
+  ownership @3 :GrainOwnership;
+  page @4 :UInt32;
+  # Live offset pages of 100 rows. Membership may shift as data changes.
+}
+struct GrainPage { grains @0 :List(Grain); hasMore @1 :Bool; page @2 :UInt32; }
+struct NotificationPage { entries @0 :List(Notification); total @1 :UInt32; page @2 :UInt32; }
+interface GrainObserver { replace @0 (page :GrainPage) -> (); }
+interface NotificationObserver { replace @0 (page :NotificationPage) -> (); }

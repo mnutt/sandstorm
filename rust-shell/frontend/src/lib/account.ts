@@ -1,3 +1,4 @@
+import { unwrap } from './results';
 import type { ShellConnection } from './connection';
 import { errorMessage } from './operations';
 
@@ -23,11 +24,24 @@ export class AccountService {
     const generation = this.generation;
     this.update({pending:true, error:'', notice:''});
     try {
-      const result = await this.connection.run(this.connection.shell.accountSettings(params => {
-        params.operation = operation; params.input = JSON.stringify(input);
-      }).promise(), 'Account settings');
+      const account=this.connection.account;
+      const email=String(input.email || '');
+      const request = operation === 'state' ? account.read()
+        : operation === 'primary' ? account.setPrimaryEmail(p=>{p.email=email;})
+        : operation === 'sendEmail' ? account.sendEmail(p=>{p.email=email;p.allowLogin=!!input.allowLogin;})
+        : operation === 'verifyEmail' ? account.verifyEmail(p=>{p.email=email;p.code=String(input.code || '');p.allowLogin=!!input.allowLogin;})
+        : operation === 'unlink' ? account.unlink(p=>{p.credentialId=String(input.id || '');})
+        : operation === 'allowLogin' ? account.setLoginAllowed(p=>{p.credentialId=String(input.id || '');p.allowed=!!input.allowLogin;})
+        : operation === 'githubStart' ? account.startGithub()
+        : operation === 'githubFinish' ? account.finishGithub(p=>{p.request=String(input.request || '');})
+        : account.cancelGithub(p=>{p.request=String(input.request || '');});
+      const result = await this.connection.run(request.promise(), 'Account settings');
       if (generation !== this.generation) return false;
-      const value: AccountSettings = JSON.parse(result.state);
+      const data = unwrap(result.result);
+      const value: AccountSettings = {emailEnabled:data.emailEnabled,githubEnabled:data.githubEnabled,
+        emails:[...data.emails].map(item=>({email:item.email,verified:item.verified,primary:item.primary})),
+        credentials:[...data.credentials].map(item=>({id:item.id,service:item.service,name:item.name,pictureUrl:item.pictureUrl,login:item.login})),
+        oauth:data._hasOauth() ? {request:data.oauth.request,url:data.oauth.url,pending:data.oauth.pending} : undefined};
       this.update({value, notice: operation === 'sendEmail' ? 'Verification code sent. Check your email.' : operation === 'state' || value.oauth || operation === 'githubCancel' ? '' : 'Account settings updated.'});
       return value;
     } catch (error) {

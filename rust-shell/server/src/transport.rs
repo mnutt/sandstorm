@@ -64,6 +64,7 @@ pub async fn serve(
         }
     };
     serve_rpc(socket, bootstrap.client, service.synchronize(), maintain).await;
+    service.observations.close();
     if let Some(scope) = &service.grain {
         scope.close_all().await;
     }

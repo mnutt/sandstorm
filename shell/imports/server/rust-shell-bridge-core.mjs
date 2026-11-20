@@ -255,6 +255,13 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       if (action === "renameGrain") return leases.rename(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
       if (action === "session") return { account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: record.expires };
+      const query = input.query;
+      if (query !== undefined && (!query || typeof query !== 'object' || Array.isArray(query) ||
+          Object.keys(query).some(key=>!['search','appId','sort','ownership'].includes(key)) ||
+          typeof query.search !== 'string' || query.search.length>160 || typeof query.appId !== 'string' || query.appId.length>128 ||
+          !['recent','title'].includes(query.sort) || !['all','owned','shared'].includes(query.ownership))) {
+        throw Object.assign(new Error('Invalid grain query.'),{status:400});
+      }
       const pages = input.pages ?? {};
       if ((action === "snapshot" || action === "watch") &&
           (typeof pages !== "object" || Array.isArray(pages) || Object.keys(pages).some(key =>
@@ -262,7 +269,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         throw Object.assign(new Error("Invalid list page."), {status:400});
       }
       if (action === "snapshot") {
-        const result = await snapshot(record.accountId, pages);
+        const result = await snapshot(record.accountId, pages, query);
         await session(input.token); // Do not return data after revocation during DB reads.
         return { ...result, version: hash(JSON.stringify(result)) };
       }
@@ -282,14 +289,14 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
           // Observe before reading: writes during the read or between requests
           // cannot fall through a snapshot/subscription gap.
           aborted();
-          stop = await observe(record.accountId, changed, pages);
+          stop = await observe(record.accountId, changed, pages, query);
           let result;
           while (true) {
             aborted();
             await session(input.token);
             if (dirty) {
               dirty = false;
-              const projection = await snapshot(record.accountId, pages);
+              const projection = await snapshot(record.accountId, pages, query);
               result = { ...projection, version: hash(JSON.stringify(projection)) };
             }
             await session(input.token);

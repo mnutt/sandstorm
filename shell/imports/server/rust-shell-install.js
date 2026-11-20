@@ -40,7 +40,7 @@ export async function rustInstall(accountId, operation, input, beforeWrite) {
   let pkg = await db.collections.packages.findOneAsync(id);
   if (operation === "confirm" || operation === "upgrade") {
     const user = await Meteor.users.findOneAsync(accountId);
-    if (!user?.loginCredentials || !await db.isAccountSignedUpOrDemoAsync(user)) throw new Meteor.Error(403,"You must be invited to install apps.");
+    if (!user?.loginCredentials || !await db.isAccountSignedUpOrDemoAsync(user)) throw new Meteor.Error(403,"Your account needs an invitation before you can install apps. Ask the server administrator to grant you access.");
     if (pkg?.status !== "ready") fail("The package is not ready to install.");
     const actions = await db.collections.userActions.find({userId:accountId,appId:pkg.appId}).fetchAsync();
     if (actions.some(action => action.appVersion > pkg.manifest.appVersion)) fail("A newer app version is already installed.");

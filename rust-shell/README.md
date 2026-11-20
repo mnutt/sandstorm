@@ -318,12 +318,12 @@ shell fallback. Email messages still include the canonical Meteor email link;
 the code can be entered directly in the native form.
 
 Lists now have native Previous/Next controls. Grains and notification pages remain
-live through the same bounded subscription, with at most 100 entries per list.
+live through independent query-scoped subscriptions, with at most 100 entries per list.
 Switching pages cancels the old long-poll and reads/observes the selected page;
 reconnecting starts at page one. The notification bell reflects unread entries
 across the entire account. Installed actions use bounded pages and app-specific
-queries so direct app routes can find actions beyond the first page. Search and
-sort apply to the displayed page; concurrent writes may move rows between pages.
+queries so direct app routes can find actions beyond the first page. Grain search, ownership/app filtering, and sorting happen in Mongo before pagination.
+App-gallery search still applies to its displayed page. Concurrent writes may move rows between pages.
 
 ### Installed apps and grain creation
 
@@ -605,7 +605,10 @@ enabled; the Rust frontend's development-tool advisory below is separate.
 - The typed frontend service owns transport, handles, retries and state decoding.
   Components receive plain values. Disconnect clears old state; reconnect uses
   exponential backoff and a fresh authorized snapshot (or fixture). Mutations are never automatically replayed.
-- Explicit cancel, capability release and disconnect end subscriptions.
+- Explicit cancel, capability release and disconnect end subscriptions. A connection
+  owns a scope that explicitly cancels its observations on shutdown; a pending
+  `whenClosed()` call does not retain the subscription. At most eight observations
+  can be live per connection, including the summary and installation watches.
 - `Subscription.whenClosed()` stays pending while delivery is healthy, resolves
   on explicit cancellation, and rejects if a callback fails or exceeds its
   ten-second deadline. Failure remains observable after cleanup. The frontend
@@ -667,13 +670,21 @@ been merged. That branch used a vendored shell archive from fork commit
 `6b427072da39beef24c8d391ba69d012706610af` and a separate `@mnutt` isolate runtime.
 
 Per the spike's explicit dependency choice, this frontend uses exactly
-**`@mnutt/capnp-es@0.4.0`**, installed through the npm alias
-`"capnp-es": "npm:@mnutt/capnp-es@0.4.0"`. The alias matches the import emitted by
+**`@mnutt/capnp-es@0.5.0`**, installed through the npm alias
+`"capnp-es": "npm:@mnutt/capnp-es@0.5.0"`. The alias matches the import emitted by
 that compiler. Compiler and runtime therefore come from the same fork/version;
 the public unscoped package and local personal checkouts are not dependencies.
 The lockfile records the scoped tarball URL and integrity. Generated bindings
 are built from `schema/shell.capnp` and `schema/fixture.capnp`, not checked in.
 The fixture schema is compiled by Rust, TypeScript, and C++ toolchains.
+The 0.5.0 generator specializes branded generic results: `Result(InstallationState)`
+exposes an `InstallationState` value, verified by `frontend/tests/schema-types.ts`.
+
+The native frontend now uses typed `Installer`/`Installation`, `Account`, and
+`PowerboxRequest` capabilities. Grain and notification views own independent
+query subscriptions. Existing string/JSON methods retain their original ordinals
+for compatibility while the migration proceeds; the private Meteor adapter still
+uses JSON internally. Sharing and several other domains have not yet migrated.
 
 Rust dependencies use `Cargo.lock`; Cap'n Proto is pinned to the 0.25 family.
 The full baseline Meteor suite has **not** been run, so this is not completion
@@ -690,7 +701,7 @@ Wire format: one **unpacked** Cap'n Proto message, including its segment table,
 per binary WebSocket message. Multiple Cap'n Proto segments are supported.
 Malformed/truncated frames, trailing bytes, text messages, and oversized messages
 close the connection. Reader traversal/nesting budgets are explicit. Current
-limits are 256 KiB/message, 16 connections, one subscription/connection, and 50
+limits are 256 KiB/message, 16 connections, one summary subscription/connection (eight total observations), and 50
 fixture notifications. Browser queues are bounded. Observer delivery has one
 call in flight and a ten-second deadline; timeout/error drops the observer task.
 Connections expire after an hour and reconnect with revalidated authority.
@@ -880,8 +891,10 @@ the main shell's existing `/upload/:token` endpoint with no login cookies. The
 shell CSP permits that configured upload path only, in addition to same-origin
 connections. The upload credential is kept in memory and never saved in a route
 or browser storage. Leaving the page or losing the connection aborts the upload;
-mutations are never automatically replayed. Package status is polled while the
-installation page is open (every 1.5 seconds), including after reconnect.
+mutations are never automatically replayed. The installation page owns an `Installation` capability and status subscription.
+Rust currently polls the internal Meteor adapter every 1.5 seconds, delivering only
+changed typed results to the browser. Closing the subscription stops observation,
+not the durable package download. Reconnecting creates a fresh subscription.
 
 Update discovery reflects the server's existing app index, which may be disabled
 or out of date; the Rust shell does not independently refresh the external index.

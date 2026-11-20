@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { ShellService, ShellState } from './lib/shell';
-  import type { InstallState, InstallCatalog } from './lib/install';
+  import { installationError, type InstallState, type InstallCatalog, type InstallationView } from './lib/install';
   import { installRoute, appRoute, rememberRoute } from './lib/router';
   import Panel from './components/ui/Panel.svelte';
   import Button from './components/ui/Button.svelte';
   import AppIcon from './components/ui/AppIcon.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   let {service, model, packageId, url, navigate}: {service:ShellService;model:ShellState;packageId?:string;url:string;navigate:(path:string)=>void} = $props();
+  let installation = $state<InstallationView>();
   let pkg = $state<InstallState>();
   let catalog = $state<InstallCatalog>();
   let loading = $state(true);
@@ -21,27 +22,27 @@
   $effect(() => {
     if (model.status !== 'ready' || model.fixture) return;
     const current = ++generation;
-    let timer: ReturnType<typeof setTimeout>;
-    const load = async () => {
-      try {
-        const result = packageId ? await service.installation.state('status',packageId) : await service.installation.catalog();
-        if (!alive || current !== generation) return;
-        if (packageId) pkg = result as InstallState; else catalog = result as InstallCatalog;
-        loading = false;
-        if (packageId) timer = setTimeout(load,1500);
-      } catch (failure) { if (alive && current === generation) { error = String(failure); loading = false; } }
-    };
-    void load();
-    return () => { ++generation; clearTimeout(timer); };
+    if (packageId) {
+      const view=service.installation.open(packageId,url);
+      installation=view;
+      view.watch(value=>{if(alive && current===generation){pkg=value;loading=false;}},failure=>{
+        if(alive && current===generation){error=installationError(failure);loading=false;}
+      });
+      return ()=>{++generation;view.close();};
+    }
+    void service.installation.catalog().then(value=>{
+      if(alive && current===generation){catalog=value;loading=false;}
+    }).catch(failure=>{if(alive && current===generation){error=installationError(failure);loading=false;}});
+    return ()=>{++generation;};
   });
   onDestroy(() => { alive = false; lifetime.abort(); });
   async function act(operation: string) {
-    if (!packageId || busy) return;
+    if (!installation || busy) return;
     busy = true; error = '';
     try {
-      const result = await service.installation.state(operation,packageId,url);
+      const result = await installation.act(operation);
       if (alive) pkg = result;
-    } catch (failure) { if (alive) error = `Could not confirm the operation. It was not retried. Check the current status before trying again. ${String(failure)}`; }
+    } catch (failure) { if (alive) error = installationError(failure, true); }
     finally { if (alive) busy = false; }
   }
   async function upload(event: Event) {
@@ -52,7 +53,7 @@
     try {
       const id = await service.installation.upload(file,lifetime.signal,value => { if (alive) uploadPercent = value; });
       if (alive) navigate(installRoute(id));
-    } catch (failure) { if (alive) error = String(failure); }
+    } catch (failure) { if (alive) error = installationError(failure, true); }
     finally { if (alive) { busy = false; uploadPercent = undefined; } }
   }
   const marketUrl = $derived.by(() => {

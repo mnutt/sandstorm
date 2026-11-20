@@ -101,6 +101,30 @@ const until = async (predicate) => {
   }
 };
 
+test('list queries are independent, account-scoped, and reject arbitrary Mongo selectors', async () => {
+  const observed = [];
+  const f = await watchFixture({
+    snapshot: async (account, pages, query) => ({account, pages, query}),
+    observe: async (account, _changed, pages, query) => {
+      observed.push({account, pages, query});
+      return () => {};
+    },
+  });
+  const query = {search:'[draft].*',appId:'app-a',sort:'title',ownership:'owned'};
+  const [grains, notifications] = await Promise.all([
+    f.bridge.handle('watch', {token:f.token,after:'0'.repeat(64),pages:{grains:2},query,accountId:'bob'}),
+    f.bridge.handle('watch', {token:f.token,after:'0'.repeat(64),pages:{notifications:1}}),
+  ]);
+  assert.equal(grains.account, 'alice');
+  assert.deepEqual(grains.query, query);
+  assert.deepEqual(notifications.pages, {notifications:1});
+  assert.equal(notifications.query, undefined);
+  assert.equal(observed.length, 2);
+  for (const invalid of [{...query,search:{$ne:null}}, {...query,$where:'true'}, {...query,sort:'arbitrary'}]) {
+    await assert.rejects(f.bridge.handle('snapshot', {token:f.token,query:invalid}), {status:400});
+  }
+});
+
 test('watch wakes on legacy writes, coalesces bursts, avoids idle snapshot reads, and cleans up', async () => {
   const f = await watchFixture();
   const pending = f.bridge.handle('watch', { token: f.token, after: f.initial.version });

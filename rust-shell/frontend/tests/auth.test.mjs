@@ -39,9 +39,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const users = { alice: { pictureUrl:fixtureAvatar, name: 'Alice', hash: 'alice-login', expires: Date.now() + 3600000 },
     bob: { name: 'Bob', hash: 'bob-login', expires: Date.now() + 3600000 } };
   const rows = new Map();
-  const observers = new Set();
+  const observers = new Map();
   let observationStarts = 0;
-  const changed = () => { for (const notify of observers) notify(); };
+  const changed = () => { for (const notify of observers.keys()) notify(); };
   const add = (key, user, title) => { rows.set(key, { user, key, title, body: 'Shared notification',
     unread: true, ongoing: false, href: '', senderPictureUrl:fixtureAvatar, senderName: '<script>window.senderInjected = true</script>', timestamp: new Date().toISOString() }); changed(); };
   add('alice-real-id', 'alice', 'Alice notification');
@@ -58,6 +58,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const installId = 'a'.repeat(32);
   const installState = {packageId:installId,status:'missing',appId:'test-app',title:'Install test app',description:'A verified package',version:'2.0',iconSrc:'',fingerprint:'test-key',progress:0,installed:false,newerInstalled:false,olderGrains:2};
   const installCalls = [];
+  let denyInstall = true;
   const accountEmails = [{email:'alice@example.test',verified:true,primary:true},{email:'second@example.test',verified:true,primary:false}];
   const accountCredentials = [{id:'email-alice',service:'email',name:'alice@example.test',pictureUrl:fixtureAvatar,login:true}];
   const accountCalls = [];
@@ -86,6 +87,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       assert.equal(data.packageId,installId);
       await beforeWrite();
       if (operation === 'download') { installState.status = 'download'; setTimeout(() => { installState.status = 'ready'; },200); }
+      if (operation === 'confirm' && denyInstall) throw Object.assign(new Error('Your account needs an invitation before you can install apps. Ask the server administrator to grant you access.'),{status:403});
       if (operation === 'confirm') installState.installed = true;
       if (operation === 'upgrade') installState.olderGrains = 0;
       return {...installState};
@@ -159,14 +161,22 @@ test('authenticated notifications: handoff, shared writes, account switching and
       if (kind === 'referrals') return {kind,enabled:true,pending:[{name:'Pending person',pictureUrl:fixtureAvatar}],completed:[{name:'Completed person',pictureUrl:fixtureAvatar}],limited:false};
       return {kind};
     },
-    observe: async (_id, notify) => { ++observationStarts; observers.add(notify); return () => observers.delete(notify); },
-    snapshot: async (id, pages = {}) => {
+    observe: async (_id, notify, pages, query) => { ++observationStarts; observers.set(notify, {pages, query}); return () => observers.delete(notify); },
+    snapshot: async (id, pages = {}, query) => {
       if (paginated) return {entries:[{key:'paged-'+(pages.notifications || 0),title:pages.notifications ? laterTitle : 'First page',body:'',href:'',unread:false,ongoing:false,timestamp:''}],total:101,notificationPage:pages.notifications || 0,grainPage:pages.grains || 0,hasUnread:true};
       const entries = [...rows.values()].filter((row) => row.user === id).map(({ user, ...entry }) => entry);
-      return { hasUnread:entries.some(entry=>entry.unread), accountPictureUrl:profiles[id].pictureUrl || '', profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
+      const snapshot = { hasUnread:entries.some(entry=>entry.unread), accountPictureUrl:profiles[id].pictureUrl || '', profileVersion:profileVersion(id), entries, total: entries.length, grains: [{ key: `${id}-grain`, title: grainTitles[id] || `${users[id].name} grain`, ownerTitle: grainTitles[id] || (id === 'alice' ? 'Alice grain' : 'Owner title'),
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', appId: 'test-app', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
+      if (query) {
+        snapshot.grains = snapshot.grains.filter(grain =>
+          (!query.appId || grain.appId === query.appId) &&
+          (query.ownership === 'all' || grain.owned === (query.ownership === 'owned')) &&
+          `${grain.title} ${grain.appTitle}`.toLowerCase().includes(query.search.trim().toLowerCase()));
+        snapshot.grains.sort((a, b) => query.sort === 'title' ? a.title.localeCompare(b.title) : b.lastUsed.localeCompare(a.lastUsed));
+      }
+      return snapshot;
     },
     dismiss: async (id, key) => {
       if (rows.get(key)?.user !== id) throw Object.assign(new Error('Not your notification'), { status: 403 });
@@ -475,12 +485,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(installState.installed,false,'download does not install without confirmation');
     await page.screenshot({path:'/tmp/sandstorm-rust-ui-install.png',fullPage:true});
     await page.getByRole('button',{name:'Install app',exact:true}).click();
+    await expect(page.getByRole('alert')).toHaveText('Your account needs an invitation before you can install apps. Ask the server administrator to grant you access.');
+    assert.equal(installState.installed,false);
+    denyInstall = false;
+    await page.getByRole('button',{name:'Install app',exact:true}).click();
     await page.getByText('Installed for your account.',{exact:true}).waitFor();
     await page.getByRole('button',{name:'Upgrade 2 existing grains',exact:true}).click();
     await expect(page.getByRole('button',{name:'Upgrade 2 existing grains',exact:true})).toHaveCount(0);
     await page.reload();
     await page.getByText('Installed for your account.',{exact:true}).waitFor();
-    assert.equal(installCalls.filter(op=>op==='confirm').length,1);
+    assert.equal(installCalls.filter(op=>op==='confirm').length,2);
     assert.equal(installCalls.filter(op=>op==='upgrade').length,1);
     await page.getByRole('button',{name:'Back to app installation'}).click();
     await page.route('**/upload/test-token',route => route.fulfill({status:200,body:installId,headers:{'Access-Control-Allow-Origin':'*'}}));
@@ -1008,7 +1022,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
       'a shell reload must clear stale template credentials even without opening a grain');
     assert.equal((await context.cookies()).find((entry) => entry.name === cookie.name).value, cookie.value,
       'ordinary reload must preserve the linked session');
-    await expect.poll(() => observers.size).toBe(1);
+    await expect.poll(() => [...observers.values()]).toEqual(expect.arrayContaining([
+      {pages:{grains:0,notifications:0},query:undefined},
+      {pages:{notifications:0},query:undefined},
+    ]));
+    await expect.poll(() => [...observers.values()]).toHaveLength(2);
     const starts = observationStarts;
     await new Promise((resolve) => setTimeout(resolve, 6000));
     assert.equal(observationStarts, starts, 'idle watch must survive the ordinary five-second HTTP timeout');

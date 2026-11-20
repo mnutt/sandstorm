@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Grain } from './lib/model';
   import Pagination from './components/ui/Pagination.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import GrainIcon from './components/ui/GrainIcon.svelte';
@@ -8,10 +9,27 @@
   import Panel from './components/ui/Panel.svelte';
   import type { ShellState, ShellService } from './lib/shell';
   import { rememberRoute, grainRoute } from './lib/router';
-  let { model, service, navigate }: { model: ShellState; service: ShellService; navigate: (path: string) => void } = $props();
+  let { model: base, service, navigate, appId='' }: { model: ShellState; service: ShellService; navigate: (path: string) => void; appId?:string } = $props();
   let search = $state('');
   let sort = $state('recent');
   let ownership = $state('all');
+  const accountKey=$derived(base.accountKey);
+  const status=$derived(base.status);
+  const fixture=$derived(base.fixture);
+  let page=$state(0);
+  let rows=$state<Grain[]|null>(null);
+  let more=$state(false);
+  let pending=$state(false);
+  let queryError=$state('');
+  const model=$derived({...base,grains:rows ?? base.grains,grainPage:page,grainsLimited:rows===null?base.grainsLimited:more,paging:pending});
+  $effect(()=>{search;sort;ownership;appId;accountKey;page=0;});
+  $effect(()=>{
+    if(status!=='ready' || fixture){rows=null;return;}
+    const query={page,search,appId,sort:sort==='title'?'title' as const:'recent' as const,ownership:ownership==='owned'?'owned' as const:ownership==='shared'?'shared' as const:'all' as const};
+    let active=true;pending=true;queryError='';
+    const stop=service.watchGrains(query,(grains,limited)=>{if(active){rows=grains;more=limited;pending=false;}},()=>{if(active){pending=false;queryError='Could not update the grain list. Please reconnect.';}});
+    return ()=>{active=false;stop();};
+  });
   const visibleGrains = $derived(model.grains.filter((grain) =>
     (ownership === 'all' || grain.owned === (ownership === 'owned')) &&
     `${grain.title} ${grain.appTitle}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
@@ -39,6 +57,7 @@
     {:else if model.fixture}
       <p class="empty">Connect to an installed Sandstorm server to see real grains.</p>
     {:else}
+      {#if queryError}<p role="alert">{queryError}</p>{/if}
       <div class="grain-controls">
       <div class="search"><label class="sr-only" for="grain-search">Filter shown grains</label>
       <TextInput id="grain-search" type="search" bind:value={search} placeholder="Search by title or app" /></div>
@@ -67,7 +86,7 @@
         </table>
       </div>
       {/if}
-      <Pagination page={model.grainPage} more={model.grainsLimited} busy={model.paging} label="Grains" change={page => service.selectPage('grains',page)} />
+      <Pagination page={model.grainPage} more={model.grainsLimited} busy={model.paging} label="Grains" change={value => page=value} />
     {/if}
     {#if model.openingGrain}<p role="status">Opening grain…</p>{/if}
   </Panel>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Notification } from './lib/model';
   import Pagination from './components/ui/Pagination.svelte';
   import Avatar from './components/ui/Avatar.svelte';
   import NotificationDialog from './NotificationDialog.svelte';
@@ -7,11 +8,28 @@
   import type { ShellState, ShellService } from './lib/shell';
   import { rememberRoute, notificationDestination } from './lib/router';
   import { isPlainNavigation } from './lib/navigation';
-  let { model, service, navigate }: { model: ShellState; service: ShellService; navigate:(path:string)=>void } = $props();
+  let { model: base, service, navigate }: { model: ShellState; service: ShellService; navigate:(path:string)=>void } = $props();
+  const accountKey=$derived(base.accountKey);
+  const status=$derived(base.status);
+  const fixture=$derived(base.fixture);
+  let page=$state(0);
+  let entries=$state<Notification[]|null>(null);
+  let total=$state(0);
+  let pending=$state(false);
+  let queryError=$state('');
+  const model=$derived({...base,entries:entries ?? base.entries,total:entries===null?base.total:total,notificationPage:page,paging:pending});
+  $effect(()=>{accountKey;page=0;});
+  $effect(()=>{
+    if(status!=='ready' || fixture){entries=null;return;}
+    let active=true;pending=true;queryError='';
+    const stop=service.watchNotifications(page,(value,count)=>{if(active){entries=value;total=count;pending=false;}},()=>{if(active){pending=false;queryError='Could not update notifications. Please reconnect.';}});
+    return ()=>{active=false;stop();};
+  });
   let selected = $state<{key:string; title:string; account:string|null; trigger:HTMLElement}>();
   $effect(() => { if (selected && (model.accountKey !== selected.account || model.status !== 'ready')) selected = undefined; });
 </script>
   <Panel aria-labelledby="notifications-title">
+    {#if queryError}<p role="alert">{queryError}</p>{/if}
     <div class="heading"><h2 id="notifications-title">Notifications</h2><span class="status" role="status">{model.status}</span>
     <div class="actions">
       {#if model.status === 'signed-out'}
@@ -53,7 +71,7 @@
         {/each}
       </ul>
     {/if}
-    {#if model.status === 'ready'}<Pagination page={model.notificationPage} more={(model.notificationPage + 1) * 100 < model.total} busy={model.paging} label="Notifications" change={page => service.selectPage('notifications',page)} />{/if}
+    {#if model.status === 'ready'}<Pagination page={model.notificationPage} more={(model.notificationPage + 1) * 100 < model.total} busy={model.paging} label="Notifications" change={value => page=value} />{/if}
   </Panel>
 {#if selected}
   {#key selected.key}<NotificationDialog notificationKey={selected.key} title={selected.title} {service} returnFocus={selected.trigger} onclose={() => selected = undefined} />{/key}

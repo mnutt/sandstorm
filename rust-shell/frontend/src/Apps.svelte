@@ -133,7 +133,7 @@
       </form>
       {/if}
     {/if}
-    {#if appId && selectedApp}<div class="app-grains"><Grains model={appGrains} {service} {navigate} /></div>{/if}
+    {#if appId && selectedApp}<div class="app-grains"><Grains model={appGrains} {service} {navigate} {appId} /></div>{/if}
     <Pagination {page} more={limited} busy={loading} label="Apps" change={load} />
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
