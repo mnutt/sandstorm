@@ -154,7 +154,7 @@ impl grain_session::Server for Lease {
         let input: serde_json::Value = serde_json::from_str(input)
             .map_err(|_| capnp::Error::failed("Invalid Powerbox input".into()))?;
         let value = self.sharing_call("powerbox", json!({"request": request, "operation": operation,
-            "query": input["query"], "key": input["key"], "mode": input["mode"], "role": input["role"], "url": input["url"]})).await?;
+            "query": input["query"], "key": input["key"], "mode": input["mode"], "role": input["role"], "url": input["url"], "email": input["email"], "code": input["code"], "nestedRequest": input["nestedRequest"], "nestedOperation": input["nestedOperation"], "nestedInput": input["nestedInput"]})).await?;
         results.get().set_state(value.to_string());
         Ok(())
     }

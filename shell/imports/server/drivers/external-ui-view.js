@@ -111,7 +111,7 @@ function registerHttpApiFrontendRef(registry) {
       return newExternalHttpSession(value.url, value.auth, db, saveTemplate);
     },
 
-    validate(db, session, request) {
+    async validate(db, session, request) {
       check(request, {
         url: String,
         auth: Match.OneOf(
@@ -156,18 +156,21 @@ function registerHttpApiFrontendRef(registry) {
 
       if (request.auth.oauth) {
         // We did an OAuth handshake client-side.
-        const oauthResult = OAuth.retrieveCredential(request.auth.oauth.credentialToken,
+        const oauthResult = await OAuth.retrieveCredential(request.auth.oauth.credentialToken,
                                                      request.auth.oauth.credentialSecret);
 
         if (oauthResult instanceof Error) {
           throw oauthResult;
         }
 
+        if (!oauthResult || oauthResult.serviceName !== getOAuthServiceInfo(request.url)?.service) {
+          throw new Meteor.Error(403, "OAuth credential does not match this API service.");
+        }
         const serviceData = oauthResult.serviceData;
         if (serviceData.refreshToken) {
-          request.auth = { refresh: serviceData.refreshToken };
+          request.auth = { refresh: OAuth.openSecret(serviceData.refreshToken) };
         } else {
-          request.auth = { bearer: serviceData.accessToken };
+          request.auth = { bearer: OAuth.openSecret(serviceData.accessToken) };
         }
 
         // TODO(security): We could maybe add a MembraneRequirement that this user account

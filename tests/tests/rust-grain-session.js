@@ -195,6 +195,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
         const candidate = state.candidates.find(row => row.hostedObject);
         if (!candidate) throw new Error('Real provider missing from native query');
         const selected = await Meteor.callAsync('testRustNativePowerbox','select',window.nativePowerboxGrain,{key:candidate.key,mode:'hosted'});
+        await Meteor.callAsync('testRustNativePowerbox','checkNested',window.nativePowerboxGrain);
         const frame = document.createElement('iframe'); frame.id = 'native-powerbox-provider'; frame.src = selected.url;
         frame.style = 'position:fixed;inset:0;width:100%;height:100%;z-index:100000;background:white';
         document.body.appendChild(frame);

@@ -107,6 +107,11 @@ test('authenticated notifications: handoff, shared writes, account switching and
       powerbox: {
         open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
         select: async (request, input) => {
+          if (input.mode === 'nested') {
+            if (input.nestedOperation === 'begin') return {status:'nested',view:{status:'choices',candidates:[{key:'child',title:'Nested grain',uiView:true,roles:[]}],limited:false,legacy:false}};
+            if (input.nestedOperation === 'select') return {status:'nested',view:{status:'complete',token:'native-nested-token'}};
+            return {status:'nested',view:{}};
+          }
           if (input.mode === 'webkey') { assert.equal(input.url,'https://api.example.test/#source-secret'); return {status:'complete',token:'derived-webkey-token'}; }
           if (input.key === 'view') return {status:'complete',token:'native-view-token',descriptor:'view-descriptor'};
           assert.equal(input.key,'provider'); providerComplete = false; nativeProviders.add(request);
@@ -857,6 +862,18 @@ test('authenticated notifications: handoff, shared writes, account switching and
       else {
         await nativeDialog.getByRole('button',{name:'Choose from app',exact:true}).click();
         await nativeDialog.frameLocator('iframe').getByRole('button',{name:'Select test object'}).waitFor();
+        if (mode === 'provider') {
+          const providerFrame = nativeDialog.frameLocator('iframe');
+          await providerFrame.locator('body').evaluate(() => {
+            window.nestedReplies=[];
+            window.addEventListener('message',event=>window.nestedReplies.push(event.data));
+            parent.postMessage({powerboxRequest:{rpcId:'nested-request',query:[]}},'*');
+          });
+          const childDialog = page.getByRole('dialog',{name:'Connect an app',exact:true}).last();
+          await childDialog.getByRole('button',{name:'Nested grain',exact:true}).click();
+          await childDialog.getByRole('button',{name:'Connect grain',exact:true}).click();
+          await expect.poll(() => providerFrame.locator('body').evaluate(() => window.nestedReplies.some(reply=>reply.rpcId==='nested-request' && reply.token==='native-nested-token'))).toBe(true);
+        }
         if (mode === 'cancel-provider') await nativeDialog.getByRole('button',{name:'Cancel request',exact:true}).click();
         else {
           await page.screenshot({path:'/tmp/sandstorm-rust-ui-powerbox.png'});

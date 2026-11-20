@@ -1,3 +1,6 @@
+import { githubEnabled, startGithub, finishGithub, cancelGithub } from "/imports/server/rust-shell-github";
+import { rustAccount } from "/imports/server/rust-shell-account";
+import { Accounts } from "meteor/accounts-base";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
 import Crypto from "crypto";
 import { Meteor } from "meteor/meteor";
@@ -29,8 +32,9 @@ export function rustPowerbox(db) {
     const row = await db.collections.sessions.findOneAsync({_id:request.provider.sessionId, userId:request.parent.accountId});
     return row?.powerboxView?.fulfill;
   }
-  return {
+  const api = {
     async open(parent, input, beforeWrite) {
+      if ((parent.depth || 0) > 3) fail("Too many nested connection requests.");
       check(input.query, [String]);
       if (input.query.length > 32 || input.query.some(q => q.length > 8192) || JSON.stringify(input.query).length > 60000) fail("Powerbox query too large.");
       await validate(parent);
@@ -51,6 +55,10 @@ export function rustPowerbox(db) {
             const roles = (grain.cachedViewInfo?.roles || []).slice(0, 32).map((role, index) => ({key:String(index),title:text(role.title)}));
             candidate = {title:text(titles.title),iconSrc:titles.iconSrc,uiView:!!option.uiView,hostedObject:!!option.hostedObject,roles};
           } catch { continue; }
+        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && option.oauthServiceInfo.service === 'github' && githubEnabled()) {
+          candidate = {title:'Connect to GitHub',github:true,detail:text(option.oauthScopes.map(scope=>scope.name).join(', '))};
+        } else if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard" && Accounts.loginServices.email.isEnabled()) {
+          candidate = {title:"Verify a new email address",emailInput:true};
         } else if (option.cardTemplate === "httpArbitraryPowerboxCard") {
           candidate = {title:"Connect to a URL",urlInput:true};
         } else if (option.frontendRef && !option.configureTemplate) {
@@ -68,6 +76,7 @@ export function rustPowerbox(db) {
       return {handle:request,view:{status:"choices",candidates,legacy,limited}};
     },
     async select(request, input, beforeWrite) {
+      if (input.mode === 'nested') return {status:'nested',view:await api.nested(request,input,beforeWrite)};
       if (request.provider || request.result) fail("This request already has a selection.");
       if (input.mode === "webkey") {
         await validate(request.parent);
@@ -79,6 +88,30 @@ export function rustPowerbox(db) {
       if (!option) fail("Unknown Powerbox option.");
       await validate(request.parent);
       await beforeWrite();
+      let githubCredential;
+      if (option.cardTemplate === 'httpOAuthPowerboxCard') {
+        if (option.oauthServiceInfo.service !== 'github') fail('Unsupported OAuth provider.');
+        if (input.mode === 'githubStart') {
+          if (request.github) fail('Authorization is already in progress.');
+          const binding = 'powerbox:'+request.parent.sessionId;
+          const oauth = await startGithub(binding,option.oauthScopes.map(scope=>scope.name));
+          request.github = {...oauth,binding,key:input.key};
+          return {status:'oauth',...oauth};
+        }
+        if (input.mode !== 'githubFinish' || request.github?.key !== input.key) fail('Start GitHub authorization first.');
+        githubCredential = await finishGithub(request.github.binding,request.github.request);
+        if (!githubCredential) return {status:'waiting'};
+      }
+      if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
+        if (input.mode === "sendEmail") {
+          if (request.email || typeof input.email !== "string" || input.email.length > 320 || !input.email.includes("@")) fail("Invalid verification request.");
+          request.email = {key:input.key,address:input.email};
+          await rustAccount(request.parent.accountId,"sendEmail",{email:input.email,allowLogin:false},beforeWrite);
+          return {status:"email",address:input.email};
+        }
+        if (input.mode !== "verifyEmail" || request.email?.key !== input.key || typeof input.code !== "string" || !input.code || input.code.length > 320) fail("Send a verification code first.");
+        await rustAccount(request.parent.accountId,"verifyEmail",{email:request.email.address,code:input.code,allowLogin:false},beforeWrite);
+      }
       if (option.grainId) {
         // Revalidate the provider separately from the requesting grain.
         const origin = Meteor.settings.public.rustShellOrigin;
@@ -104,7 +137,10 @@ export function rustPowerbox(db) {
           option.grainId, "selected via Powerbox", role, request.parent.grainId);
         request.result = {token:result.sturdyRef,descriptor:result.descriptor};
       } else {
-        let ref = option.frontendRef;
+        let ref = githubCredential ? {http:{url:option.httpUrl,auth:{oauth:githubCredential}}} : option.frontendRef;
+        if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
+          ref = {verifiedEmail:{...option.frontendRef.verifiedEmail,address:request.email.address}};
+        }
         if (option.cardTemplate === "httpArbitraryPowerboxCard") {
           if (typeof input.url !== "string" || input.url.length > 2048) fail("Invalid URL.");
           const url = new URL(input.url);
@@ -117,6 +153,47 @@ export function rustPowerbox(db) {
       }
       return {status:"complete",...request.result};
     },
+    async nested(request,input,beforeWrite) {
+      if (!request.provider || request.closed || typeof input.nestedRequest !== 'string' || !/^[a-f0-9]{64}$/.test(input.nestedRequest) ||
+          !['begin','select','poll','cancel'].includes(input.nestedOperation)) fail('Invalid provider request.');
+      if (input.nestedOperation === 'cancel') {
+        if (request.nested?.id === input.nestedRequest) {
+          const child = request.nested; request.nested = null;
+          if (child.handle) await api.close(child.handle);
+        }
+        return {};
+      }
+      if (!input.nestedInput || typeof input.nestedInput !== 'object' || Array.isArray(input.nestedInput)) fail('Invalid provider input.');
+      let child = request.nested;
+      if (input.nestedOperation === 'begin') {
+        if (child) fail('A provider connection request is already open.');
+        child = {id:input.nestedRequest,handle:null}; request.nested = child;
+      }
+      if (!child || child.id !== input.nestedRequest) fail('Provider request ended.');
+      const checkLive = async () => {
+        await beforeWrite();
+        if (request.closed || request.nested !== child) fail('Provider request ended.');
+        await keepRustGrainSession(db,request.provider);
+      };
+      try {
+        await checkLive();
+        let result;
+        if (input.nestedOperation === 'begin') {
+          const opened = await api.open({...request.provider,depth:(request.parent.depth || 0)+1},input.nestedInput,checkLive);
+          child.handle=opened.handle; result=opened.view;
+        } else {
+          if (!child.handle || child.handle.delivered) fail('Provider request ended.');
+          result=await api[input.nestedOperation](child.handle,input.nestedInput,checkLive);
+        }
+        await checkLive();
+        if (result.status === 'complete') child.handle.delivered=true;
+        return result;
+      } catch (error) {
+        if (request.nested === child) request.nested=null;
+        if (child.handle) await api.close(child.handle);
+        throw error;
+      }
+    },
     async poll(request) {
       await validate(request.parent);
       if (!request.provider) fail("No provider is open.");
@@ -125,6 +202,10 @@ export function rustPowerbox(db) {
       return request.result ? {status:"complete",...request.result} : {status:"waiting"};
     },
     async close(request) {
+      request.closed=true;
+      const child=request.nested; request.nested=null;
+      if (child?.handle) await api.close(child.handle);
+      if (request.github) await cancelGithub(request.github.binding,request.github.request);
       // Undelivered provider results must not survive cancellation. The requesting
       // session owns delivered tokens, which the existing gateway redeems/cleans up.
       if (request.provider) await db.collections.sessions.updateAsync({_id:request.provider.sessionId}, {$set:{rustPowerboxClosing:true}});
@@ -133,4 +214,5 @@ export function rustPowerbox(db) {
       if (!request.delivered) await removeResult(result);
     },
   };
+  return api;
 }

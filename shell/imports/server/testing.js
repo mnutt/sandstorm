@@ -1679,6 +1679,28 @@ if(isTesting) {
         rustNativePowerboxTests.delete(key);
         return true;
       }
+      if (action === 'checkNested') {
+        const child=Crypto.randomBytes(32).toString('hex');
+        const Powerbox=Capnp.importSystem('sandstorm/powerbox.capnp');
+        const UiView=Capnp.importSystem('sandstorm/grain.capnp').UiView;
+        const query=[Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:UiView.typeId}]}).toString('base64')];
+        const call = (nestedOperation,nestedInput={}) => rustShellBridge.handle('powerbox',{token:record.token,scope:record.scope,lease:record.lease,request:record.request,operation:'select',mode:'nested',nestedRequest:child,nestedOperation,nestedInput});
+        let tokenId;
+        try {
+          const choices=await call('begin',{query});
+          if (choices.status !== 'nested') throw new Error('Nested result leaked into parent lifecycle');
+          const candidate=choices.view.candidates.find(item=>item.uiView);
+          if (!candidate) throw new Error('Nested provider had no UiView options');
+          const result=await call('select',{key:candidate.key,mode:'view',role:'all'});
+          tokenId=Crypto.createHash('sha256').update(result.view.token).digest('base64');
+          const token=await globalDb.collections.apiTokens.findOneAsync(tokenId);
+          if (token?.owner?.clientPowerboxRequest?.sessionId !== record.providerId) throw new Error('Nested token targeted the outer requesting session');
+          await call('cancel');
+          const parent=await rustShellBridge.handle('powerbox',{token:record.token,scope:record.scope,lease:record.lease,request:record.request,operation:'poll'});
+          if (parent.status !== 'waiting') throw new Error('Nested completion completed the parent request');
+          return true;
+        } finally { await call('cancel'); if (tokenId) await globalDb.removeApiTokens({_id:tokenId}); }
+      }
       if (action === "checkBuiltins") {
         const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
         const UiView = Capnp.importSystem("sandstorm/grain.capnp").UiView;

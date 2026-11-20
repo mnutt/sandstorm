@@ -1,4 +1,7 @@
 <script lang="ts">
+  import NestedPowerbox from './PowerboxDialog.svelte';
+  import { record, powerboxRequest, rpcId } from './lib/protocol';
+  import { authorizeOAuth } from './lib/oauth';
   import { onMount } from 'svelte';
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
@@ -9,7 +12,7 @@
   import type { PowerboxRequest } from './lib/protocol';
   import type { PowerboxActions, PowerboxCandidate, PowerboxState } from './lib/powerbox-native';
   let { request, actions, title, finish, legacy }: {request:PowerboxRequest; actions:PowerboxActions; title:string;
-    finish:(result:Record<string,unknown>)=>void; legacy:()=>void} = $props();
+    finish:(result:Record<string,unknown>)=>void; legacy?:()=>void} = $props();
   let open = $state(true);
   let busy = $state(true);
   let error = $state('');
@@ -17,13 +20,45 @@
   let selected = $state<PowerboxCandidate>();
   let provider = $state<Extract<PowerboxState,{status:'provider'}>>();
   let loaded = $state(false);
+  let providerFrame = $state<HTMLIFrameElement>();
+  let nested = $state<PowerboxRequest>();
+  let polling: Promise<void> = Promise.resolve();
+  const nestedActions: PowerboxActions = {
+    async call(request,operation,input={}) {
+      await polling;
+      const result = await actions.call(id,'select',{mode:'nested',nestedRequest:request,nestedOperation:operation,nestedInput:input});
+      if (result.status !== 'nested') throw new Error('Invalid provider response.');
+      return result.view;
+    },
+  };
+  function providerMessage(event:MessageEvent) {
+    if (!provider || event.origin !== provider.origin || event.source !== providerFrame?.contentWindow) return;
+    const data=record(event.data);
+    const call=record(data?.powerboxRequest);
+    if (!call || !rpcId(call.rpcId)) return;
+    const request=powerboxRequest(call);
+    if (!request || nested) {
+      providerFrame?.contentWindow?.postMessage({rpcId:call.rpcId,error:'Invalid or concurrent connection request.'},provider.origin);
+      return;
+    }
+    clearTimeout(pollTimer); nested=request;
+  }
+  function finishNested(result:Record<string,unknown>) {
+    nested=undefined;
+    if (provider) providerFrame?.contentWindow?.postMessage(result,provider.origin);
+    pollTimer=setTimeout(poll,1000);
+  }
   let search = $state('');
   let pasting = $state(false);
   let webkey = $state('');
   let role = $state('all');
   let url = $state('');
+  let email = $state('');
+  let code = $state('');
+  let verifyingEmail = $state(false);
   let limited = $state(false);
   let hasLegacy = $state(false);
+  const lifetime = new AbortController();
   let alive = true;
   let completed = false;
   let pollTimer: ReturnType<typeof setTimeout>;
@@ -47,12 +82,15 @@
       if (!['http:','https:'].includes(target.protocol) || target.origin !== result.origin || target.username || target.password) throw new Error('Invalid provider origin.');
       provider = result;
       pollTimer = setTimeout(poll,1000);
+    } else if (result.status === 'email') {
+      email = result.address; verifyingEmail = true;
     } else if (result.status === 'choices') {
       choices = result.candidates; limited = result.limited; hasLegacy = result.legacy;
     } else if (result.status === 'waiting') pollTimer = setTimeout(poll,1000);
   }
-  async function poll() {
-    if (!alive || completed) return;
+  function poll() { polling=pollOnce(); }
+  async function pollOnce() {
+    if (!alive || completed || nested) return;
     try { await accept(await actions.call(id,'poll')); }
     catch (e) { if (alive) { provider = undefined; error = String(e); } }
   }
@@ -64,7 +102,7 @@
     })();
     expires = setTimeout(() => done({canceled:true}),300000);
     return () => {
-      alive = false; webkey = '';
+      alive = false; lifetime.abort(); webkey = ''; code = '';
       clearTimeout(pollTimer); clearTimeout(expires);
       void actions.call(id,'cancel').catch(() => {});
     };
@@ -79,14 +117,34 @@
     catch (e) { if (alive) error = `Could not connect using that link. Cancel and request it again. ${String(e)}`; }
     finally { if (alive) busy = false; }
   }
+  async function github() {
+    if (!selected || busy) return;
+    const key = selected.key;
+    busy=true;
+    try {
+      const result = await authorizeOAuth(async () => {
+        const result = await actions.call(id,'select',{key,mode:'githubStart'});
+        if (result.status !== 'oauth') throw new Error('Could not start GitHub authorization.');
+        return result;
+      }, async () => {
+        const result = await actions.call(id,'select',{key,mode:'githubFinish'});
+        return result.status === 'waiting' ? null : result;
+      }, () => actions.call(id,'cancel'), lifetime.signal);
+      await accept(result);
+    } catch (failure) { if (alive) error=String(failure); }
+    finally { if (alive) busy=false; }
+  }
   async function connect(mode = 'ref') {
     if (!selected || busy || error) return;
     busy = true;
-    try { await accept(await actions.call(id,'select',{key:selected.key,mode,role,url})); }
+    const submittedCode = code; code = '';
+    try { await accept(await actions.call(id,'select',{key:selected.key,mode,role,url,email,code:submittedCode})); }
     catch (e) { if (alive) error = `Could not complete the connection. Cancel and request it again. ${String(e)}`; }
     finally { if (alive) busy = false; }
   }
 </script>
+
+<svelte:window onmessage={providerMessage} />
 
 <Modal bind:open title="Connect an app" description={title + ' is requesting access.'} {returnFocus} wide>
   <div class="powerbox">
@@ -94,7 +152,7 @@
     {#if provider}
       <p class="provider-title">Choose what to share from <strong>{provider.title}</strong>.</p>
       <div class="provider">
-        <iframe title={'Choose from ' + provider.title} src={provider.url} referrerpolicy="no-referrer" onload={() => { loaded = true; }}></iframe>
+        <iframe bind:this={providerFrame} title={'Choose from ' + provider.title} src={provider.url} referrerpolicy="no-referrer" onload={() => { loaded = true; }}></iframe>
         {#if !loaded}<div class="loading"><LoadingStatus label="Loading provider…" /></div>{/if}
       </div>
     {:else if busy}<LoadingStatus label="Loading connection options…" />
@@ -113,13 +171,20 @@
         </NativeSelect></label>
         <p class="hint">This app will receive access to the selected grain. It cannot receive permissions you do not have.</p>
       {/if}
+      {#if selected.emailInput}
+        {#if verifyingEmail}<label>Verification code for {email}<TextInput bind:value={code} autocomplete="one-time-code" maxlength={320} /></label>
+        {:else}<label>Email address<TextInput type="email" bind:value={email} maxlength={320} /></label>{/if}
+        <p class="hint">Verify an email address to share it with this app. This does not enable email login.</p>
+      {/if}
       {#if selected.urlInput}<label>URL<TextInput type="url" bind:value={url} placeholder="https://example.com/" /></label>{/if}
       {#if !selected.uiView && !selected.hostedObject}<p class="hint">Allow this app to use {selected.title}?</p>{/if}
       <div class="actions">
         {#if selected.uiView}<Button disabled={!!error} onclick={() => connect('view')}>Connect grain</Button>{/if}
         {#if selected.hostedObject}<Button disabled={!!error} onclick={() => connect('hosted')}>Choose from app</Button>{/if}
-        {#if !selected.uiView && !selected.hostedObject}<Button disabled={!!error || (selected.urlInput && !url.trim())} onclick={() => connect()}>Allow connection</Button>{/if}
-        <Button variant="secondary" disabled={!!error} onclick={() => { selected = undefined; }}>Back</Button>
+        {#if selected.github}<Button disabled={!!error} onclick={github}>Authorize GitHub</Button>{/if}
+        {#if selected.emailInput}<Button disabled={!!error || (verifyingEmail ? !code.trim() : !email.includes('@'))} onclick={() => connect(verifyingEmail ? 'verifyEmail' : 'sendEmail')}>{verifyingEmail ? 'Verify and connect' : 'Send verification code'}</Button>{/if}
+        {#if !selected.uiView && !selected.hostedObject && !selected.emailInput && !selected.github}<Button disabled={!!error || (selected.urlInput && !url.trim())} onclick={() => connect()}>Allow connection</Button>{/if}
+        <Button variant="secondary" disabled={!!error || verifyingEmail} onclick={() => { selected = undefined; }}>Back</Button>
       </div>
     {:else if !error}
       <TextInput aria-label="Search connection options" bind:value={search} placeholder="Search apps and capabilities" />
@@ -135,11 +200,12 @@
       {#if hasLegacy}<p class="hint">Some account authorization options are available in the main shell.</p>{/if}
     {/if}
     <div class="footer">
-      <Button variant="secondary" onclick={() => { completed = true; legacy(); }}>More options in main shell</Button>
+      {#if legacy}<Button variant="secondary" onclick={() => { completed = true; legacy?.(); }}>More options in main shell</Button>{/if}
       <Button variant="secondary" onclick={() => done({canceled:true})}>Cancel request</Button>
     </div>
   </div>
 </Modal>
+{#if nested && provider}<NestedPowerbox request={nested} actions={nestedActions} title={provider.title} finish={finishNested} />{/if}
 
 <style>
   .powerbox { display: grid; gap: var(--ss-space-3); }
