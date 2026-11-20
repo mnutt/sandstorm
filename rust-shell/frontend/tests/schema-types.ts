@@ -42,18 +42,18 @@ export type NoticeDismissPayload = Assert<Equal<NotificationHandle_Dismiss$Resul
 export type NoticeReadPayload = Assert<Equal<NotificationHandle_MarkRead$Results['result']['value'],Empty>>;
 export type AllNoticesReadPayload = Assert<Equal<Shell_MarkAllRead$Results['result']['value'],Empty>>;
 
-import type { Shell_CreateGrain$Results, GrainSession_Rename$Results, CreatedGrain, GrainTitle } from '../src/generated/shell';
-export type CreatedGrainPayload = Assert<Equal<Shell_CreateGrain$Results['result']['value'],CreatedGrain>>;
+import type { AppActionHandle_Create$Results, GrainSession_Rename$Results, CreatedGrain, GrainTitle } from '../src/generated/shell';
+export type CreatedGrainPayload = Assert<Equal<AppActionHandle_Create$Results['result']['value'],CreatedGrain>>;
 export type GrainTitlePayload = Assert<Equal<GrainSession_Rename$Results['result']['value'],GrainTitle>>;
 
-import type { Shell_OpenGrain$Results, OpenedGrain } from '../src/generated/shell';
-export type OpenedGrainPayload = Assert<Equal<Shell_OpenGrain$Results['result']['value'],OpenedGrain>>;
+import type { ViewReference_Open$Results, OpenedGrain } from '../src/generated/shell';
+export type OpenedGrainPayload = Assert<Equal<ViewReference_Open$Results['result']['value'],OpenedGrain>>;
 
 import type { Shell_ListApps$Results, AppPage, SharedShell_Inspect$Results, SharedInfo, SharedShell_Open$Results, OpenedSharedGrain } from '../src/generated/shell';
 export type AppPagePayload = Assert<Equal<Shell_ListApps$Results['result']['value'],AppPage>>;
 export type SharedInfoPayload = Assert<Equal<SharedShell_Inspect$Results['result']['value'],SharedInfo>>;
 export type SharedOpenPayload = Assert<Equal<SharedShell_Open$Results['result']['value'],OpenedSharedGrain>>;
 
-import type { GrainObserver_Replace$Params, GrainPage, NotificationObserver_Replace$Params, NotificationPage } from '../src/generated/shell';
-export type GrainPagePayload = Assert<Equal<GrainObserver_Replace$Params['result']['value'],GrainPage>>;
-export type NotificationPagePayload = Assert<Equal<NotificationObserver_Replace$Params['result']['value'],NotificationPage>>;
+import type { GrainObserver_Update$Params, GrainPage, NotificationObserver_Update$Params, NotificationPage } from '../src/generated/shell';
+export type GrainPagePayload = Assert<Equal<GrainObserver_Update$Params['result']['value'],GrainPage>>;
+export type NotificationPagePayload = Assert<Equal<NotificationObserver_Update$Params['result']['value'],NotificationPage>>;

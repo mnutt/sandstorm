@@ -1,3 +1,4 @@
+import { ListCache } from './list-delta';
 import {
   GrainObserver, NotificationObserver, GrainSort, GrainOwnership,
   type Subscription$Client,
@@ -57,15 +58,12 @@ export function watchGrains(
     stopped = true;
     failed(new Error(applicationErrorMessage(error, 'Could not update the grain list. Please reconnect.')));
   };
-  const observer = new GrainObserver.Server({replace: async params => {
+  const cache = new ListCache<Grain>(row => row.key);
+  const observer = new GrainObserver.Server({update: async params => {
     if (stopped) return;
     try {
       const page = unwrap(params.result);
-      const grains = [...page.grains].map(grain => ({
-        key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
-        href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed,
-        appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
-      }));
+      const grains = cache.apply(page.delta, [...page.upserts].map(grainRow));
       changed(grains, page.hasMore);
     } catch (error) { fail(error); }
   }}).client();
@@ -94,16 +92,12 @@ export function watchNotifications(
     stopped = true;
     failed(new Error(applicationErrorMessage(error, 'Could not update notifications. Please reconnect.')));
   };
-  const observer = new NotificationObserver.Server({replace: async params => {
+  const cache = new ListCache<Notification>(row => row.id);
+  const observer = new NotificationObserver.Server({update: async params => {
     if (stopped) return;
     try {
       const page = unwrap(params.result);
-      const entries = [...page.entries].map(entry => ({
-        id: entry.key, title: entry.title, body: entry.body, href: entry.href,
-        nativePath: entry.nativePath, nativeAction: entry.nativeAction,
-        unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp,
-        senderName: entry.senderName, senderPictureUrl: entry.senderPictureUrl,
-      }));
+      const entries = cache.apply(page.delta, [...page.upserts].map(notificationRow));
       changed(entries, page.total);
     } catch (error) { fail(error); }
   }}).client();
@@ -114,3 +108,16 @@ export function watchNotifications(
   const stop = observation(connection, request.promise(), () => observer.client.close(), fail);
   return () => { stopped = true; stop(); };
 }
+
+export const grainRow = (grain: import('../generated/shell').Grain): Grain => ({
+  key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
+  href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed,
+  appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
+});
+
+export const notificationRow = (entry: import('../generated/shell').Notification): Notification => ({
+  id: entry.key, title: entry.title, body: entry.body, href: entry.href,
+  nativePath: entry.nativePath, nativeAction: entry.nativeAction,
+  unread: entry.unread, ongoing: entry.ongoing, timestamp: entry.timestamp,
+  senderName: entry.senderName, senderPictureUrl: entry.senderPictureUrl,
+});

@@ -10,7 +10,9 @@ export async function open() {
   const connection = new Conn(new WebSocketTransport(socket, (error) => connection.shutdown(error)));
   connection.onError = () => {};
   conn = connection;
-  session = unwrap((await conn.bootstrap(Shell).openGrain((params) => { params.grainId = 'alice-grain'; }).promise()).result).session;
+  const view = conn.bootstrap(Shell).grainView(p => {p.grainId='alice-grain';}).getView();
+  try { session = unwrap((await view.open().promise()).result).session; }
+  finally { view.client.close(); }
 }
 export function release() { session?.client.close(); session = undefined; }
 export function disconnect() { conn?.shutdown(); conn = undefined; session = undefined; }

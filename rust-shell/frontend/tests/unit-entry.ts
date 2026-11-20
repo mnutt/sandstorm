@@ -22,3 +22,5 @@ export * from '../src/lib/template-options';
 export { PowerboxRequests } from '../src/lib/powerbox-client';
 
 export { watchGrains } from '../src/lib/queries';
+
+export { ListCache } from '../src/lib/list-delta';

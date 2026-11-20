@@ -355,7 +355,7 @@ quota, and package checks retain their existing owner. The Rust bridge rechecks
 the linked login and request connection immediately before inserting the grain.
 It admits one in-flight creation per account to prevent overlapping writes.
 
-`Shell.createGrain` returns `Result(CreatedGrain)` and `GrainSession.rename`
+`Shell.action(key).create(title)` returns `Result(CreatedGrain)` and `GrainSession.rename`
 returns `Result(GrainTitle)`. Policy denials carry typed failures and readable
 messages. A rejected creation is retained as a distinct account-scoped outcome;
 dismissing it allows an explicit new attempt without an unknown-outcome warning.
@@ -390,7 +390,7 @@ The initialization URL goes only into the iframe and is not persisted in shell
 history or storage. The shell CSP permits HTTPS frames; only Meteor's authorized
 session response supplies the frame URL.
 
-`openGrain()` returns `Result(OpenedGrain)`: a successful value contains both the
+`Shell.grainView(grainId).open()` returns `Result(OpenedGrain)`: a successful value contains both the
 view and its `GrainSession` capability. Expected access denials carry typed
 failures and no capability. The UI displays their application message and hides
 transport exception details. Late successes release their session; late failures
@@ -641,9 +641,9 @@ enabled; the Rust frontend's development-tool advisory below is separate.
   subscription capability. Its first full snapshot marks the UI ready.
 - Adding/dismissing test notifications changes only this connection's memory.
   Each connection starts with one welcome notification. Other tabs are isolated.
-- Updates are ordered, revisioned **full replacement snapshots**. A slow callback
-  gets the latest state after acknowledgment; intermediate revisions can coalesce.
-  This is not a delta stream or durable event log.
+- Updates carry ordered, revisioned list deltas plus current scalar metadata. A slow
+  callback gets changes from its last acknowledged state to the latest projection;
+  intermediate source changes can coalesce. This is not a durable event log.
 - The typed frontend service owns transport, handles, retries and state decoding.
   Components receive plain values. Disconnect clears old state; reconnect uses
   exponential backoff and a fresh authorized snapshot (or fixture). Mutations are never automatically replayed.
@@ -1017,3 +1017,39 @@ number of owned and shared grains, with alphabetical ties. Multiple shared links
 to the same grain count once; self-shares, trashed grains and suspended grains do
 not add to the count. **All apps** has its own search field and starts with the
 **Install / from App Market** tile, including when no apps are installed.
+
+### Resource references and incremental lists
+
+Installed action handles bind an account and action selector; `create(title)`
+revalidates the installed action and permissions for each call. Obtaining a handle
+has no side effects. Creation remains a durable operation with a typed result and
+is never automatically replayed.
+
+`ViewReference` is separate from `GrainSession`: obtaining a reference opens no
+iframe, and every `open()` creates an independent session lease. Closing one
+session does not invalidate the reference or other sessions. The current factory
+resolves root grain views. Future sources can return the same interface for
+non-root views without requiring a grain ID in the open operation; non-root
+backend support and multiple tabs for one grain are not implemented here.
+Metadata lists contain no capabilities or session credentials. Public shared-link
+viewing retains its separate bootstrap and identity-choice boundary.
+
+Grain and notification observers, including the shell summary, deliver changed
+rows with removed keys and complete ordered page membership. Each subscription
+starts with a reset at revision 1 and increments its own revision after each
+acknowledged callback. Page boundaries, totals and query filters retain their
+existing semantics. Reordering does not retransmit unchanged row data. The client
+validates updates before committing its cache and starts a new cache on reconnect
+or query changes. Typed query failures, explicit cancellation, and terminal
+subscription failure reporting remain in place. The internal Meteor bridge still
+projects full pages; this change reduces browser RPC traffic, not bridge traffic.
+Streaming HTTP package and image uploads are unchanged.
+
+Validation for this revision: the full Rust-shell suite passed 18 Rust and 73
+frontend/browser tests; the subsequent focused run passed all 32 tests including
+additional action-handle cleanup and reusable-view/cross-account regressions.
+Svelte/TypeScript checks passed, `make fast` succeeded, and the isolated packaged
+server passed 100 grain/session assertions and 18 authentication/query assertions.
+Deploy the updated bundle and reload the frontend together; there is no wire
+compatibility layer for the removed root creation/opening methods or full-list
+observer payloads.

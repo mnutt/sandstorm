@@ -1,4 +1,5 @@
 import type { ShellConnection } from './connection';
+import type { AppActionHandle$Client } from '../generated/shell';
 import type { AppAction } from './model';
 import { ApplicationError, unwrap, applicationErrorMessage } from './results';
 
@@ -63,9 +64,10 @@ export class AppService {
     const attempt = Symbol();
     this.attempts.set(account, attempt);
     this.set(account, { status: 'pending' });
+    let action: AppActionHandle$Client | undefined;
     try {
-      const response = await this.connection.run(this.connection.shell.createGrain(params => {
-        params.actionId = actionId;
+      action = this.connection.shell.action(params => { params.key = actionId; }).getAction();
+      const response = await this.connection.run(action.create(params => {
         params.title = title;
       }).promise(), 'Create grain');
       const result = unwrap(response.result);
@@ -78,6 +80,6 @@ export class AppService {
         error instanceof ApplicationError ? {status:'rejected',error:error.message}
           : {status:'unknown',error:'Could not confirm grain creation. The request was not retried.'});
       throw error;
-    }
+    } finally { action?.client.close(); }
   }
 }

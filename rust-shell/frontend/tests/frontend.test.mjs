@@ -8,10 +8,13 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
+const emptyDelta = () => ({revision:1n,reset:true,removed:[],order:[]});
+const actionFactory = create => ({action: () => ({getAction: () => ({create, client:{close(){}}})})});
+const viewFactory = open => ({grainView: fill => ({getView: () => ({open: () => open(fill), client:{close(){}}})})});
 const profileResult = value => valueResult({...value,pronoun:ProfilePronoun[value.pronoun.toUpperCase()],pictureUrl:value.pictureUrl || '',version:value.version || ''});
 const deferred = () => {
   let resolve, reject;
@@ -59,7 +62,7 @@ test('RPC deadlines settle once, clean up late capabilities, and never replay', 
 test('creation outcomes survive route changes and are isolated by account', async () => {
   let request = deferred();
   let calls = 0;
-  const connection = { run: promise => promise, shell: { createGrain: () => { ++calls; return { promise: () => request.promise }; } } };
+  const connection = { run: promise => promise, shell: { ...actionFactory(() => { ++calls; return { promise: () => request.promise }; })} };
   const states = [];
   const apps = new AppService(connection, state => states.push(state));
   apps.selectAccount('alice');
@@ -92,7 +95,7 @@ test('acknowledging an interrupted creation cannot let its late failure overwrit
   const old = deferred();
   const next = deferred();
   let request = old;
-  const apps = new AppService({ run: promise => promise, shell: { createGrain: () => ({ promise: () => request.promise }) } }, () => {});
+  const apps = new AppService({ run: promise => promise, shell: { ...actionFactory(() => ({ promise: () => request.promise }))} }, () => {});
   apps.selectAccount('alice');
   const first = apps.create('action', 'Title');
   apps.interrupt();
@@ -113,7 +116,7 @@ test('snapshots preserve mutation errors; changing account clears them', t => {
   const service = new ShellService(value => { state = value; });
   service.connection.events.session({ fixture: false, account: { key: 'alice', name: 'Same name' } });
   service.update({ notificationError: 'Unknown notification outcome', grainError: 'Unknown rename outcome' });
-  service.connection.events.snapshot({ entries: [], grains: [], grainsLimited: false, revision: 1, total: 0 });
+  service.connection.events.snapshot({ entries: {upserts:[],delta:emptyDelta(),total:0}, grains: {upserts:[],delta:emptyDelta(),hasMore:false}, revision: 1 });
   assert.equal(state.notificationError, 'Unknown notification outcome');
   assert.equal(state.grainError, 'Unknown rename outcome');
   service.connection.events.session({ fixture: false, account: { key: 'bob', name: 'Same name' } });
@@ -200,10 +203,10 @@ test('repeated navigation preserves pending cleanup before opening a replacement
   const closing = deferred();
   let opened = 0;
   const session = { whenClosed: () => ({promise: () => new Promise(() => {})}), close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
-  const connection = { run: promise => promise, shell: { openGrain: () => {
+  const connection = { run: promise => promise, shell: { ...viewFactory(() => {
     ++opened;
     return { promise: async () => valueResult({ session, view: { url: 'https://grain.test/init', origin: 'https://grain.test', ownerTitle: 'Owner' } }) };
-  } } };
+  })} };
   const grains = new GrainService(connection, () => {});
   grains.session = session;
   grains.close();
@@ -264,11 +267,11 @@ test('workspace isolates tab operations, preserves paths, and discards canceled 
   browserGlobals(t);
   let state = initialShellState();
   const closed = [], renamed = [], pending = new Map();
-  const connection = { run: promise => promise, shell: { openGrain: fill => {
+  const connection = { run: promise => promise, shell: { ...viewFactory(fill => {
     const params = {}; fill(params);
     const request = deferred(); pending.set(params.grainId, request);
     return { promise: () => request.promise };
-  } } };
+  })} };
   const workspace = new GrainWorkspace(connection, patch => { state = {...state,...patch}; });
   const result = id => valueResult({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
     whenClosed: () => ({promise: () => new Promise(() => {})}),
@@ -472,11 +475,11 @@ test('notification writes release scoped handles and separate policy failures fr
 
 test('creation distinguishes policy rejection from unknown outcomes without replay', async () => {
   let calls = 0, reject = true;
-  const apps = new AppService({run:promise=>promise,shell:{createGrain:()=>({promise:async()=>{
+  const apps = new AppService({run:promise=>promise,shell:{...actionFactory(()=>({promise:async()=>{
     ++calls;
     if (!reject) throw new Error('CAPNP internal failure');
     return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'Invitation required.'}}};
-  }})}},()=>{});
+  }}))}},()=>{});
   apps.selectAccount('alice');
   await assert.rejects(apps.create('action','title'), /Invitation required/);
   assert.deepEqual(apps.state,{status:'rejected',error:'Invitation required.'});
@@ -495,11 +498,11 @@ test('creation distinguishes policy rejection from unknown outcomes without repl
 test('typed grain-open failures remain readable and do not replay', async t => {
   browserGlobals(t);
   let state, calls = 0, failTransport = false;
-  const grains = new GrainService({run:promise=>promise,shell:{openGrain:()=>({promise:async()=>{
+  const grains = new GrainService({run:promise=>promise,shell:{...viewFactory(()=>({promise:async()=>{
     ++calls;
     if (failTransport) throw new Error('CAPNP secret protocol detail');
     return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'This grain is not shared with you.'}}};
-  }})}}, patch=>{state={...state,...patch};});
+  }}))}}, patch=>{state={...state,...patch};});
   await grains.open('foreign','/',[]);
   assert.equal(state.grainError,'This grain is not shared with you.');
   assert.equal(state.openingGrain,false);
@@ -518,7 +521,7 @@ test('late typed grain-open results release only successful leases', async t => 
     let closed = 0, released = 0, state;
     const session={close:()=>({promise:async()=>{++closed;}}),client:{close:()=>{++released;}}};
     const connection={run:(promise,label,options)=>runOperation(promise,label,{...options,timeoutMs:5}),
-      shell:{openGrain:()=>({promise:()=>request.promise})}};
+      shell:{...viewFactory(()=>({promise:()=>request.promise}))}};
     const grains=new GrainService(connection,patch=>{state={...state,...patch};});
     await grains.open('grain','/',[]);
     assert.match(state.grainError,/Unable to open grain/);
@@ -534,7 +537,7 @@ test('malformed grain URLs release the issued session', async t => {
   browserGlobals(t);
   let closed=0,released=0;
   const session={close:()=>({promise:async()=>{++closed;}}),client:{close:()=>{++released;}}};
-  const grains=new GrainService({run:promise=>promise,shell:{openGrain:()=>({promise:async()=>valueResult({session,view:{url:'invalid URL',origin:'https://grain.test'}})})}},()=>{});
+  const grains=new GrainService({run:promise=>promise,shell:{...viewFactory(()=>({promise:async()=>valueResult({session,view:{url:'invalid URL',origin:'https://grain.test'}})}))}},()=>{});
   await grains.open('grain','/',[]);
   await turn();
   assert.equal(closed,1);
@@ -579,7 +582,7 @@ test('query failures survive terminal signals and cancellation releases an unres
     shell:{watchGrains:fill=>{
       const params={_initQuery:()=>({})};fill(params);
       return {promise:async()=>{
-        await params.observer.replace(p=>{const failure=p._initResult()._initFailure();failure.code=FailureCode.PERMISSION_DENIED;failure.message='Query denied.';}).promise();
+        await params.observer.update(p=>{const failure=p._initResult()._initFailure();failure.code=FailureCode.PERMISSION_DENIED;failure.message='Query denied.';}).promise();
         return {subscription};
       }};
     }},
@@ -591,4 +594,41 @@ test('query failures survive terminal signals and cancellation releases an unres
   await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(cancels,1);
   assert.equal(releases,1,'a stuck cancel must not keep the client capability alive');
+});
+
+test('list deltas preserve rows, ordering, and atomicity across removals and reconnects', () => {
+  const cache = new ListCache(row => row.id);
+  const a = {id:'a',title:'A'}, b = {id:'b',title:'B'};
+  assert.deepEqual(cache.apply({...emptyDelta(),order:['a','b']},[a,b]),[a,b]);
+  const changed = {id:'a',title:'Renamed'};
+  const delta = {revision:2n,reset:false,removed:[],order:['b','a']};
+  assert.throws(()=>cache.apply({...delta,revision:3n},[changed]));
+  assert.throws(()=>cache.apply({...delta,order:['a','a']},[changed]));
+  assert.throws(()=>cache.apply(delta,[changed,changed]));
+  const rows = cache.apply(delta,[changed]);
+  assert.equal(rows[0],b);
+  assert.equal(rows[1],changed);
+  assert.deepEqual(cache.apply({revision:3n,reset:false,removed:['a'],order:['b']},[]),[b]);
+  cache.clear();
+  assert.deepEqual(cache.apply(emptyDelta(),[]),[]);
+});
+
+test('action selectors release their handle and synchronous factory errors settle creation', async () => {
+  let released = 0;
+  const apps = new AppService({run:p=>p,shell:{action:fill=>{
+    const selected = {}; fill(selected);
+    assert.equal(selected.key,'owned-action');
+    return {getAction:()=>({client:{close(){++released;}},create:fill=>{
+      const input = {}; fill(input);
+      assert.deepEqual(input,{title:'Document'});
+      return {promise:async()=>valueResult({grainId:'created'})};
+    }})};
+  }}},()=>{});
+  apps.selectAccount('alice');
+  assert.equal(await apps.create('owned-action','Document'),'created');
+  assert.equal(released,1);
+  const disconnected = new AppService({shell:{action:()=>{throw new Error('Disconnected');}}},()=>{});
+  disconnected.selectAccount('alice');
+  await assert.rejects(disconnected.create('owned-action','Document'));
+  assert.equal(disconnected.state.status,'unknown');
 });

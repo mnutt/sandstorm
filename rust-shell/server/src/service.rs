@@ -174,6 +174,7 @@ impl shell::Server for Shell {
             async move {
                 let mut version = "0".repeat(64);
                 let mut previous = None;
+                let mut revision = 0;
                 loop {
                     let snapshot = session
                         .watch_query(
@@ -185,7 +186,7 @@ impl shell::Server for Shell {
                     let snapshot = match snapshot {
                         Ok(value) => value,
                         Err(error) => {
-                            let mut request = observer.replace_request();
+                            let mut request = observer.update_request();
                             crate::workflow::failure(
                                 error,
                                 request.get().init_result().init_failure(),
@@ -201,14 +202,21 @@ impl shell::Server for Shell {
                     if previous.as_ref() == Some(&signature) {
                         continue;
                     }
-                    let mut request = observer.replace_request();
+                    revision += 1;
+                    let delta = crate::list_delta::Changes::between(
+                        previous.as_ref().map(|p| p.0.as_slice()),
+                        &snapshot.grains,
+                        |row| row.key.clone(),
+                    )?;
+                    let mut request = observer.update_request();
                     {
                         let mut out = request.get().init_result().init_value();
                         out.set_page(page);
                         out.set_has_more(snapshot.grains_limited);
-                        let mut list = out.init_grains(snapshot.grains.len() as u32);
-                        for (i, grain) in snapshot.grains.iter().enumerate() {
-                            write_grain(grain, list.reborrow().get(i as u32));
+                        delta.write(revision, out.reborrow().init_delta());
+                        let mut list = out.init_upserts(delta.upserts.len() as u32);
+                        for (i, index) in delta.upserts.iter().enumerate() {
+                            write_grain(&snapshot.grains[*index], list.reborrow().get(i as u32));
                         }
                     }
                     tokio::time::timeout(Duration::from_secs(10), request.send().promise)
@@ -238,6 +246,7 @@ impl shell::Server for Shell {
             async move {
                 let mut version = "0".repeat(64);
                 let mut previous = None;
+                let mut revision = 0;
                 loop {
                     let snapshot = session
                         .watch_query(&version, serde_json::json!({"notifications":page}), None)
@@ -245,7 +254,7 @@ impl shell::Server for Shell {
                     let snapshot = match snapshot {
                         Ok(value) => value,
                         Err(error) => {
-                            let mut request = observer.replace_request();
+                            let mut request = observer.update_request();
                             crate::workflow::failure(
                                 error,
                                 request.get().init_result().init_failure(),
@@ -261,14 +270,24 @@ impl shell::Server for Shell {
                     if previous.as_ref() == Some(&signature) {
                         continue;
                     }
-                    let mut request = observer.replace_request();
+                    revision += 1;
+                    let delta = crate::list_delta::Changes::between(
+                        previous.as_ref().map(|p| p.0.as_slice()),
+                        &snapshot.entries,
+                        |row| row.key.clone(),
+                    )?;
+                    let mut request = observer.update_request();
                     {
                         let mut out = request.get().init_result().init_value();
                         out.set_page(page);
                         out.set_total(snapshot.total);
-                        let mut list = out.init_entries(snapshot.entries.len() as u32);
-                        for (i, entry) in snapshot.entries.iter().enumerate() {
-                            write_notification(entry, list.reborrow().get(i as u32));
+                        delta.write(revision, out.reborrow().init_delta());
+                        let mut list = out.init_upserts(delta.upserts.len() as u32);
+                        for (i, index) in delta.upserts.iter().enumerate() {
+                            write_notification(
+                                &snapshot.entries[*index],
+                                list.reborrow().get(i as u32),
+                            );
                         }
                     }
                     tokio::time::timeout(Duration::from_secs(10), request.send().promise)
@@ -380,77 +399,40 @@ impl shell::Server for Shell {
         Ok(())
     }
 
-    async fn create_grain(
+    async fn action(
         self: Rc<Self>,
-        params: shell::CreateGrainParams,
-        mut results: shell::CreateGrainResults,
+        params: shell::ActionParams,
+        mut results: shell::ActionResults,
     ) -> capnp::Result<()> {
-        let Some(session) = self.session.as_ref() else {
-            return crate::workflow::failure(
-                (
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    "Sign in to create a grain".into(),
-                ),
-                results.get().init_result().init_failure(),
-            );
-        };
-        let input = params.get()?;
-        let action = input.get_action_id()?.to_str()?;
-        let title = input.get_title()?.to_str()?;
-        let value = match session
-            .call(
-                "createGrain",
-                serde_json::json!({"actionId":action,"title":title}),
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(error) => {
-                return crate::workflow::failure(error, results.get().init_result().init_failure())
-            }
-        };
-        let grain_id = value["grainId"]
-            .as_str()
-            .ok_or_else(|| capnp::Error::failed("Missing created grain ID".into()))?;
+        let session = self
+            .session
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to select an app action".into()))?;
+        let key = params.get()?.get_key()?.to_str()?.to_owned();
         results
             .get()
-            .init_result()
-            .init_value()
-            .set_grain_id(grain_id);
+            .set_action(capnp_rpc::new_client(crate::resources::Action {
+                session,
+                key,
+            }));
         Ok(())
     }
-
-    async fn open_grain(
+    async fn grain_view(
         self: Rc<Self>,
-        params: shell::OpenGrainParams,
-        mut results: shell::OpenGrainResults,
+        params: shell::GrainViewParams,
+        mut results: shell::GrainViewResults,
     ) -> capnp::Result<()> {
-        let Some(scope) = self.grain.as_ref() else {
-            return crate::workflow::failure(
-                (
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    "Sign in to open a grain".into(),
-                ),
-                results.get().init_result().init_failure(),
-            );
-        };
+        let scope = self
+            .grain
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to select a grain view".into()))?;
         let grain_id = params.get()?.get_grain_id()?.to_str()?.to_owned();
-        let (view, session) = match scope.open(grain_id).await {
-            Ok(opened) => opened,
-            Err(error) => {
-                return crate::workflow::failure(error, results.get().init_result().init_failure())
-            }
-        };
-        let mut out = results.get().init_result().init_value();
-        out.set_session(session);
-        let mut out = out.init_view();
-        out.set_grain_id(&view.grain_id);
-        out.set_origin(&view.origin);
-        out.set_url(&view.url);
-        out.set_title(&view.title);
-        out.set_owner_title(&view.owner_title);
-        out.set_icon_src(&view.icon_src);
-        out.set_main_href(&view.main_href);
+        results
+            .get()
+            .set_view(capnp_rpc::new_client(crate::resources::ViewReference {
+                scope,
+                grain_id,
+            }));
         Ok(())
     }
 
@@ -495,6 +477,8 @@ impl shell::Server for Shell {
         let mut receiver = self.state.subscribe();
         let subscription = self.observations.spawn(
             async move {
+                let mut previous: Option<Projection> = None;
+                let mut revision = 0;
                 loop {
                     let snapshot = receiver.borrow_and_update().clone();
                     let mut request = observer.replace_request();
@@ -504,40 +488,48 @@ impl shell::Server for Shell {
                         out.set_profile_version(&snapshot.profile_version);
                         out.set_has_unread(snapshot.has_unread);
                         out.set_revision(snapshot.revision);
-                        out.set_total(snapshot.total);
-                        out.set_grains_limited(snapshot.grains_limited);
+                        revision += 1;
+                        let grains = crate::list_delta::Changes::between(
+                            previous.as_ref().map(|p| p.grains.as_slice()),
+                            &snapshot.grains,
+                            |row| row.key.clone(),
+                        )?;
+                        let entries = crate::list_delta::Changes::between(
+                            previous.as_ref().map(|p| p.entries.as_slice()),
+                            &snapshot.entries,
+                            |row| {
+                                row.real
+                                    .as_ref()
+                                    .map(|r| r.key.clone())
+                                    .unwrap_or_else(|| row.id.to_string())
+                            },
+                        )?;
                         {
-                            let mut grains =
-                                out.reborrow().init_grains(snapshot.grains.len() as u32);
-                            for (i, grain) in snapshot.grains.iter().enumerate() {
-                                let mut out = grains.reborrow().get(i as u32);
-                                out.set_key(&grain.key);
-                                out.set_title(&grain.title);
-                                out.set_owner_title(&grain.owner_title);
-                                out.set_href(&grain.href);
-                                out.set_owned(grain.owned);
-                                out.set_last_used(&grain.last_used);
-                                out.set_app_title(&grain.app_title);
-                                out.set_app_id(&grain.app_id);
-                                out.set_icon_src(&grain.icon_src);
+                            let mut page = out.reborrow().init_grains();
+                            page.set_has_more(snapshot.grains_limited);
+                            grains.write(revision, page.reborrow().init_delta());
+                            let mut rows = page.init_upserts(grains.upserts.len() as u32);
+                            for (i, index) in grains.upserts.iter().enumerate() {
+                                write_grain(
+                                    &snapshot.grains[*index],
+                                    rows.reborrow().get(i as u32),
+                                );
                             }
                         }
-                        let mut entries = out.init_entries(snapshot.entries.len() as u32);
-                        for (i, entry) in snapshot.entries.iter().enumerate() {
-                            let mut out = entries.reborrow().get(i as u32);
-                            out.set_id(entry.id);
-                            out.set_title(&entry.title);
-                            out.set_body(&entry.body);
+                        let mut page = out.init_entries();
+                        page.set_total(snapshot.total);
+                        entries.write(revision, page.reborrow().init_delta());
+                        let mut rows = page.init_upserts(entries.upserts.len() as u32);
+                        for (i, index) in entries.upserts.iter().enumerate() {
+                            let entry = &snapshot.entries[*index];
+                            let mut out = rows.reborrow().get(i as u32);
                             if let Some(real) = &entry.real {
-                                out.set_key(&real.key);
-                                out.set_unread(real.unread);
-                                out.set_ongoing(real.ongoing);
-                                out.set_href(&real.href);
-                                out.set_timestamp(&real.timestamp);
-                                out.set_sender_picture_url(&real.sender_picture_url);
-                                out.set_sender_name(&real.sender_name);
-                                out.set_native_path(&real.native_path);
-                                out.set_native_action(&real.native_action);
+                                write_notification(real, out);
+                            } else {
+                                out.set_key(entry.id.to_string());
+                                out.set_id(entry.id);
+                                out.set_title(&entry.title);
+                                out.set_body(&entry.body);
                             }
                         }
                     }
@@ -550,6 +542,7 @@ impl shell::Server for Shell {
                             "Live update delivery failed or timed out".into(),
                         ));
                     }
+                    previous = Some(snapshot);
                     if receiver.changed().await.is_err() {
                         return Err(capnp::Error::failed("Live update source closed".into()));
                     }

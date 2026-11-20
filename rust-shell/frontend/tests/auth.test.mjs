@@ -101,7 +101,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     sessionStore,
     listApps: async (id, _page, appId) => { if(appId==='denied-test') throw Object.assign(new Error('App list denied.'),{status:403}); return {actions:[{key:id+'-action',title:'New document',appTitle:'Test app',appId:'test-app',grainCount:3,shortDescription:'A simple editor for notes and documents',iconSrc:'',lastUsed:'2026-01-01T00:00:00.000Z'}],limited:false}; },
     createGrain: async (id, action, title, beforeCreate) => {
-      assert.equal(action,id+'-action');
+      if (action !== id+'-action') throw Object.assign(new Error('Action not available to this account.'), {status:403});
       if (title === 'Denied creation') throw Object.assign(new Error('You must be invited to create grains.'), {status:403});
       assert.equal(title,'Created in Rust');
       await beforeCreate(); ++creations;
@@ -628,6 +628,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByLabel('Filter shown grains').fill('nothing matches');
     await page.getByText('No matching grains.', { exact: true }).waitFor();
     await page.getByLabel('Filter shown grains').fill('');
+    await serveProbe(page, './resource-probe.ts', 'resource-probe.js');
+    assert.equal(await page.evaluate(() => import('/resource-probe.js').then(probe => probe.resources())), true,
+      'action selectors are account-bound and view references open independent reusable leases');
+    await expect.poll(() => liveGrains.size).toBe(0);
     await serveProbe(page, './grain-session-probe.ts', 'grain-session-probe.js');
     await page.evaluate(() => import('/grain-session-probe.js').then((probe) => probe.open()));
     await expect.poll(() => liveGrains.size).toBe(1);

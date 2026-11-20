@@ -1,4 +1,5 @@
-import { watchGrains, watchNotifications, type GrainQuery } from './queries';
+import { ListCache } from './list-delta';
+import { grainRow, notificationRow, watchGrains, watchNotifications, type GrainQuery } from './queries';
 import { AccountService } from './account';
 import { NotificationView } from './notification-details';
 import { InstallService } from './install';
@@ -17,6 +18,8 @@ export type { ShellState, Grain, Notification, AppAction, ActiveGrain } from './
 // Composition boundary: one connection, domain-owned operations, plain UI state.
 export class ShellService {
   private state = initialShellState();
+  private grainList = new ListCache<Grain>(row => row.key);
+  private notificationList = new ListCache<Notification>(row => row.id);
   private connection: ShellConnection;
   private grains: GrainWorkspace;
   private apps: AppService;
@@ -30,6 +33,8 @@ export class ShellService {
     clearStoredTemplateOffers();
     this.connection = new ShellConnection({
       reset: () => {
+        this.grainList.clear();
+        this.notificationList.clear();
         this.grains.reset();
         clearStoredTemplateOffers();
         this.profile.reset();
@@ -71,19 +76,10 @@ export class ShellService {
   }
   private snapshot(snapshot: Snapshot) {
     this.profile.observe(snapshot.profileVersion);
-    const entries: Notification[] = [];
-    for (const entry of snapshot.entries) entries.push({
-      id: entry.key || String(entry.id), title: entry.title, body: entry.body,
-      href: entry.href, nativePath: entry.nativePath, nativeAction: entry.nativeAction, unread: entry.unread, ongoing: entry.ongoing,
-      timestamp: entry.timestamp, senderName: entry.senderName, senderPictureUrl:entry.senderPictureUrl,
-    });
-    const grains: Grain[] = [];
-    for (const grain of snapshot.grains) grains.push({
-      key: grain.key, title: grain.title, ownerTitle: grain.ownerTitle,
-      href: grain.href, owned: grain.owned, lastUsed: grain.lastUsed, appTitle: grain.appTitle, appId: grain.appId, iconSrc: grain.iconSrc,
-    });
-    this.update({hasUnread:snapshot.hasUnread, accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grainsLimited,
-      revision: snapshot.revision, total: snapshot.total, connectionError: '' });
+    const entries = this.notificationList.apply(snapshot.entries.delta, [...snapshot.entries.upserts].map(notificationRow));
+    const grains = this.grainList.apply(snapshot.grains.delta, [...snapshot.grains.upserts].map(grainRow));
+    this.update({hasUnread:snapshot.hasUnread, accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grains.hasMore,
+      revision: snapshot.revision, total: snapshot.entries.total, connectionError: '' });
     this.grains.applyMenu(grains);
   }
   watchGrains(query:GrainQuery,changed:(grains:Grain[],more:boolean)=>void,failed:(error:unknown)=>void) {return watchGrains(this.connection,query,changed,failed);}

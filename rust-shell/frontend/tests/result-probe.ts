@@ -18,13 +18,13 @@ export async function checkResults() {
     const invalid=(await install.read().promise()).result;
     install.client.close();
     const grainFailure=new Promise<boolean>(resolve=>{
-      const observer=new GrainObserver.Server({replace:async p=>{resolve(p.result._isFailure && p.result.failure.code===FailureCode.PERMISSION_DENIED);}}).client();
+      const observer=new GrainObserver.Server({update:async p=>{resolve(p.result._isFailure && p.result.failure.code===FailureCode.PERMISSION_DENIED);}}).client();
       observers.push(observer);
       const subscription=shell.watchGrains(p=>{p._initQuery().search='denied-test';p.observer=observer;}).getSubscription();
       subscriptions.push(subscription);
     });
     const noticeFailure=new Promise<boolean>(resolve=>{
-      const observer=new NotificationObserver.Server({replace:async p=>{resolve(p.result._isFailure && p.result.failure.code===FailureCode.PERMISSION_DENIED);}}).client();
+      const observer=new NotificationObserver.Server({update:async p=>{resolve(p.result._isFailure && p.result.failure.code===FailureCode.PERMISSION_DENIED);}}).client();
       observers.push(observer);
       const subscription=shell.watchNotifications(p=>{p.page=99;p.observer=observer;}).getSubscription();
       subscriptions.push(subscription);

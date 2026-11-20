@@ -4,7 +4,7 @@ import { writeTokenOptions } from './template-options';
 import { PowerboxRequests } from './powerbox-client';
 import type { PowerboxActions, PowerboxState } from './powerbox-native';
 import type { SharingState } from './sharing';
-import type { GrainSession$Client, Sharing$Client } from '../generated/shell';
+import type { GrainSession$Client, Sharing$Client, ViewReference$Client } from '../generated/shell';
 import type { ShellConnection } from './connection';
 import type { ActiveGrain, Grain } from './model';
 import { TemplateOffers } from './template';
@@ -59,12 +59,12 @@ export class GrainService {
     const generation = ++this.generation;
     this.opening = true;
     this.changed({ openingGrain: true, grainError: '' });
+    let reference: ViewReference$Client | undefined;
     try {
       await this.cleanup;
       if (generation !== this.generation) return;
-      const response = await this.connection.run(this.connection.shell.openGrain(params => {
-        params.grainId = grainId;
-      }).promise(), 'Open grain', { onLateResult: response => {
+      reference = this.connection.shell.grainView(params => { params.grainId = grainId; }).getView();
+      const response = await this.connection.run(reference.open().promise(), 'Open grain', { onLateResult: response => {
         if (response.result._isValue) return this.release(response.result.value.session, false);
       } });
       const result = unwrap(response.result);
@@ -98,6 +98,7 @@ export class GrainService {
     } catch (error) {
       if (generation === this.generation) this.changed({ grainError: applicationErrorMessage(error, 'Unable to open grain. Please try opening it again.') });
     } finally {
+      reference?.client.close();
       if (generation === this.generation) {
         this.opening = false;
         this.changed({ openingGrain: false });

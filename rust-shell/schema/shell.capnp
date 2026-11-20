@@ -31,16 +31,25 @@ struct Grain {
   appId @8 :Text;
 }
 
+# Every list update is atomic: reset on the first delivery, then consecutive
+# revisions. Rows contain only upserts; order is the complete ordered membership
+# of this page. Removed keys leave the page, not necessarily the underlying DB.
+struct ListDelta {
+  revision @0 :UInt64;
+  reset @1 :Bool;
+  removed @2 :List(Text);
+  order @3 :List(Text);
+}
+
 struct Snapshot {
   revision @0 :UInt32;
-  entries @1 :List(Notification);
-  total @2 :UInt32;
-  grains @3 :List(Grain);
-  grainsLimited @4 :Bool;
-  profileVersion @5 :Text;
-  accountPictureUrl @6 :Text;
-  hasUnread @7 :Bool;
-  # Each callback replaces the entire projection. First callback means ready.
+  entries @1 :NotificationPage;
+  grains @2 :GrainPage;
+  profileVersion @3 :Text;
+  accountPictureUrl @4 :Text;
+  hasUnread @5 :Bool;
+  # Each callback replaces scalar fields and applies both list deltas atomically.
+  # First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.
 }
 
@@ -119,9 +128,9 @@ interface Shell {
   # Available only when the operator sets RUST_SHELL_FIXTURE_SOCKET.
   # The browser never chooses a socket or receives Sandstorm Backend authority.
   markAllRead @9 () -> (result :Result(Empty));
-  openGrain @10 (grainId :Text) -> (result :Result(OpenedGrain));
+  grainView @10 (grainId :Text) -> (view :ViewReference);
   listApps @11 (page :UInt32, appId :Text) -> (result :Result(AppPage));
-  createGrain @12 (actionId :Text, title :Text) -> (result :Result(CreatedGrain));
+  action @12 (key :Text) -> (action :AppActionHandle);
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
 
@@ -338,10 +347,10 @@ struct GrainQuery {
   page @4 :UInt32;
   # Live offset pages of 100 rows. Membership may shift as data changes.
 }
-struct GrainPage { grains @0 :List(Grain); hasMore @1 :Bool; page @2 :UInt32; }
-struct NotificationPage { entries @0 :List(Notification); total @1 :UInt32; page @2 :UInt32; }
-interface GrainObserver { replace @0 (result :Result(GrainPage)) -> (); }
-interface NotificationObserver { replace @0 (result :Result(NotificationPage)) -> (); }
+struct GrainPage { upserts @0 :List(Grain); hasMore @1 :Bool; page @2 :UInt32; delta @3 :ListDelta; }
+struct NotificationPage { upserts @0 :List(Notification); total @1 :UInt32; page @2 :UInt32; delta @3 :ListDelta; }
+interface GrainObserver { update @0 (result :Result(GrainPage)) -> (); }
+interface NotificationObserver { update @0 (result :Result(NotificationPage)) -> (); }
 
 # Sharing authority is restricted to the parent grain lease. Closing that lease
 # invalidates retained Sharing capabilities. Grant IDs are scoped selectors,
@@ -478,3 +487,17 @@ struct OpenedGrain {
 
 struct AppPage { actions @0 :List(AppAction); limited @1 :Bool; }
 struct OpenedSharedGrain { view @0 :GrainView; session @1 :SharedSession; }
+
+# Metadata lists carry no capabilities or live session credentials. These
+# selectors are account-bound; each operation revalidates Meteor authority.
+interface AppActionHandle {
+  create @0 (title :Text) -> (result :Result(CreatedGrain));
+  # Durable creation is separate from opening a UI session. Never replay.
+}
+interface ViewReference {
+  open @0 () -> (result :Result(OpenedGrain));
+  # A reference is independent of a particular iframe lease and route ID.
+  # Each open creates a separately owned session. Closing it keeps this
+  # reference usable, subject to current authorization. The grainView factory
+  # currently resolves root views; future view sources can implement this API.
+}

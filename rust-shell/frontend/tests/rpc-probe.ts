@@ -13,7 +13,7 @@ export async function probe() {
   let latest = -1;
   let entries = 0;
   const observer = () => new Observer.Server({ replace: async (params) => {
-    ++calls; latest = params.snapshot.revision; entries = [...params.snapshot.entries].length;
+    ++calls; latest = params.snapshot.revision; entries = [...params.snapshot.entries.delta.order].length;
   } }).client();
   const waitFor = async (predicate: () => boolean, label: string) => {
     for (let i = 0; i < 200; ++i) {
