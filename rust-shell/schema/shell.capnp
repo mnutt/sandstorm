@@ -84,6 +84,9 @@ interface GrainSession {
   close @3 () -> ();
   renderTemplate @4 (options :TemplateOptions) -> (result :Result(TemplateToken));
   rename @5 (title :Text) -> (result :Result(GrainTitle));
+  whenReady @6 () -> (result :Result(Empty));
+  # Resolves on the gateway first response, including error responses.
+  # Waiting does not retain the lease and ends when the session closes.
   # Owners rename the grain; recipients rename their own share. No automatic replay.
   # Sensitive result for the trusted shell only. Apps receive an opaque frame URL.
   # Explicit close, release, or browser disconnect ends the UI session lease.
@@ -144,6 +147,7 @@ struct SharedInfo {
 }
 interface SharedSession {
   close @0 () -> ();
+  whenReady @1 () -> (result :Result(Empty));
 }
 interface SharedShell {
   inspect @0 (webkey :Text) -> (result :Result(SharedInfo));

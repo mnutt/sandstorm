@@ -166,6 +166,27 @@ impl grain_session::Server for Lease {
         Ok(())
     }
 
+    async fn when_ready(
+        self: Rc<Self>,
+        _: grain_session::WhenReadyParams,
+        mut results: grain_session::WhenReadyResults,
+    ) -> capnp::Result<()> {
+        let bridge = self.scope.session.bridge.clone();
+        let input =
+            json!({"token":self.scope.session.token,"scope":self.scope.key,"lease":self.lease});
+        let ended = self.scope.ended.subscribe();
+        drop(self);
+        match crate::readiness::wait(&bridge, "waitGrainResponse", input, ended).await {
+            Ok(()) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+
     async fn when_closed(
         self: Rc<Self>,
         _: grain_session::WhenClosedParams,
@@ -324,6 +345,60 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn pending_readiness_does_not_retain_grain_lease() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                use axum::{routing::post, Json, Router};
+                let path = std::env::temp_dir()
+                    .join(format!("rust-grain-ready-{}.sock", std::process::id()));
+                let listener = tokio::net::UnixListener::bind(&path).unwrap();
+                let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+                let notify = entered.clone();
+                let app = Router::new()
+                    .route(
+                        "/waitGrainResponse",
+                        post(move || {
+                            let notify = notify.clone();
+                            async move {
+                                notify.notify_one();
+                                std::future::pending::<Json<serde_json::Value>>().await
+                            }
+                        }),
+                    )
+                    .route("/closeGrain", post(|| async { Json(json!({})) }));
+                let server = tokio::spawn(async move {
+                    axum::serve(listener, app).await.unwrap();
+                });
+                let scope = GrainScope::new(Session {
+                    bridge: crate::bridge::Bridge::new(path.clone()).unwrap(),
+                    token: "token".into(),
+                })
+                .unwrap();
+                *scope.active.borrow_mut() = Some("lease".into());
+                let client: grain_session::Client = capnp_rpc::new_client(Lease {
+                    scope: scope.clone(),
+                    lease: "lease".into(),
+                    closed: Cell::new(false),
+                });
+                let ready = tokio::task::spawn_local(client.when_ready_request().send().promise);
+                tokio::time::timeout(Duration::from_secs(1), entered.notified())
+                    .await
+                    .unwrap();
+                drop(client);
+                let response = tokio::time::timeout(Duration::from_secs(1), ready)
+                    .await
+                    .expect("readiness must not retain the lease")
+                    .unwrap()
+                    .unwrap();
+                assert!(response.get().unwrap().get_result().unwrap().has_failure());
+                assert!(*scope.ended.borrow());
+                server.abort();
+                let _ = std::fs::remove_file(path);
+            })
+            .await;
+    }
 
     #[tokio::test]
     async fn pending_lifetime_call_does_not_retain_grain_lease() {

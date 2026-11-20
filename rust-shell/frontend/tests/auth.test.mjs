@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { createServer as httpServer } from 'node:http';
 import { createServer as httpsServer } from 'node:https';
-import { once } from 'node:events';
+import { once, EventEmitter } from 'node:events';
 import { chromium, expect } from '@playwright/test';
 import { start, stop, serveProbe, availablePort } from './harness.mjs';
 import { httpsProxy } from './https-harness.mjs';
@@ -23,6 +23,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let proxy, main, grainServer, bridgeServer, browser, rust, vite;
   let vitePort;
   const liveGrains = new Set();
+  const responseReady = new Set(), responseEvents = new EventEmitter(), heldAssets = new Set();
+  let stallAssets = false;
+  const waitForResponse = async (handle, signal) => {
+    if (!responseReady.has(handle)) await once(responseEvents, String(handle), {signal});
+    return {loaded:true};
+  };
+  const releaseAssets = () => {stallAssets=false;for(const res of heldAssets)res.end('window.assetFinished=true;');heldAssets.clear();};
   let grainOrigin;
   let mainOrigin;
   let serial = 0;
@@ -110,6 +117,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     },
     now: () => Date.now() + leaseClockOffset,
     grains: {
+      waitForResponse,
       powerbox: {
         open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
         select: async (request, input) => {
@@ -204,6 +212,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let guestsAllowed = true;
   const sharedOpens = [];
   bridgeOptions.shared = {
+    waitForResponse,
     inspect: async webkey => {
       if (webkey !== 'valid-share' || sharedRevoked) throw Object.assign(new Error('Sharing link revoked or invalid'), {status:403});
       return {title:'Shared test grain',guestsAllowed};
@@ -226,13 +235,21 @@ test('authenticated notifications: handoff, shared writes, account switching and
     }
     proxy = await httpsProxy(directory, socket);
     grainServer = httpsServer(proxy.tls, (_req, res) => {
+      if (_req.url === '/slow-app.js') {
+        res.setHeader('Content-Type','text/javascript');
+        if(stallAssets){heldAssets.add(res);res.on('close',()=>heldAssets.delete(res));}else res.end('');
+        return;
+      }
+      const handle=Number(new URL(_req.url,'https://grain.test').searchParams.get('sessionid'));
+      if(handle){responseReady.add(handle);responseEvents.emit(String(handle));}
+
       if (_req.url === '/powerbox-complete') { providerComplete = true; res.end('ok'); return; }
       if (_req.url === '/powerbox-provider') {
         res.setHeader('Content-Type','text/html');
         res.end(`<button onclick="fetch('/powerbox-complete')">Select test object</button>`); return;
       }
       res.setHeader('Content-Type', 'text/html');
-      res.end('<h1>Embedded test grain</h1><input aria-label="App state"><script>window.addEventListener("message", event => { window.reply = event.data; });</script>');
+      res.end((stallAssets?'<script defer src="/slow-app.js"></script>':'')+'<h1>Embedded test grain</h1><input aria-label="App state"><script>window.addEventListener("message", event => { window.reply = event.data; });</script>');
     });
     grainServer.listen(0, '127.0.0.1'); await once(grainServer, 'listening');
     grainOrigin = `https://localhost:${grainServer.address().port}`;
@@ -298,8 +315,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
 
     assert.equal(await page.getByRole('button', { name: 'Add test notification' }).count(), 0);
     const guest = await context.newPage();
-    await guest.goto(proxy.origin+'/shared/valid-share/folder?view=guest#document');
+    stallAssets=true;
+    await guest.goto(proxy.origin+'/shared/valid-share/folder?view=guest#document',{waitUntil:'domcontentloaded'});
     await guest.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await expect(guest.locator('.frame-loading')).toHaveCount(0);
+    assert.notEqual(await guest.frames().find(frame=>frame.url().startsWith(grainOrigin)).evaluate(()=>document.readyState),'complete','shared readiness reveals the frame before assets finish');
+    releaseAssets();
+
     await serveProbe(guest, './shared-probe.ts', 'shared-probe.js');
     assert.equal(await guest.evaluate(async ()=>(await import('/shared-probe.js')).probe()),true,'public shared bootstrap cannot be cast to account Shell');
     assert.equal(await guest.evaluate(async ()=>(await import('/shared-probe.js')).checkResults()),true,'shared policy failures are typed without issuing a lease');
@@ -641,6 +663,16 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.evaluate(() => import('/grain-session-probe.js').then(probe => probe.closedSharing())), true,
       'retained sharing capabilities lose authority when their grain closes');
     await expect.poll(() => liveGrains.size).toBe(0);
+
+    stallAssets=true;
+    await page.getByRole('link',{name:'Alice grain',exact:true}).click();
+    await page.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await expect(page.locator('.frame-loading')).toHaveCount(0);
+    assert.notEqual(await page.frames().find(frame=>frame.url().startsWith(grainOrigin)).evaluate(()=>document.readyState),'complete','gateway readiness reveals the frame before assets finish');
+    releaseAssets();
+    await page.getByRole('button',{name:'Close Alice grain',exact:true}).click();
+    await page.getByRole('link',{name:'Grains',exact:true}).click();
+    await page.getByRole('link',{name:'Alice grain',exact:true}).waitFor();
 
     let releaseFrame;
     const frameGate = new Promise(resolve => { releaseFrame = resolve; });

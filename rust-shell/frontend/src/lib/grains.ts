@@ -83,6 +83,7 @@ export class GrainService {
       const known = menu.find(grain => grain.key === grainId);
       this.session = result.session;
       this.active = {
+        ready: false,
         iconSrc: result.view.iconSrc || known?.iconSrc || '',
         grainId, path, origin: result.view.origin, url: url.href,
         title: result.view.title || known?.title || 'Grain',
@@ -90,6 +91,13 @@ export class GrainService {
         mainHref: result.view.mainHref || known?.href || location.origin + '/main-shell',
       };
       this.changed({ activeGrain: this.active });
+      void result.session.whenReady().promise().then(response => {
+        unwrap(response.result);
+        if (generation !== this.generation || !this.active) return;
+        this.active = {...this.active, ready: true};
+        this.changed({activeGrain:this.active});
+      }).catch(() => { /* Iframe load and the existing slow-load UI remain available. */ });
+
       const ended = () => {
         if (generation !== this.generation) return;
         this.reset(true, 'This grain session ended. Reopen the grain to continue.');

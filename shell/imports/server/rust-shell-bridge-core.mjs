@@ -60,6 +60,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       prune();
       if (action === "inspectSharedGrain") return sharedLeases.inspect(input);
       if (action === "openSharedGrain") return sharedLeases.open(input, signal);
+      if (action === "waitSharedGrainResponse") return sharedLeases.waitForResponse(input, signal);
       if (action === "keepSharedGrain") return sharedLeases.keep(input);
       if (action === "closeSharedGrain") return sharedLeases.close(input);
       if (action === "exchange") {
@@ -250,6 +251,7 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
       if (action === "renderTemplate") return leases.template(input.token, input, signal);
       if (["getSharing", "createShare", "updateShare"].includes(action)) return leases.sharing(input.token, input, signal, action);
       if (action === "renameGrain") return leases.rename(input.token, input, signal);
+      if (action === "waitGrainResponse") return leases.waitForResponse(input.token, input, signal);
       if (action === "keepGrain") return leases.keep(input.token, input);
       if (action === "session") return { account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: record.expires };
       const query = input.query;
@@ -344,7 +346,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|waitSharedGrainResponse|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|waitGrainResponse|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

@@ -202,7 +202,7 @@ test('repeated navigation preserves pending cleanup before opening a replacement
   browserGlobals(t);
   const closing = deferred();
   let opened = 0;
-  const session = { whenClosed: () => ({promise: () => new Promise(() => {})}), close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
+  const session = { whenReady: () => ({promise: () => new Promise(() => {})}), whenClosed: () => ({promise: () => new Promise(() => {})}), close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
   const connection = { run: promise => promise, shell: { ...viewFactory(() => {
     ++opened;
     return { promise: async () => valueResult({ session, view: { url: 'https://grain.test/init', origin: 'https://grain.test', ownerTitle: 'Owner' } }) };
@@ -274,7 +274,7 @@ test('workspace isolates tab operations, preserves paths, and discards canceled 
   })} };
   const workspace = new GrainWorkspace(connection, patch => { state = {...state,...patch}; });
   const result = id => valueResult({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
-    whenClosed: () => ({promise: () => new Promise(() => {})}),
+    whenReady: () => ({promise: () => new Promise(() => {})}), whenClosed: () => ({promise: () => new Promise(() => {})}),
     close: () => ({promise:async () => { closed.push(id); }}), client:{close:()=>{}},
     rename: fill => { const params = {}; fill(params); renamed.push([id,params.title]);
       return {promise:async () => valueResult({title:params.title})}; },
@@ -631,4 +631,18 @@ test('action selectors release their handle and synchronous factory errors settl
   disconnected.selectAccount('alice');
   await assert.rejects(disconnected.create('owned-action','Document'));
   assert.equal(disconnected.state.status,'unknown');
+});
+
+test('gateway readiness updates only its own active grain and ignores a late result after close', async t => {
+  browserGlobals(t);
+  const ready=deferred();let state;
+  const session={whenReady:()=>({promise:()=>ready.promise}),whenClosed:()=>({promise:()=>new Promise(()=>{})}),close:()=>({promise:async()=>{}}),client:{close(){}}};
+  const service=new GrainService({run:p=>p,shell:viewFactory(()=>({promise:async()=>valueResult({session,view:{url:'https://grain.test/init',origin:'https://grain.test'}})}))},patch=>{state={...state,...patch};});
+  await service.open('grain','/',[]);
+  assert.equal(state.activeGrain.ready,false);
+  ready.resolve(valueResult({}));await turn();assert.equal(state.activeGrain.ready,true);
+  service.close();
+  const late=deferred();session.whenReady=()=>({promise:()=>late.promise});
+  await service.open('next','/',[]);service.close();late.resolve(valueResult({}));await turn();
+  assert.equal(state.activeGrain,null);
 });

@@ -55,13 +55,18 @@ impl Bridge {
         let mut response = self
             .client
             .post(format!("http://bridge/{action}"))
-            .timeout(Duration::from_secs(if action == "watch" {
-                30
-            } else if action == "nativeAuth" {
-                20
-            } else {
-                5
-            }))
+            .timeout(Duration::from_secs(
+                if matches!(
+                    action,
+                    "watch" | "waitGrainResponse" | "waitSharedGrainResponse"
+                ) {
+                    30
+                } else if action == "nativeAuth" {
+                    20
+                } else {
+                    5
+                },
+            ))
             .json(&input)
             .send()
             .await

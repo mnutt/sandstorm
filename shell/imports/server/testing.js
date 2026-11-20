@@ -1,3 +1,4 @@
+import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { appInstallPermissions } from "/imports/server/install-server";
 import { grainMenu } from "/imports/server/rust-shell-grains";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
@@ -2070,6 +2071,33 @@ if(isTesting) {
         require(policy.canInstall && policy.canUpload, "Paid account was denied");
         return true;
       } finally { Meteor.settings.public.allowUninvited = original; }
+    },
+
+    async testRustGrainReadiness() {
+      if (!this.userId) throw new Meteor.Error(403, "Sign in first");
+      const sessions = globalDb.collections.sessions;
+      const sessionId = "rust-ready-" + Random.id();
+      const handle = {sessionId};
+      const signal = new AbortController().signal;
+      const require = (ok, message) => { if (!ok) throw new Error(message); };
+      try {
+        await sessions.insertAsync({_id:sessionId,rustShellSession:true,hasLoaded:false,timestamp:new Date()});
+        const ready = waitForGrainResponse(globalDb, handle, signal);
+        await sessions.updateAsync(sessionId, {$set:{hasLoaded:true}});
+        require((await ready).loaded, "Gateway response did not wake readiness observer");
+        require((await waitForGrainResponse(globalDb, handle, signal)).loaded, "Initial ready state was lost");
+        await sessions.updateAsync(sessionId, {$set:{hasLoaded:false}});
+        const controller = new AbortController();
+        const aborted = waitForGrainResponse(globalDb, handle, controller.signal);
+        controller.abort();
+        try { await aborted; throw new Error("Disconnected observer did not stop"); }
+        catch (error) { require(error.status === 410, "Incorrect cancellation result"); }
+        const removed = waitForGrainResponse(globalDb, handle, signal).then(
+            () => null, error => error);
+        await sessions.removeAsync(sessionId);
+        require((await removed)?.status === 410, "Incorrect removed-session result");
+        return true;
+      } finally { await sessions.removeAsync(sessionId); }
     },
 
     async testRustGrainQueries() {

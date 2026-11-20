@@ -139,8 +139,8 @@
     <Button onclick={() => chooser.open()}>Choose in Sandstorm</Button>
     <Button onclick={() => chooser.cancel()}>Cancel request</Button></div>{/if}
   <div class="frame-stage">
-    <iframe bind:this={frame} title={grain.title} src={frameUrl} referrerpolicy="no-referrer" aria-busy={!frameLoaded} onload={() => { frameLoaded = true; }}></iframe>
-    {#if !frameLoaded && !showFrame}
+    <iframe bind:this={frame} title={grain.title} src={frameUrl} referrerpolicy="no-referrer" aria-busy={!grain.ready && !frameLoaded} onload={() => { frameLoaded = true; }}></iframe>
+    {#if !grain.ready && !frameLoaded && !showFrame}
       <div class="frame-loading">
         <LoadingStatus label={slow ? 'Still loading this app…' : 'Loading app…'} detail={slow ? 'The app is taking longer than usual. You can show its content while it finishes loading.' : grain.title} />
         {#if slow}<Button variant="secondary" onclick={() => { showFrame = true; }}>Show app</Button>{/if}

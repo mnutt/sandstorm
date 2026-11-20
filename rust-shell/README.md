@@ -1053,3 +1053,25 @@ server passed 100 grain/session assertions and 18 authentication/query assertion
 Deploy the updated bundle and reload the frontend together; there is no wire
 compatibility layer for the removed root creation/opening methods or full-list
 observer payloads.
+
+### Grain first-response readiness
+
+`GrainSession.whenReady()` and `SharedSession.whenReady()` resolve when the
+existing gateway loading indicator sets the leased Mongo session's `hasLoaded`
+flag. The blocking overlay then disappears, allowing the app to render while
+its remaining assets and JavaScript finish loading. The iframe `load` event
+remains a fallback for browser/gateway error documents; the existing slow-load
+message and manual “Show app” control remain available.
+
+The private bridge observes only the session named by an authorized lease.
+It revalidates account or shared-link authority before and after each observation,
+renews a bounded long poll when necessary, and stops the Mongo observer on
+completion, disconnect, or lease close. Pending readiness RPCs do not retain the
+lease. Frontend generation checks prevent a late response from updating a closed
+or replacement tab. No readiness signal is accepted from app postMessages.
+
+Validated with 19 Rust tests and 78 frontend/browser tests, including signed-in
+and anonymous frames whose scripts are deliberately stalled after the first
+response. The fast bundle passed 100 grain-session assertions and 20 packaged
+authentication/query/readiness assertions, including real Mongo observation,
+initial-ready state, cancellation, and session removal.

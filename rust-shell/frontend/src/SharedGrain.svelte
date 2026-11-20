@@ -81,10 +81,14 @@
       const url = new URL(result.view.url);
       if (url.origin !== result.view.origin || url.protocol !== 'https:' || url.username || url.password || url.origin === location.origin) throw new Error('Invalid shared grain origin.');
       url.searchParams.set('path',path);
-      grain = {grainId:result.view.grainId,path,url:url.href,origin:result.view.origin,title:result.view.title || info.title,
+      grain = {ready:false,grainId:result.view.grainId,path,url:url.href,origin:result.view.origin,title:result.view.title || info.title,
         ownerTitle:result.view.ownerTitle,iconSrc:result.view.iconSrc,mainHref:result.view.mainHref};
       metadataChanged(grain.title, grain.iconSrc);
       phase = 'open';
+      void session.whenReady().promise().then(response => {
+        unwrap(response.result);
+        if (current === generation && grain) grain = {...grain, ready:true};
+      }).catch(() => { /* Iframe load can still reveal gateway error documents. */ });
     } catch (err) {if (current === generation) fail(applicationErrorMessage(err, 'Could not load this sharing link. Reopen it to check access again.'));}
   }
   onMount(() => {void start();return clear;});

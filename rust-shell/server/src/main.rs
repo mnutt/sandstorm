@@ -8,6 +8,7 @@ mod notification;
 mod observation;
 mod powerbox;
 mod profile;
+mod readiness;
 mod resources;
 mod rpc_protocol;
 mod service;

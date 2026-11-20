@@ -3,10 +3,11 @@
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const validScope = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const validWebkey = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,256}$/.test(value);
-export function createSharedLeases({ inspect, open, keep, close, account, now = Date.now }) {
+export function createSharedLeases({ inspect, open, keep, close, waitForResponse, account, now = Date.now }) {
   const records = new Map();
   const dispose = async record => {
     record.closed = true;
+    record.ended.abort();
     if (records.get(record.scope) === record) records.delete(record.scope);
     if (record.handle) { const handle = record.handle; record.handle = null; await close(handle); }
   };
@@ -36,7 +37,7 @@ export function createSharedLeases({ inspect, open, keep, close, account, now = 
     async open(input, signal) {
       if (!validScope(input.scope) || !validWebkey(input.webkey) || typeof input.revealIdentity !== 'boolean') throw fail(400, 'Invalid shared session request.');
       if (records.has(input.scope)) throw fail(409, 'A shared session is already open.');
-      const record = {scope:input.scope, webkey:input.webkey, expires:now()+45000, handle:null, closed:false};
+      const record = {scope:input.scope, webkey:input.webkey, expires:now()+45000, handle:null, closed:false, ended:new AbortController()};
       records.set(input.scope,record);
       try {
         const info = await information(input.webkey);
@@ -52,6 +53,15 @@ export function createSharedLeases({ inspect, open, keep, close, account, now = 
         if (signal.aborted) throw fail(410,'Shared session closed.');
         return result.view;
       } catch (error) { await dispose(record); throw error; }
+    },
+    async waitForResponse(input, signal) {
+      if (!validScope(input.scope)) throw fail(400, 'Invalid shared scope.');
+      const record = records.get(input.scope);
+      if (!record?.handle) throw fail(410, 'Shared session unavailable.');
+      await validate(record);
+      const result = await waitForResponse(record.handle, AbortSignal.any([signal, record.ended.signal]));
+      await validate(record);
+      return result;
     },
     async keep(input) {
       const record = records.get(input.scope);

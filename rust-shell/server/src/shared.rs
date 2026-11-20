@@ -16,6 +16,7 @@ pub struct SharedShell {
     opened: Rc<Cell<bool>>,
     closed: Rc<Cell<bool>>,
     signed_in: Rc<Cell<bool>>,
+    ended: tokio::sync::watch::Sender<bool>,
 }
 struct Busy<'a>(&'a Cell<bool>);
 impl Drop for Busy<'_> {
@@ -37,6 +38,7 @@ impl SharedShell {
             opened: Rc::new(Cell::new(false)),
             closed: Rc::new(Cell::new(false)),
             signed_in: Rc::new(Cell::new(false)),
+            ended: tokio::sync::watch::channel(false).0,
         })
     }
     async fn call(&self, action: &str, mut input: Value) -> Result<Value, crate::bridge::Error> {
@@ -47,6 +49,7 @@ impl SharedShell {
         self.bridge.call(action, input).await
     }
     pub async fn close(&self) {
+        self.ended.send_replace(true);
         self.active.set(false);
         // Repeated close/drop and never-opened public connections need no bridge IO.
         if self.closed.replace(true) || !self.opened.get() {
@@ -166,6 +169,25 @@ impl shared_shell::Server for SharedShell {
 }
 struct SharedLease(Rc<SharedShell>);
 impl shared_session::Server for SharedLease {
+    async fn when_ready(
+        self: Rc<Self>,
+        _: shared_session::WhenReadyParams,
+        mut results: shared_session::WhenReadyResults,
+    ) -> capnp::Result<()> {
+        let bridge = self.0.bridge.clone();
+        let input = json!({"scope":self.0.key});
+        let ended = self.0.ended.subscribe();
+        drop(self);
+        match crate::readiness::wait(&bridge, "waitSharedGrainResponse", input, ended).await {
+            Ok(()) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
     async fn close(
         self: Rc<Self>,
         _: shared_session::CloseParams,

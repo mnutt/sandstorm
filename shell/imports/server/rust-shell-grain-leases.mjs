@@ -5,7 +5,7 @@ const valid = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(valu
 const failure = (status, message) => Object.assign(new Error(message), { status });
 
 // UI-session lifetime only. Closing a lease never shuts down the grain.
-export function createGrainLeases({ open, keep, close, template, rename, powerbox, sharing, createShare, updateShare, revokeTemplate, validate, now = Date.now }) {
+export function createGrainLeases({ open, keep, close, waitForResponse, template, rename, powerbox, sharing, createShare, updateShare, revokeTemplate, validate, now = Date.now }) {
   const leases = new Map();
   const closePowerbox = async record => {
     const request = record.powerbox;
@@ -16,6 +16,7 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
   };
   const dispose = async (record) => {
     record.closed = true;
+    record.ended.abort();
     await closePowerbox(record);
     if (leases.get(record.scope) === record) leases.delete(record.scope);
     if (record.handle) {
@@ -38,7 +39,7 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
           !input.grainId) throw failure(400, "Invalid grain request.");
       if (leases.has(input.scope)) throw failure(409, "Close the current grain first.");
       const record = { token, scope: input.scope, lease: randomBytes(32).toString("hex"),
-        expires: now() + 45000, handle: null, closed: false, rendering: false };
+        expires: now() + 45000, handle: null, closed: false, rendering: false, ended: new AbortController() };
       leases.set(input.scope, record);
       try {
         const result = await open(accountId, input.grainId);
@@ -47,6 +48,15 @@ export function createGrainLeases({ open, keep, close, template, rename, powerbo
         if (record.closed || signal.aborted || now() >= record.expires) throw failure(410, "Grain opening was canceled.");
         return { ...result.view, lease: record.lease };
       } catch (error) { await dispose(record); throw error; }
+    },
+    async waitForResponse(token, input, signal) {
+      const record = get(token, input.scope, input.lease);
+      if (!record?.handle || record.closed || record.expires <= now()) throw failure(410, 'Grain session expired.');
+      await validate(token);
+      const result = await waitForResponse(record.handle, AbortSignal.any([signal, record.ended.signal]));
+      await validate(token);
+      if (record.closed || record.expires <= now()) throw failure(410, 'Grain session expired.');
+      return result;
     },
     async keep(token, input) {
       const record = get(token, input.scope, input.lease);

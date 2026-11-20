@@ -37,6 +37,7 @@ export interface AppAction {
   appTitle: string;
 }
 export interface ActiveGrain {
+  ready: boolean;
   path: string;
   grainId: string;
   origin: string;

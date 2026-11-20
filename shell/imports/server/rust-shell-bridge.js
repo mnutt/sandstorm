@@ -1,3 +1,4 @@
+import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
 import { rustAccount } from "/imports/server/rust-shell-account";
 import { rustUserPicture } from "/imports/server/rust-shell-users";
@@ -85,6 +86,7 @@ export const rustShellBridge = createRustShellBridge({
           origin:frameOrigin,url:frameOrigin+"/_sandstorm-init?sessionid="+session._id+"&path=%2F",
           mainHref:new URL("/shared/"+encodeURIComponent(webkey),process.env.ROOT_URL).href}};
     },
+    waitForResponse: (handle, signal) => waitForGrainResponse(globalDb, handle, signal),
     keep: handle => keepRustSharedGrainSession(globalDb,handle),
     close: handle => closeRustSharedGrainSession(globalDb, handle),
   },
@@ -101,6 +103,7 @@ export const rustShellBridge = createRustShellBridge({
       return { handle: { sessionId: session._id, accountId, grainId },
         view: { grainId, origin, title, ownerTitle, iconSrc: titles.iconSrc, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
     },
+    waitForResponse: (handle, signal) => waitForGrainResponse(globalDb, handle, signal),
     keep: (handle) => keepRustGrainSession(globalDb, handle),
     close: (handle) => closeRustGrainSession(globalDb, handle),
     template: (handle, options) => createRustTemplateToken(globalDb, handle, options),
