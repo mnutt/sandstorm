@@ -366,6 +366,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await guest.waitForURL('**/shared/valid-share/next?x=1#part');
     await guest.getByRole('link',{name:'Notifications',exact:true}).click();
     assert.equal(await guest.locator('iframe').count(),1,'shared views stay mounted in the background');
+    await guest.reload();
+    await expect(guest.locator('iframe')).toHaveCount(1);
+    await expect(guest.locator('iframe:visible')).toHaveCount(0);
+    await expect(guest.getByRole('link',{name:'Switch to Shared test grain'})).toHaveAttribute('href','/shared/valid-share/next?x=1#part');
     await guest.getByRole('link',{name:'Switch to Shared test grain'}).click();
     sharedRevoked = true; await bridge.sweepGrains();
     await expect.poll(()=>liveGrains.size).toBe(0);
@@ -720,6 +724,36 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.evaluate(() => import('/grain-session-probe.js').then(probe => probe.closedSharing())), true,
       'retained sharing capabilities lose authority when their grain closes');
     await expect.poll(() => liveGrains.size).toBe(0);
+
+    // Each browser tab owns its reload workspace; shared authentication does
+    // not share the open-grain list.
+    const workspacePage=await context.newPage();
+    await workspacePage.goto(proxy.origin+'/grains');
+    await expect(workspacePage.locator('iframe')).toHaveCount(0);
+    await workspacePage.getByRole('link',{name:'Alice grain',exact:true}).click();
+    await workspacePage.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await workspacePage.frameLocator('iframe').locator('body').evaluate(()=>parent.postMessage({setPath:'/saved?edit=1#part'},'*'));
+    await workspacePage.waitForURL('**/grain/alice-grain/saved?edit=1#part');
+    await workspacePage.getByRole('link',{name:'Grains',exact:true}).click();
+    await workspacePage.getByRole('link',{name:'Zebra shared',exact:true}).click();
+    await expect(workspacePage.locator('iframe')).toHaveCount(2);
+    const oldFrames=await workspacePage.locator('iframe').evaluateAll(frames=>frames.map(frame=>frame.src));
+    await workspacePage.reload();
+    await expect(workspacePage.locator('iframe')).toHaveCount(2);
+    await expect(workspacePage.locator('iframe:visible')).toHaveAttribute('title','Zebra shared');
+    await expect(workspacePage.getByRole('link',{name:'Switch to Alice grain'})).toHaveAttribute('href','/grain/alice-grain/saved?edit=1#part');
+    const restoredFrames=await workspacePage.locator('iframe').evaluateAll(frames=>frames.map(frame=>frame.src));
+    assert.ok(restoredFrames.every(url=>!oldFrames.includes(url)),'reload establishes fresh sessions');
+    await workspacePage.getByRole('button',{name:'Close Alice grain',exact:true}).click();
+    await workspacePage.getByRole('link',{name:'Notifications',exact:true}).click();
+    await workspacePage.reload();
+    await expect(workspacePage.locator('iframe')).toHaveCount(1);
+    assert.equal(new URL(workspacePage.url()).pathname,'/notifications');
+    await expect(workspacePage.locator('iframe:visible')).toHaveCount(0);
+    await expect(workspacePage.getByRole('link',{name:'Switch to Alice grain'})).toHaveCount(0);
+    await expect(page.locator('iframe')).toHaveCount(0);
+    await workspacePage.close();
+    await expect.poll(()=>liveGrains.size).toBe(0);
 
     stallAssets=true;
     await page.getByRole('link',{name:'Alice grain',exact:true}).click();
@@ -1247,7 +1281,9 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await deep.goto(proxy.origin + '/grain/bob-grain');
     await expect(deep.getByRole('alert')).toContainText('Denied');
     await expect(deep.getByRole('alert')).not.toContainText('CAPNP');
-    assert.equal(await deep.locator('iframe').count(), 0);
+    await expect(deep.locator('iframe:visible')).toHaveCount(0);
+    await expect(deep.locator('iframe')).toHaveCount(1);
+    await expect(deep.getByRole('link',{name:'Switch to Hidden grain'})).toBeVisible();
     await deep.close();
     const racing = await context.newPage();
     await racing.goto(proxy.origin + '/grains');
@@ -1259,7 +1295,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await racing.waitForURL('**/notifications');
     await racing.getByRole('heading', {name:/Alice notification/}).waitFor();
     assert.equal(await racing.locator('iframe').count(), 0);
-    await expect.poll(() => liveGrains.size).toBe(0);
+    // Only the original browser tab's restored background grain remains.
+    await expect.poll(() => liveGrains.size).toBe(1);
     assert.equal(await racing.evaluate(async () => (await fetch('/auth/unknown')).status), 404);
     assert.equal(await racing.evaluate(async () => (await fetch('/missing.js')).status), 404);
     await racing.close();

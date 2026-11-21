@@ -842,6 +842,21 @@ passed 100 assertions; `TESTCASE=tests/rust-auth.js tests/run-local.sh
 build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk` passed
 18 account/profile/list assertions. Both packaged suites use isolated servers.
 
+## Browser-tab workspace restoration
+
+Open grain IDs and app paths are saved in `sessionStorage`, separately for each
+account and browser tab. Reloading restores background grains as well as the
+current route, including when the current page is Apps or Notifications. Shared
+links are saved as their URLs in the same tab-scoped storage; anonymous shared
+workspaces use a separate scope. Closing a grain removes it from the saved list.
+Login and authorization-completion pages do not start background grains.
+
+Restoration creates fresh, authorized sessions; session IDs, RPC capabilities,
+rendered templates, and iframe contents are not persisted. Deleted or denied
+grains are dropped after a failed restore. A transport reconnect still does not
+replay grain opens or other operations; a full page reload is the user's request
+to restore the saved workspace. Storage being unavailable does not prevent use.
+
 ## Installed restart and update recovery
 
 After `make fast`, run `make -C rust-shell test-recovery`. This dedicated gate

@@ -26,3 +26,5 @@ export { watchGrains } from '../src/lib/queries';
 export { ListCache } from '../src/lib/list-delta';
 
 export { authorizePopup, providerRequest, authorizationUrl } from '../src/lib/oauth';
+
+export { readTabs, saveTabs } from '../src/lib/workspace-storage';

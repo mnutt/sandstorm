@@ -51,6 +51,7 @@ export class ShellService {
           this.accountSettings.reset();
           this.update({ notificationError: '', grainError: '' });
         }
+        this.grains.selectAccount(key);
         this.apps.selectAccount(key);
         this.update({ fixture: session.fixture, account: session.account?.name ?? null, accountKey:key, accountPictureUrl:session.account?.pictureUrl || '' });
       },
@@ -87,6 +88,7 @@ export class ShellService {
   start() { this.connection.start(); }
   stop() { this.connection.stop(); }
   reconnect() { this.connection.reconnect(); }
+  restoreWorkspace(current?:string) { this.grains.restore(this.state.grains,current); }
   selectGrain(id: string | null) { this.grains.select(id); }
   grainPathChanged(id: string, path: string) { this.grains.pathChanged(id, path); }
   closeGrain(id?: string) { this.grains.close(id); }

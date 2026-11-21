@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { authorizePopup, providerRequest, authorizationUrl, ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { readTabs, saveTabs, authorizePopup, providerRequest, authorizationUrl, ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
@@ -693,4 +693,36 @@ test('authorization disposes a start result arriving after cancellation', async 
   assert.deepEqual(cancellations, ['late']);
   assert.deepEqual(providerRequest('saml','Finish','key'), {operation:'samlFinish',data:{request:'key'}});
   assert.deepEqual(providerRequest('github','Start'), {operation:'oauthStart',data:{provider:'github'}});
+});
+
+
+test('workspace reload restores account-scoped tabs with fresh sessions without selecting background tabs', async t => {
+  browserGlobals(t);
+  const storage=new Map();
+  globalThis.sessionStorage={getItem:key=>storage.get(key) ?? null,setItem:(key,value)=>storage.set(key,value)};
+  saveTabs('alice','grains',[{id:'a',path:'/draft?edit=1#part'},{id:'b',path:'/other'}]);
+  saveTabs('bob','grains',[{id:'private',path:'/'}]);
+  let state=initialShellState();const opened=[];
+  const connection={run:promise=>promise,shell:{...viewFactory(fill=>{
+    const params={};fill(params);opened.push(params.grainId);
+    return {promise:async()=>valueResult({view:{url:'https://app.test/init?sessionid=fresh',origin:'https://app.test',title:params.grainId},session:{
+      client:{close(){}},close:()=>({promise:async()=>{}}),
+      whenReady:()=>({promise:()=>new Promise(()=>{})}),whenClosed:()=>({promise:()=>new Promise(()=>{})}),
+    }})};
+  })}};
+  const workspace=new GrainWorkspace(connection,patch=>{state={...state,...patch};});
+  workspace.selectAccount('alice');workspace.restore([]);await turn();
+  assert.deepEqual(opened,['a','b']);assert.equal(state.activeGrain,null);
+  assert.deepEqual(state.openGrains.map(g=>[g.grainId,g.path]),[['a','/draft?edit=1#part'],['b','/other']]);
+  assert.equal(new URL(state.openGrains[0].url).searchParams.get('path'),'/draft?edit=1#part');
+  workspace.close('b');assert.deepEqual(readTabs('alice','grains'),[{id:'a',path:'/draft?edit=1#part'}]);
+  workspace.reset();workspace.restore([]);await turn();
+  assert.equal(opened.length,2,'transport recovery must not replay opens');
+  assert.equal(readTabs('alice','grains').length,1,'transport reset must preserve reload intent');
+  workspace.selectAccount('bob');workspace.restore([]);await turn();
+  assert.deepEqual(state.openGrains.map(g=>g.grainId),['private']);
+  workspace.selectAccount(null);assert.equal(state.openGrains.length,0);
+  storage.set('sandstorm.workspace.grains.bad','[{"id":"ok","path":"//evil.test"},{"id":"x","path":"/safe"}]');
+  assert.deepEqual(readTabs('bad','grains'),[{id:'x',path:'/safe'}]);
+  storage.set('sandstorm.workspace.grains.bad','invalid');assert.deepEqual(readTabs('bad','grains'),[]);
 });

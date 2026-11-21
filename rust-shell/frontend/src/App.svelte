@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { readTabs, saveTabs } from './lib/workspace-storage';
   import SignIn from './SignIn.svelte';
   import OAuthComplete from './OAuthComplete.svelte';
   import { readSidebarCollapsed, saveSidebarCollapsed } from './lib/preferences';
@@ -28,12 +29,25 @@
   let toolbarTarget = $state<HTMLDivElement>();
   let headerHeight = $state(44);
   let focusVersion = 0;
+  let sharedAccount = $state<string>();
   let sharedTabs = $state<{webkey:string;path:string;title:string;iconSrc:string}[]>([]);
   $effect(() => {
     const current = route;
+    if (['login','oauth-complete'].includes(current.page)) return;
+    if (model.status === 'ready') service.restoreWorkspace(current.page === 'grain' ? current.grainId : undefined);
+    if (model.status === 'ready' || model.status === 'signed-out') {
+      const account = model.accountKey || 'guest';
+      if (sharedAccount !== account) {
+        sharedAccount = account;
+        sharedTabs = readTabs(account,'shared').map(tab=>({webkey:tab.id,path:tab.path,title:'Shared grain',iconSrc:''}));
+      }
+    }
     if (current.page === 'shared' && (model.status === 'ready' || model.status === 'signed-out') && !sharedTabs.some(tab=>tab.webkey===current.webkey)) {
       sharedTabs = [...sharedTabs,{webkey:current.webkey,path:current.path,title:'Shared grain',iconSrc:''}];
     }
+  });
+  $effect(() => {
+    if (sharedAccount) saveTabs(sharedAccount,'shared',sharedTabs.map(tab=>({id:tab.webkey,path:tab.path})));
   });
   function sharedPathChanged(webkey:string,path:string) {
     sharedTabs = sharedTabs.map(tab=>tab.webkey===webkey?{...tab,path}:tab);
