@@ -11,3 +11,9 @@ export async function grainDisposition(connection:ShellConnection,id:string) {
   try { return unwrap((await connection.run(handle.read().promise(),'Check grain')).result).disposition; }
   finally { handle.client.close(); }
 }
+
+export async function prepareBackup(connection: ShellConnection, id: string) {
+  const handle = connection.shell.grain(p => { p.grainId = id; }).getHandle();
+  try { return unwrap((await connection.run(handle.prepareBackup().promise(), 'Prepare backup', {timeoutMs:null})).result).url; }
+  finally { handle.client.close(); }
+}

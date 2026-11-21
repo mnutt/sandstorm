@@ -1,3 +1,4 @@
+import { createNativeGrainBackup, nativeBackupDownload } from "/imports/server/backup";
 import { manageGrainForUser } from "/imports/shared/grain-shared";
 import { samlLogoutUrl } from "/imports/server/accounts/saml/saml-server";
 import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
@@ -76,8 +77,10 @@ export const rustShellBridge = createRustShellBridge({
   listApps: rustAppActions,
   install: rustInstall,
   createGrain: createRustGrain,
+  backupDownload: nativeBackupDownload,
   manageGrain: (accountId, grainId, operation, beforeWrite) => operation === "restart"
     ? restartGrainForUser(accountId, grainId, beforeWrite)
+    : operation === "backup" ? createNativeGrainBackup(accountId, grainId, beforeWrite)
     : manageGrainForUser(accountId, grainId, operation, beforeWrite),
   sessionStore: rustShellSessionStore,
   shared: {
@@ -107,7 +110,7 @@ export const rustShellBridge = createRustShellBridge({
       const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
       const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return { handle: { sessionId: session._id, accountId, grainId },
-        view: { grainId, origin, title, ownerTitle, owned: titles.owned, iconSrc: titles.iconSrc, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
+        view: { grainId, origin, title, ownerTitle, owned: titles.owned, backupWarning: titles.backupWarning || "", iconSrc: titles.iconSrc, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
     },
     waitForResponse: (handle, signal) => waitForGrainResponse(globalDb, handle, signal),
     keep: (handle) => keepRustGrainSession(globalDb, handle),

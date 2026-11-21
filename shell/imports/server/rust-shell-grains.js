@@ -1,14 +1,15 @@
+import { grainBackupWarning } from "/imports/shared/backup-warning";
 import { iconSrcForPackage, iconSrcForDenormalizedGrainMetadata } from "/imports/sandstorm-identicons/helpers";
 import { SandstormDb } from "/imports/sandstorm-db/db";
 import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 
 // Match the account's displayed title, including owner renames and personal overrides.
 export async function rustGrainTitles(db, accountId, grainId) {
-  const grain = await db.collections.grains.findOneAsync({ _id: grainId, userId: accountId }, { fields: { title: 1, packageId: 1 } });
+  const grain = await db.collections.grains.findOneAsync({ _id: grainId, userId: accountId }, { fields: { title: 1, packageId: 1, appId: 1 } });
   const staticPrefix = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("static");
   if (grain) {
     const pkg = grain.packageId && await db.collections.packages.findOneAsync(grain.packageId);
-    return { owned: true, title: grain.title, ownerTitle: grain.title,
+    return { backupWarning: grainBackupWarning(grain.appId), owned: true, title: grain.title, ownerTitle: grain.title,
       iconSrc: pkg ? iconSrcForPackage(pkg, "grain", staticPrefix) : "" };
   }
   const token = await db.collections.apiTokens.findOneAsync({ grainId,

@@ -1,4 +1,4 @@
-import { changeGrain, type GrainOperation } from './grain-management';
+import { changeGrain, prepareBackup, type GrainOperation } from './grain-management';
 import { ListCache } from './list-delta';
 import { grainRow, notificationRow, watchGrains, watchNotifications, type GrainQuery } from './queries';
 import { AccountService } from './account';
@@ -89,6 +89,7 @@ export class ShellService {
   start() { this.connection.start(); }
   stop() { this.connection.stop(); }
   reconnect() { this.connection.reconnect(); }
+  prepareBackup(id: string) { return prepareBackup(this.connection, id); }
   async manageGrain(id:string,operation:GrainOperation) {
     const account=this.accountKey;
     await changeGrain(this.connection,id,operation);

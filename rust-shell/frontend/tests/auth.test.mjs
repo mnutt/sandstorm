@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, chmod, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let vitePort;
   const liveGrains = new Set();
   const grainStates=new Map(), grainSessions=new Map();
-  let restarts=0;
+  let restarts=0, backups=0;
+  const backupFiles = new Map();
   let managementFailure=false;
   const responseReady = new Set(), responseEvents = new EventEmitter(), heldAssets = new Set();
   let stallAssets = false;
@@ -169,7 +170,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
         if (![`${id}-grain`, `${id}-hidden`, `${id}-created`, `${id}-extra`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
         const handle = ++serial; liveGrains.add(handle); grainSessions.set(handle,grainId);
-        return { handle, view: { grainId, owned: !grainId.endsWith('-extra'), iconSrc: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect width="24" height="24" fill="orange"/%3E%3C/svg%3E', title: grainId.endsWith('-hidden') ? 'Hidden grain' : grainId.endsWith('-extra') ? 'Zebra shared' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
+        return { handle, view: { grainId, owned: !grainId.endsWith('-extra'), backupWarning: grainId.endsWith('-hidden') ? 'Linked grains are not included.' : '', iconSrc: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect width="24" height="24" fill="orange"/%3E%3C/svg%3E', title: grainId.endsWith('-hidden') ? 'Hidden grain' : grainId.endsWith('-extra') ? 'Zebra shared' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
@@ -197,12 +198,19 @@ test('authenticated notifications: handoff, shared writes, account switching and
       },
       revokeTemplate: async () => { --templates; },
     },
+    backupDownload: async (account,id,consume,beforeWrite) => {
+      if(backupFiles.get(id)!==account) throw Object.assign(new Error('Backup unavailable'),{status:404});
+      await beforeWrite();
+      if(consume) { backupFiles.delete(id); await rm(join(directory,id)); }
+      return {name:'backup'};
+    },
     manageGrain: async (account,id,operation,beforeWrite) => {
       const state=grainStates.get(id) || 'active';
       if(operation==='read') return {state};
       await beforeWrite();
       if(managementFailure && id==='alice-extra') throw Object.assign(new Error('You cannot change this grain.'),{status:403});
       assert.ok(id.startsWith(account+'-'));
+      if(operation==='backup') { assert.ok(!id.endsWith('-extra')); const key='backup-'+(++backups); backupFiles.set(key,account); await writeFile(join(directory,key),'PK-test-backup'); return {id:key}; }
       if(operation==='restart') { assert.ok(!id.endsWith('-extra')); restarts++; return {}; }
       if(operation==='remove') assert.equal(state,'trashed');
       grainStates.set(id,operation==='trash'?'trashed':operation==='restore'?'active':'unavailable');
@@ -340,7 +348,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     rust = (await start('debug/sandstorm-rust-shell', [], {
       RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin, RUST_SHELL_DEV_PORT: vitePort?.toString(),
       RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_WILDCARD_HOST: new URL(mainOrigin).host, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
-      RUST_SHELL_FIXTURE_SOCKET: '',
+      RUST_SHELL_FIXTURE_SOCKET: '', RUST_SHELL_BACKUP_DIR: directory,
     }, /Rust shell: (https:\/\/\S+)/)).child;
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/usr/bin/chromium',
       headless: true, args: [`--ignore-certificate-errors-spki-list=${proxy.pin}`] });
@@ -741,12 +749,40 @@ test('authenticated notifications: handoff, shared writes, account switching and
       'retained sharing capabilities lose authority when their grain closes');
     await expect.poll(() => liveGrains.size).toBe(0);
 
+    const collection = await context.newPage();
+    await collection.goto(proxy.origin+'/grain/alice-hidden');
+    await collection.getByRole('button',{name:'Download backup',exact:true}).click();
+    const warningDialog = collection.getByRole('dialog',{name:'Download backup',exact:true});
+    await expect(warningDialog).toContainText('Linked grains are not included.');
+    assert.equal(backups,0);
+    await warningDialog.getByRole('button',{name:'Close',exact:true}).click();
+    assert.equal(backups,0);
+    await collection.close();
+
     // Bulk management, explicit permanent deletion, partial failure, and a
     // legacy-side change arriving through the existing list subscription.
     const management=await context.newPage();
     await management.goto(proxy.origin+'/grains');
     await management.getByRole('link',{name:'Alice grain',exact:true}).click();
     await management.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await management.getByRole('button',{name:'Download backup',exact:true}).click();
+    const backupDialog = management.getByRole('dialog',{name:'Download backup',exact:true});
+    const backupLink = backupDialog.getByRole('link',{name:'Download ZIP',exact:true});
+    await backupLink.waitFor();
+    const backupPath = await backupLink.getAttribute('href');
+    assert.match(backupPath,/^\/download-backup\//);
+    assert.equal((await context.request.head(proxy.origin+backupPath,{ignoreHTTPSErrors:true})).status(),405);
+    const stranger = await browser.newContext({ignoreHTTPSErrors:true});
+    assert.equal((await stranger.request.get(proxy.origin+backupPath)).status(),401);
+    await stranger.close();
+    const downloadEvent = management.waitForEvent('download');
+    await backupDialog.getByRole('link',{name:'Download ZIP',exact:true}).click();
+    const download = await downloadEvent;
+    assert.equal(download.suggestedFilename(),'backup.zip');
+    assert.equal(await download.failure(),null);
+    assert.equal(backups,1);
+    assert.equal((await context.request.get(proxy.origin+backupPath,{ignoreHTTPSErrors:true})).status(),404);
+    await expect(management.locator('iframe')).toHaveCount(1);
     const beforeRestart = await management.locator('iframe').getAttribute('src');
     await management.frameLocator('iframe').getByLabel('App state').fill('unsaved');
     await management.frameLocator('iframe').locator('body').evaluate(()=>parent.postMessage({setPath:'/current?edit=1#section'},'*'));
@@ -1302,7 +1338,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     rust = (await start('debug/sandstorm-rust-shell', [], {
       RUST_SHELL_SOCKET: socket, RUST_SHELL_ORIGIN: proxy.origin, RUST_SHELL_DEV_PORT: vitePort?.toString(),
       RUST_SHELL_MAIN_URL: mainOrigin, RUST_SHELL_WILDCARD_HOST: new URL(mainOrigin).host, RUST_SHELL_BRIDGE_SOCKET: bridgeSocket,
-      RUST_SHELL_FIXTURE_SOCKET: '',
+      RUST_SHELL_FIXTURE_SOCKET: '', RUST_SHELL_BACKUP_DIR: directory,
     }, /Rust shell: (https:\/\/\S+)/)).child;
     await page.reload();
     await page.frameLocator('iframe').getByRole('heading', { name: 'Embedded test grain' }).waitFor();

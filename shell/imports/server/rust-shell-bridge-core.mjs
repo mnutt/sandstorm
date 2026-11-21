@@ -11,7 +11,7 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, nativeAuth, logoutDestination, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, manageGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, nativeAuth, logoutDestination, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, manageGrain, backupDownload, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   const creating = new Set();
   const installing = new Set();
   const notificationWrites = new Set();
@@ -238,9 +238,20 @@ export function createRustShellBridge({ authorize, nativeAuth, logoutDestination
         };
         return action === "updateProfile" ? confirmMutation(read) : read();
       }
+      if (action === "backupDownload") {
+        if (!backupDownload || typeof input.id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(input.id) ||
+            typeof input.consume !== "boolean") throw Object.assign(new Error("Invalid backup request."), {status:400});
+        const beforeWrite = async () => {
+          await session(input.token);
+          if (signal.aborted) throw Object.assign(new Error("Backup request disconnected."), {status:409});
+        };
+        const result = await backupDownload(record.accountId, input.id, input.consume, beforeWrite);
+        await beforeWrite();
+        return result;
+      }
       if (action === "manageGrain") {
         if (!manageGrain || typeof input.grainId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(input.grainId) ||
-            !['read','trash','restore','remove','restart'].includes(input.operation)) throw Object.assign(new Error('Invalid grain action.'),{status:400});
+            !['read','trash','restore','remove','restart','backup'].includes(input.operation)) throw Object.assign(new Error('Invalid grain action.'),{status:400});
         const beforeWrite = async () => {
           await session(input.token);
           if (signal.aborted) throw Object.assign(new Error('Grain action disconnected.'),{status:409});
@@ -378,7 +389,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|waitSharedGrainResponse|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|waitGrainResponse|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|manageGrain|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|waitSharedGrainResponse|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|waitGrainResponse|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|manageGrain|backupDownload|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

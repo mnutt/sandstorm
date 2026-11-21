@@ -40,7 +40,6 @@ impl Bridge {
                 .unix_socket(socket)
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(5))
                 .build()?,
         })
     }
@@ -52,10 +51,10 @@ impl Bridge {
                 "The main shell is unavailable. Try again shortly.".into(),
             )
         };
-        let mut response = self
-            .client
-            .post(format!("http://bridge/{action}"))
-            .timeout(Duration::from_secs(
+        let mut request = self.client.post(format!("http://bridge/{action}"));
+        // Archive creation can take arbitrarily long, just as in the Meteor method.
+        if !(action == "manageGrain" && input["operation"] == "backup") {
+            request = request.timeout(Duration::from_secs(
                 if matches!(
                     action,
                     "watch" | "waitGrainResponse" | "waitSharedGrainResponse"
@@ -66,7 +65,9 @@ impl Bridge {
                 } else {
                     5
                 },
-            ))
+            ));
+        }
+        let mut response = request
             .json(&input)
             .send()
             .await

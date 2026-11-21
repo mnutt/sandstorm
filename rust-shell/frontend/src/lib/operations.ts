@@ -2,7 +2,7 @@ export class OperationTimeout extends Error {}
 
 export interface OperationOptions<T> {
   signal?: AbortSignal;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   onTimeout?: () => void;
   onLateResult?: (value: T) => void | Promise<void>;
 }
@@ -19,7 +19,7 @@ export function runOperation<T>(promise: PromiseLike<T>, label: string, options:
       action();
     };
     const abort = () => finish(() => reject(new Error(`${label}: connection or session changed.`)));
-    const timer = setTimeout(() => {
+    const timer = options.timeoutMs === null ? undefined : setTimeout(() => {
       finish(() => reject(new OperationTimeout(`${label} timed out.`)));
       options.onTimeout?.();
     }, options.timeoutMs ?? 10000);

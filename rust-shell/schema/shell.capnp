@@ -75,6 +75,7 @@ struct GrainView {
   ownerTitle @5 :Text;
   iconSrc @6 :Text;
   owned @7 :Bool; # Advisory UI hint; management operations recheck ownership.
+  backupWarning @8 :Text;
 }
 interface GrainSession {
   sharing @0 () -> (sharing :Sharing);
@@ -523,6 +524,7 @@ interface ViewReference {
 # Account-owned management selector; never requires opening a grain session.
 enum GrainDisposition { active @0; trashed @1; unavailable @2; }
 struct GrainManagementState { disposition @0 :GrainDisposition; }
+struct BackupDownload { url @0 :Text; }
 interface GrainHandle {
   read @0 () -> (result :Result(GrainManagementState));
   trash @1 () -> (result :Result(Empty));
@@ -531,4 +533,6 @@ interface GrainHandle {
   # Permanently deletes owned trashed grains; forgets the caller's trashed shares.
   restart @4 () -> (result :Result(Empty));
   # Owner-only shutdown preserving sessions; caller reloads its iframe on success.
+  prepareBackup @5 () -> (result :Result(BackupDownload));
+  # Owner-only archive creation. URL is an account-bound Rust HTTP download.
 }

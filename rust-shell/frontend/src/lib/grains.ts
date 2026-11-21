@@ -85,6 +85,7 @@ export class GrainService {
       this.active = {
         ready: false,
         owned: result.view.owned,
+        backupWarning: result.view.backupWarning,
         iconSrc: result.view.iconSrc || known?.iconSrc || '',
         grainId, path, origin: result.view.origin, url: url.href,
         title: result.view.title || known?.title || 'Grain',

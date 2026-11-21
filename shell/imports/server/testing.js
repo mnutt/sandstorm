@@ -1,3 +1,5 @@
+import { open as openFile } from "node:fs/promises";
+import { createNativeGrainBackup, nativeBackupDownload, restoreGrainBackup } from "/imports/server/backup";
 import { manageGrainForUser } from "/imports/shared/grain-shared";
 import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { appInstallPermissions } from "/imports/server/install-server";
@@ -2636,6 +2638,43 @@ if(isTesting) {
         return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
       }
       if (!record) throw new Meteor.Error(404, "No test session");
+      if (operation === "backup") {
+        for (const accountId of [null, "other-account"]) {
+          let denied = false;
+          try { await createNativeGrainBackup(accountId, grainId, async () => {}); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Non-owner backup accepted");
+        }
+        const before = await globalDb.collections.fileTokens.find({}).countAsync();
+        let checks = 0, canceled = false;
+        try {
+          await createNativeGrainBackup(this.userId, grainId, async () => {
+            if (++checks === 2) throw new Error("Backup login revoked");
+          });
+        } catch (error) { canceled = error.message === "Backup login revoked"; }
+        if (!canceled || checks !== 2 || await globalDb.collections.fileTokens.find({}).countAsync() !== before) {
+          throw new Error("Canceled backup retained its download token");
+        }
+        const {id} = await createNativeGrainBackup(this.userId, grainId, async () => {});
+        let foreignDenied = false;
+        try { await nativeBackupDownload("other-account", id, false, async () => {}); }
+        catch (error) { foreignDenied = error.error === 404; }
+        const legacy = await fetch(new URL("/downloadBackup/" + id, process.env.ROOT_URL));
+        const upload = await fetch(new URL("/uploadBackup/" + id, process.env.ROOT_URL), {method:"POST",body:"overwrite"});
+        let restoreDenied = false;
+        try { await restoreGrainBackup(id, {_id:"other-account"}); }
+        catch (error) { restoreDenied = error.error === 403; }
+        if (upload.status !== 403 || !restoreDenied) throw new Error("Native backup escaped account scope through a legacy operation");
+        const file = await openFile("/var/sandstorm/backups/" + id, "r");
+        try {
+          await nativeBackupDownload(this.userId, id, false, async () => {});
+          await nativeBackupDownload(this.userId, id, true, async () => {});
+          const bytes = Buffer.alloc(2);
+          await file.read(bytes, 0, 2, 0);
+          return {zip:bytes[0]===80 && bytes[1]===75,foreignDenied,legacyStatus:legacy.status};
+        } finally { await file.close(); }
+
+      }
       if (operation === "restart") {
         for (const accountId of [null, "other-account"]) {
           let denied = false;

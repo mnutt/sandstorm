@@ -844,6 +844,25 @@ build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk` pass
 
 ## Grain management
 
+Owned grains can prepare and download ZIP backups from the native toolbar.
+`GrainHandle.prepareBackup()` uses Meteor's canonical backup creation and returns
+a same-origin Rust `/download-backup/:id` URL. Collections retain the legacy
+warning about missing linked grains. Archive creation has no additional UI or
+bridge deadline; a revoked or disconnected creation request cannot receive its
+download token.
+
+The Rust HTTP handler checks the login and account-bound file token through the
+private bridge, opens the completed archive, and atomically consumes the token
+before sending bytes. The existing backend unlinks the archive while Rust streams
+its open file with backpressure; cancellation closes that handle. HEAD requests
+do not consume tokens. Native tokens cannot be downloaded through Meteor's legacy
+endpoint. Unused archives retain the existing cleanup schedule.
+
+The bundle sets `RUST_SHELL_BACKUP_DIR=/var/sandstorm/backups`. This uses the local
+archive directory already accessible to the Rust process under Sandstorm's service
+UID; no general backend capability is added. Creation, metadata, and authorization
+still depend on Meteor, but archive bytes and the HTTP download response do not.
+
 Owned grains have a native **Restart app** toolbar control that acts immediately,
 matching the legacy shell.
 `GrainHandle.restart()` uses the same owner check and session-preserving shutdown

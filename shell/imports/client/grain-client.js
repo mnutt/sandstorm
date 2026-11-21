@@ -16,6 +16,7 @@
 
 // This file implements /grain, i.e. the main view into an app.
 
+import { grainBackupWarning } from "/imports/shared/backup-warning";
 import { Meteor } from "meteor/meteor";
 import { Mongo } from "meteor/mongo";
 import { Match, check } from "meteor/check";
@@ -253,20 +254,9 @@ Template.grainBackupPopup.onCreated(function () {
 
   const grain = globalDb.collections.grains.findOne({ _id: this._grainId });
 
-  if (grain.appId === "s3u2xgmqwznz2n3apf30sm3gw1d85y029enw5pymx734cnk5n78h") {
-    // HACK: Display a warning if this is a Collections grain.
-    //
-    // TODO(soon): Figure out how to avoid special-casing here. Ideally, we would have some
-    // kind of machinery for rewiring the capabilities of restored backups, so that backup/restore
-    // would not result in a completely broken collection. Alternatively, we could add a field
-    // `Manifest.backupWarning` that we would display here if present.
-    this._state.set({
-      showWarning:
-        "Backing up a collection does not back up any of its linked grains, " +
-        "and restoring a collection does not automatically restore its links to grains. " +
-        "Unless your goal is to debug a problem with this collection, downloading " +
-        "a backup will not be very useful.",
-    });
+  const warning = grainBackupWarning(grain.appId);
+  if (warning) {
+    this._state.set({ showWarning: warning });
   } else {
     this._doBackup();
   }

@@ -54,7 +54,7 @@ Meteor.startup(() => {
   });
 });
 
-export const createGrainBackup = async (userId, grainId, async) => {
+export const createGrainBackup = async (userId, grainId, async, beforeWrite = async () => {}, native = false) => {
   check(grainId, String);
   const grain = await globalDb.collections.grains.findOneAsync(grainId);
   if (!grain || !userId || grain.userId !== userId) {
@@ -66,6 +66,8 @@ export const createGrainBackup = async (userId, grainId, async) => {
     timestamp: new Date(),
     name: grain.title,
   };
+
+  if (native) token.rustShellAccountId = userId;
 
   // TODO(soon): does the grain need to be offline?
 
@@ -100,6 +102,7 @@ export const createGrainBackup = async (userId, grainId, async) => {
     token.async = true;
   }
 
+  await beforeWrite();
   await globalDb.collections.fileTokens.insertAsync(token);
 
   const promise = globalThis.globalBackend.cap().backupGrain(token._id, userId, grainId, grainInfo);
@@ -117,11 +120,48 @@ export const createGrainBackup = async (userId, grainId, async) => {
       });
     });
   } else {
-    await promise;
+    try { await promise; }
+    catch (error) {
+      await cleanupToken(token._id).catch(err => console.error("Failed cleaning up backup:", err));
+      throw error;
+    }
   }
 
   return token._id;
 };
+
+// Native callers must still be authorized when the archive is ready. Never
+// return a download bearer token after cancellation or login revocation.
+export async function createNativeGrainBackup(accountId, grainId, beforeWrite) {
+  const token = await createGrainBackup(accountId, grainId, false, beforeWrite, true);
+  try {
+    await beforeWrite();
+    return { id: token };
+  } catch (error) {
+    await cleanupToken(token).catch(err => console.error("Failed cleaning up backup:", err));
+    throw error;
+  }
+}
+
+// Rust opens the archive after this account-bound lookup, then consumes the
+// token before sending any bytes. Unlinking preserves its already-open handle.
+export async function nativeBackupDownload(accountId, id, consume, beforeWrite) {
+  check(id, String);
+  const query = { _id: id, rustShellAccountId: accountId, rustShellConsumed: { $ne: true } };
+  const token = await globalDb.collections.fileTokens.findOneAsync(query);
+  if (!token) throw new Meteor.Error(404, "Backup is no longer available.");
+  await beforeWrite();
+  if (consume) {
+    if (await globalDb.collections.fileTokens.updateAsync(query, { $set: { rustShellConsumed: true } }) !== 1) {
+      throw new Meteor.Error(404, "Backup is no longer available.");
+    }
+    await globalThis.globalBackend.cap().deleteBackup(id);
+    // Keep the claimed row until deletion succeeds, so periodic cleanup can
+    // still remove the archive if the backend disconnects during consumption.
+    await globalDb.collections.fileTokens.removeAsync({ _id: id, rustShellAccountId: accountId });
+  }
+  return { name: token.name || "backup" };
+}
 
 export const createBackupToken = async () => {
   const token = {
@@ -139,6 +179,9 @@ export const restoreGrainBackup = async (tokenId, user, transferInfo) => {
   const token = await globalDb.collections.fileTokens.findOneAsync(tokenId);
   if (!token) {
     throw new Meteor.Error(403, "Token was not found");
+  }
+  if (token.rustShellAccountId && (token.rustShellAccountId !== user?._id || token.rustShellConsumed)) {
+    throw new Meteor.Error(403, "This backup belongs to another account.");
   }
 
   if (await globalDb.isUserOverQuotaAsync(user)) {
@@ -255,7 +298,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const downloadGrainBackup = async (tokenId, response, retryCount = 0) => {
   const token = await globalDb.collections.fileTokens.findOneAsync(tokenId);
-  if (!token) {
+  if (!token || token.rustShellAccountId) {
     response.writeHead(404, { "Content-Type": "text/plain" });
     return response.end("File does not exist");
   }
@@ -366,7 +409,7 @@ Router.map(function () {
     async action() {
       if (this.request.method === "POST") {
         const token = await globalDb.collections.fileTokens.findOneAsync(this.params.token);
-        if (!this.params.token || !token) {
+        if (!this.params.token || !token || token.rustShellAccountId) {
           this.response.writeHead(403, {
             "Content-Type": "text/plain",
             "Access-Control-Allow-Origin": "*",

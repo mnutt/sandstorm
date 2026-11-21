@@ -12,6 +12,8 @@ use tokio::sync::watch;
 pub struct View {
     #[serde(default)]
     pub owned: bool,
+    #[serde(default, rename = "backupWarning")]
+    pub backup_warning: String,
     #[serde(default)]
     pub lease: String,
     #[serde(rename = "grainId")]

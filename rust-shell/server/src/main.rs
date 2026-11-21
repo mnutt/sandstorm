@@ -1,4 +1,5 @@
 mod auth;
+mod backup;
 mod bridge;
 mod dev;
 mod grain;
@@ -73,6 +74,7 @@ async fn shutdown() {
 
 #[derive(Clone)]
 struct AppState {
+    backup_dir: Option<PathBuf>,
     auth: auth::Auth,
     origin: String,
     host: String,
@@ -172,6 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let fixture = bridge.is_none();
     let state = AppState {
+        backup_dir: std::env::var_os("RUST_SHELL_BACKUP_DIR").map(PathBuf::from),
         auth: auth::Auth {
             bridge,
             main_origin: reqwest::Url::parse(&main_url)?
@@ -248,6 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let url = main_url.clone();
             async move { Redirect::temporary(&url) }
         }))
+        .route("/download-backup/{id}", get(backup::download))
         .route("/rpc", get(upgrade))
         .route("/shared-rpc", get(upgrade_shared))
         .layer(axum::middleware::from_fn_with_state(state.clone(), |State(state): State<AppState>, request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {

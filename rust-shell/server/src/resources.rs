@@ -66,6 +66,7 @@ impl api::view_reference::Server for ViewReference {
         out.set_icon_src(&view.icon_src);
         out.set_main_href(&view.main_href);
         out.set_owned(view.owned);
+        out.set_backup_warning(&view.backup_warning);
         Ok(())
     }
 }
@@ -162,6 +163,29 @@ impl api::grain_handle::Server for GrainHandle {
         match self.change("restart").await {
             Ok(_) => {
                 results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+    async fn prepare_backup(
+        self: Rc<Self>,
+        _: api::grain_handle::PrepareBackupParams,
+        mut results: api::grain_handle::PrepareBackupResults,
+    ) -> capnp::Result<()> {
+        match self.change("backup").await {
+            Ok(value) => {
+                let id = value["id"]
+                    .as_str()
+                    .filter(|id| crate::backup::valid_id(id))
+                    .ok_or_else(|| capnp::Error::failed("Invalid backup ID".into()))?;
+                results
+                    .get()
+                    .init_result()
+                    .init_value()
+                    .set_url(format!("/download-backup/{id}"));
                 Ok(())
             }
             Err(error) => {

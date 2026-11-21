@@ -37,6 +37,7 @@ export interface AppAction {
   appTitle: string;
 }
 export interface ActiveGrain {
+  backupWarning: string;
   owned: boolean;
   ready: boolean;
   path: string;

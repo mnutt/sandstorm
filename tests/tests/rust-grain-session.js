@@ -39,6 +39,18 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
     const target = new URL(frame.src); target.searchParams.set('path', '/');
     frame.src = target.href;
   }).frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait).frame(null);
+  browser.executeAsync(async function (done) {
+    try {
+      const id = window.location.pathname.split('/')[2];
+      const result = await Meteor.callAsync('testRustGrainSession', 'backup', id);
+      done(result);
+    } catch (error) { done({error:error.message}); }
+  }, [], result => {
+    browser.assert.equal(result.value.error,null,'owner backup and canceled-token cleanup succeeded');
+    browser.assert.equal(result.value.foreignDenied,true,'backup token is account-bound');
+    browser.assert.equal(result.value.legacyStatus,404,'legacy endpoint rejects native backup tokens');
+    browser.assert.equal(result.value.zip,true,'download contains a ZIP archive');
+  });
   // Exercise the actual Meteor chooser against the leased session. This isolated
   // server uses the main origin as the simulated Rust opener; the HTTPS browser
   // suite separately verifies the cross-origin handoff.

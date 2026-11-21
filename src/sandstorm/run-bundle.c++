@@ -2890,6 +2890,7 @@ private:
       } else {
         KJ_SYSCALL(unsetenv("RUST_SHELL_DEV_PORT"));
       }
+      KJ_SYSCALL(setenv("RUST_SHELL_BACKUP_DIR", "/var/sandstorm/backups", true));
       KJ_SYSCALL(setenv("RUST_SHELL_ASSETS", "/rust-shell/dist", true));
       KJ_SYSCALL(setenv("RUST_SHELL_MAIN_URL", config.rootUrl.cStr(), true));
       if (config.wildcardHost != nullptr) {

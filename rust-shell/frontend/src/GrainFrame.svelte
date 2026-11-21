@@ -1,5 +1,6 @@
 <script lang="ts">
   import { applicationErrorMessage } from './lib/results';
+  import GrainBackup from './components/GrainBackup.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import { portal } from './lib/portal';
   import GrainIcon from './components/ui/GrainIcon.svelte';
@@ -17,7 +18,7 @@
   import { sharingRequest, type SharingRequest, type SharingActions } from './lib/sharing';
   import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, active, toolbarTarget, canManage = true, sharingActions, powerboxActions, renderTemplate, pathChanged, rename, restart }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; restart?: () => Promise<void>; sharingActions?: SharingActions; powerboxActions?: PowerboxActions; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
+  let { grain, active, toolbarTarget, canManage = true, sharingActions, powerboxActions, renderTemplate, pathChanged, rename, restart, prepareBackup }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; restart?: () => Promise<void>; prepareBackup?: () => Promise<string>; sharingActions?: SharingActions; powerboxActions?: PowerboxActions; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
   let restarting = $state(false);
   let restartError = $state('');
@@ -156,6 +157,7 @@
       </div>{/if}
     </div>
     {#if canManage}<div class="grain-actions">
+      {#if grain.owned && prepareBackup}<GrainBackup title={grain.title} warning={grain.backupWarning} prepare={prepareBackup} />{/if}
       {#if grain.owned && restart}
         <Button variant="chrome" aria-label="Restart app" title={restarting ? 'Restarting…' : 'Restart app'}
           disabled={restarting || reloadPending} onclick={restartApp}><ShellIcon name="restart" toolbar /></Button>
