@@ -8,13 +8,14 @@
   import TextInput from './components/ui/TextInput.svelte';
   import NativeSelect from './components/ui/NativeSelect.svelte';
   import Panel from './components/ui/Panel.svelte';
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import { rememberRoute, appRoute } from './lib/router';
   import type { ShellService, ShellState, AppAction } from './lib/shell';
   let { service, model, appId, navigate, created, checkGrains }: { service: ShellService; model: ShellState; appId?: string;
     navigate: (path: string) => void; created: (id: string) => void; checkGrains: () => void } = $props();
   const status = $derived(model.status);
   const fixture = $derived(model.fixture);
+  const appsVersion = $derived(model.appsVersion);
   const creation = $derived(model.creation);
   const appGrains = $derived({ ...model, grains: model.grains.filter(grain => grain.appId === appId) });
   function openApp(event: MouseEvent, id: string) {
@@ -22,7 +23,7 @@
     event.preventDefault();
     navigate(appRoute(id));
   }
-  $effect(() => { appId; selected = ''; });
+  $effect(() => { appId; selected = ''; page = 0; });
   let actions: AppAction[] = $state([]);
   let limited = $state(false);
   let page = $state(0);
@@ -57,7 +58,8 @@
   let alive = true;
   async function load(nextPage = 0) {
     const current = ++epoch;
-    loading = true;
+    loading = actions.length === 0;
+    error = '';
     try {
       const result = await service.listApps(nextPage, appId || '');
       if (current !== epoch) return;
@@ -66,7 +68,9 @@
     finally { if (current === epoch) loading = false; }
   }
   $effect(() => {
-    if (status === 'ready' && !fixture) void load();
+    appsVersion;
+    appId;
+    if (status === 'ready' && !fixture) untrack(() => { void load(page); });
     else { ++epoch; actions = []; selected = ''; title = 'New grain'; loading = false; }
   });
   onDestroy(() => { alive = false; ++epoch; });

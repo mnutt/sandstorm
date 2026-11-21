@@ -59,6 +59,7 @@ export interface ShellState {
   hasUnread: boolean;
   status: ConnectionStatus;
   entries: Notification[];
+  appsVersion: string;
   revision: number;
   connectionError: string;
   notificationError: string;
@@ -76,7 +77,7 @@ export interface ShellState {
 export function initialShellState(): ShellState {
   return {
     accountSettings: emptyAccount(), profile: emptyProfile(), hasUnread:false, status: 'connecting', entries: [], grains: [], grainsLimited: false,
-    activeGrain: null, openGrains: [], openingGrain: false, revision: 0,
+    activeGrain: null, openGrains: [], openingGrain: false, revision: 0, appsVersion: '',
     connectionError: '', notificationError: '', grainError: '', pending: false,
     fixture: true, accountPictureUrl: '', account: null, accountKey:null, total: 0, creation: { status: 'idle' },
   };

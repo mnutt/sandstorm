@@ -1,4 +1,4 @@
-use crate::{bridge::Session, grain::Scope, shell_capnp as api};
+use crate::{grain::Scope, session::Session, shell_capnp as api};
 use std::rc::Rc;
 
 pub struct Action {

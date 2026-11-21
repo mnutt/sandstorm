@@ -1,3 +1,4 @@
+use crate::read_model::{GrainQuery, GrainSort, Ownership, Pages};
 use crate::shell_capnp::shell;
 use std::{rc::Rc, time::Duration};
 use tokio::sync::watch;
@@ -7,7 +8,7 @@ struct Entry {
     id: u32,
     title: String,
     body: String,
-    real: Option<crate::bridge::Entry>,
+    real: Option<crate::read_model::Entry>,
 }
 #[derive(Clone)]
 struct Projection {
@@ -15,9 +16,10 @@ struct Projection {
     next_id: u32,
     entries: Vec<Entry>,
     total: u32,
-    grains: Vec<crate::bridge::Grain>,
+    grains: Vec<crate::read_model::Grain>,
     grains_limited: bool,
     profile_version: String,
+    apps_version: String,
     has_unread: bool,
     account_picture_url: String,
 }
@@ -27,7 +29,7 @@ pub struct Shell {
     interop: Rc<crate::interop::Link>,
     state: watch::Sender<Projection>,
     pub observations: crate::observation::Scope,
-    session: Option<crate::bridge::Session>,
+    session: Option<crate::session::Session>,
     version: String,
     pub grain: Option<Rc<crate::grain::Scope>>,
 }
@@ -35,8 +37,8 @@ pub struct Shell {
 impl Shell {
     pub fn new(
         interop: Rc<crate::interop::Link>,
-        session: Option<crate::bridge::Session>,
-        initial: Option<crate::bridge::Snapshot>,
+        session: Option<crate::session::Session>,
+        initial: Option<crate::read_model::Snapshot>,
     ) -> capnp::Result<Self> {
         let entries = if let Some(initial) = &initial {
             initial
@@ -64,6 +66,10 @@ impl Shell {
             .map(|snapshot| snapshot.version.clone())
             .unwrap_or_default();
         let (state, _) = watch::channel(Projection {
+            apps_version: initial
+                .as_ref()
+                .map(|s| s.apps_version.clone())
+                .unwrap_or_default(),
             profile_version: initial
                 .as_ref()
                 .map(|s| s.profile_version.clone())
@@ -102,9 +108,8 @@ impl Shell {
         };
         let mut version = self.version.clone();
         loop {
-            // Mongo observation wakes this bounded long-poll on legacy or Rust writes.
-            // The bridge revalidates authority while waiting and before returning data.
-            let Ok(snapshot) = session.watch(&version, serde_json::json!({})).await else {
+            // Reads revalidate authority while waiting and before returning data.
+            let Ok(snapshot) = session.watch(&version, Pages::default()).await else {
                 return;
             };
             version = snapshot.version.clone();
@@ -121,6 +126,7 @@ impl Shell {
                     .collect();
                 if state.has_unread == snapshot.has_unread
                     && state.account_picture_url == snapshot.account_picture_url
+                    && state.apps_version == snapshot.apps_version
                     && state.profile_version == snapshot.profile_version
                     && state.entries == entries
                     && state.total == snapshot.total
@@ -132,6 +138,7 @@ impl Shell {
                 state.has_unread = snapshot.has_unread;
                 state.account_picture_url = snapshot.account_picture_url;
                 state.profile_version = snapshot.profile_version;
+                state.apps_version = snapshot.apps_version;
                 state.grains = snapshot.grains;
                 state.grains_limited = snapshot.grains_limited;
                 state.entries = entries;
@@ -155,15 +162,21 @@ impl shell::Server for Shell {
         let search = query.get_search()?.to_str()?.to_owned();
         let app_id = query.get_app_id()?.to_str()?.to_owned();
         let sort = match query.get_sort()? {
-            crate::shell_capnp::GrainSort::Recent => "recent",
-            crate::shell_capnp::GrainSort::Title => "title",
+            crate::shell_capnp::GrainSort::Recent => GrainSort::Recent,
+            crate::shell_capnp::GrainSort::Title => GrainSort::Title,
         };
         let ownership = match query.get_ownership()? {
-            crate::shell_capnp::GrainOwnership::All => "all",
-            crate::shell_capnp::GrainOwnership::Owned => "owned",
-            crate::shell_capnp::GrainOwnership::Shared => "shared",
+            crate::shell_capnp::GrainOwnership::All => Ownership::All,
+            crate::shell_capnp::GrainOwnership::Owned => Ownership::Owned,
+            crate::shell_capnp::GrainOwnership::Shared => Ownership::Shared,
         };
-        let filter = serde_json::json!({"search":search,"appId":app_id,"sort":sort,"ownership":ownership,"trash":query.get_trash()});
+        let filter = GrainQuery {
+            search,
+            app_id,
+            sort,
+            ownership,
+            trash: query.get_trash(),
+        };
         let observer = input.get_observer()?;
         let session = self
             .session
@@ -178,7 +191,10 @@ impl shell::Server for Shell {
                     let snapshot = session
                         .watch_query(
                             &version,
-                            serde_json::json!({"grains":page}),
+                            Pages {
+                                grains: page,
+                                ..Pages::default()
+                            },
                             Some(filter.clone()),
                         )
                         .await;
@@ -248,7 +264,14 @@ impl shell::Server for Shell {
                 let mut revision = 0;
                 loop {
                     let snapshot = session
-                        .watch_query(&version, serde_json::json!({"notifications":page}), None)
+                        .watch_query(
+                            &version,
+                            Pages {
+                                notifications: page,
+                                ..Pages::default()
+                            },
+                            None,
+                        )
                         .await;
                     let snapshot = match snapshot {
                         Ok(value) => value,
@@ -370,17 +393,12 @@ impl shell::Server for Shell {
         let input = params.get()?;
         let page = input.get_page();
         let app_id = input.get_app_id()?.to_str()?;
-        let value = match session
-            .call("listApps", serde_json::json!({"page":page,"appId":app_id}))
-            .await
-        {
+        let list = match session.apps(page, app_id).await {
             Ok(value) => value,
             Err(error) => {
                 return crate::workflow::failure(error, results.get().init_result().init_failure())
             }
         };
-        let list: crate::bridge::AppList = serde_json::from_value(value)
-            .map_err(|_| capnp::Error::failed("Invalid app list".into()))?;
         let mut out = results.get().init_result().init_value();
         out.set_limited(list.limited);
         let mut actions = out.init_actions(list.actions.len() as u32);
@@ -503,6 +521,7 @@ impl shell::Server for Shell {
                         let mut out = request.get().init_snapshot();
                         out.set_account_picture_url(&snapshot.account_picture_url);
                         out.set_profile_version(&snapshot.profile_version);
+                        out.set_apps_version(&snapshot.apps_version);
                         out.set_has_unread(snapshot.has_unread);
                         out.set_revision(snapshot.revision);
                         revision += 1;
@@ -621,7 +640,7 @@ impl shell::Server for Shell {
     }
 }
 
-fn write_grain(grain: &crate::bridge::Grain, mut out: crate::shell_capnp::grain::Builder<'_>) {
+fn write_grain(grain: &crate::read_model::Grain, mut out: crate::shell_capnp::grain::Builder<'_>) {
     out.set_key(&grain.key);
     out.set_title(&grain.title);
     out.set_owner_title(&grain.owner_title);
@@ -633,7 +652,7 @@ fn write_grain(grain: &crate::bridge::Grain, mut out: crate::shell_capnp::grain:
     out.set_icon_src(&grain.icon_src);
 }
 fn write_notification(
-    entry: &crate::bridge::Entry,
+    entry: &crate::read_model::Entry,
     mut out: crate::shell_capnp::notification::Builder<'_>,
 ) {
     out.set_key(&entry.key);

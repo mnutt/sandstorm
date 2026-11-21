@@ -2,10 +2,43 @@
 
 A separate Rust/Axum process serving a static Svelte 5 / TypeScript frontend.
 This is an initial spike for `~/docs/sandstorm/new-architecture.md`, using
-real notifications and a grain menu through a narrowly scoped Meteor
-bridge when installed.
+native Mongo-backed session validation, notifications, and grain/app lists when installed.
 Standalone runs use fixtures, including a separate C++ capability fixture for
-browser → Rust → C++ RPC. Meteor remains the account and database authority.
+browser → Rust → C++ RPC. Unported commands and sign-in providers still use a private Meteor bridge.
+
+## Storage boundary
+
+`server/src/read_model.rs` defines typed application read models; RPC builders and
+Mongo documents stay on opposite sides of this boundary. `session.rs` coordinates
+authenticated reads and the remaining Meteor commands. `repository/` owns BSON
+queries, existing login-token validation, list projections, and one shared database
+change stream. Database failures fail closed without deleting the login cookie or
+falling back to Meteor. The bridge read adapter is retained for isolated fixtures.
+
+The bundle provides `RUST_SHELL_MONGO_URL` using the same private Mongo configuration
+as Meteor. No schema migration or second session store is needed. Native logout
+deletes the existing hashed linked-session record; Meteor still initiates provider
+logout when available. Upstream token removal, suspension, and expiry revoke native
+access too. Idle subscriptions revalidate authorization independently of UI changes.
+
+Grain lists use one combined owned/shared query, filtering and sorting before
+paging. The root menu uses that same query. App-list versions hash account-visible
+data, not global database activity. Change-stream interruption closes live
+subscriptions; reconnect reads fresh authorized snapshots.
+
+With Meteor unavailable an already authenticated browser can reload and read live
+grain/app lists. Opening grains, mutations, provider sign-in, profile operations,
+and static-host images still use existing Sandstorm services. This is the first
+storage migration slice, not a replacement for all of Meteor.
+
+`make -C rust-shell test-mongo` starts a disposable single-node Mongo replica set
+using the bundled `mongod7`. It exercises reads, live updates, account isolation,
+and session revocation without any Meteor process or bridge. It never accepts an
+installed database URI. It also checks idle expiry and Mongo restart recovery.
+The normal test suite covers the fixture bridge and RPC. `test-recovery` suspends
+only the isolated installation’s Meteor process and verifies authenticated reload,
+live grain/app writes, live suspension, and durable native logout.
+
 
 ## Run alongside Sandstorm
 
@@ -143,7 +176,8 @@ Meteor issues a one-use, 60-second grant bound to the browser's sign-in nonce.
 The form posts it to Rust, which exchanges it through a private mode-0600 Unix
 socket. The browser receives a Secure, HttpOnly, SameSite=Lax session cookie;
 Meteor resume tokens never cross the bridge. Sessions last at most 12 hours and
-are revalidated against the original Meteor login token on every bridge call.
+are revalidated against the original Meteor login token on every native read
+and every remaining bridge call.
 Logging out that source session or suspending the account revokes access.
 **Switch account** repeats the handoff and revokes the previous linked session.
 Changing accounts elsewhere without revoking that login does not implicitly
@@ -151,9 +185,8 @@ change the Rust shell's selected account. **Disconnect** revokes the Rust sessio
 Linked sessions survive Meteor restarts and `sandstorm update`. A server-only,
 unpublished `rustShellLinkedSessions` Mongo collection stores the SHA-256 hash of
 the random bearer token, the account ID, the original Meteor login-token hash,
-and a fixed expiry. It never stores the raw bearer or Meteor resume token. The
-session-store interface is independent of Mongo so storage can migrate later;
-Meteor remains the authentication authority. Expiry is enforced on reads, with
+and a fixed expiry. It never stores the raw bearer or Meteor resume token. Meteor mints links and owns provider sign-in; Rust validates the existing
+Mongo records directly. Expiry is enforced on reads, with
 periodic pruning and a TTL index for cleanup. Restart does not extend the 12-hour
 limit. Disconnect and account switching remove the persisted link; source logout
 and suspension invalidate it on the next authorization check. Database outages
@@ -164,12 +197,12 @@ a grain and chooser are open, verifies waiting/recovery with the same cookie,
 and verifies that neither UI operation is replayed. The real Mongo regression
 checks bridge recreation, durable disconnect, and source-token revocation.
 
-During a bridge outage the frontend displays **Waiting for the main shell…**
-and retries. A live-update initialization timeout has its own message; a timeout
-alone does not establish whether Meteor was still starting.
+A Mongo outage preserves the login cookie while the frontend waits and retries.
+A Meteor bridge outage affects unported operations, but native list reads and
+logout remain available.
 
 Installed mode reads up to 100 of the account's newest real notifications, with a
-total count. Mongo observers wake a pending Rust request when notifications,
+total count. The shared Mongo change stream wakes native reads when notifications,
 owned/shared grain titles, referenced sender names, or account authority change. Rust pushes changed snapshots
 over Cap'n Proto. Dismiss, cancel ongoing activity, and mark-all-read delegate to the
 same Meteor functions used by the main UI, including ownership and cleanup checks.
@@ -217,43 +250,34 @@ is absent or fails to load. App icons and localized notification copy remain to 
 There is no test-notification button in this mode. Standalone runs without
 `RUST_SHELL_BRIDGE_SOCKET` retain the isolated fixture UI.
 
-The private bridge uses JSON HTTP over a Unix socket. It exposes only
-session exchange/validation and account-scoped notification operations; it never
+The private bridge uses JSON HTTP over a Unix socket for sign-in, grain sessions,
+and unported commands. It never
 accepts browser-provided account IDs or Mongo selectors. Browser RPC remains
 Cap'n Proto. Authentication failures close active RPC connections and clear old
 UI state on reconnect. While idle, authority is checked every second without
 rebuilding notification projections; account changes also wake the request.
 
-The internal `watch` operation is a bounded long-poll, with one request in flight
-per observation, with no bridge-wide watch quota. Observers are attached
-before reading a snapshot. A content hash detects changes between requests, and
-a dirty flag catches writes during a read without accumulating an event queue.
-Every returned projection is reauthorized. Unchanged requests return after 20
-seconds so Rust can establish a fresh watch (30-second HTTP deadline). Disconnects,
-errors, completion, and cancellation release the request's Mongo observers.
-This is ephemeral observation, not durable replay. Each browser connection owns
-its projection observation until disconnect; the browser callback capability
-separately controls delivery of those snapshots.
+Native reads subscribe to the shared database change stream before projecting
+data. A content hash detects material changes; the notification channel retains
+invalidations during a read without accumulating a per-client event queue. Every
+returned projection is reauthorized. Cancellation drops the receiver. Stream
+failure closes subscriptions; reconnect obtains a fresh snapshot. This is
+ephemeral observation, not durable replay. The old HTTP long-poll adapter is used
+only by bridge fixtures when no native repository is configured.
 
-### Read-only grain menu
+### Grain lists
 
-The **Grains** page shares the authenticated connection and revisioned account
-snapshot with notifications. It shows grain and app titles, owned/shared labels, last-used times,
-and links into the main shell. Search matches title or app within the loaded
-preview; ownership filtering and sorting by title or recent use also stay local.
-App names come from referenced packages for owned grains and recipient metadata
-for shares. Package-name changes wake observation. Missing metadata displays an
-unknown-app label. Refresh/reconnect clears old data and obtains a new authorized
-snapshot; the initial session check has a timeout and is canceled on reconnect.
-The menu remains read-only. **Open here** now requests an explicitly leased UI
-session from Meteor; Rust does not own grain execution.
+The **Grains** page uses an authenticated query subscription. Mongo combines owned
+and shared grains, filters by title/app/ownership/trash, and sorts before paging
+100 rows at a time. The root menu uses the same combined query. Recipient tokens
+are deduplicated before paging; the oldest token supplies the recipient title
+and the latest usage time determines ordering. Self-shares are suppressed even
+for owned grains in the trash. Suspended and directly revoked records are excluded.
 
-The projection includes at most 50 owned grains and 50 shared candidates. Mongo
-groups recipient tokens by grain before limiting; the oldest token supplies the
-recipient's title and the latest usage time determines ordering. Self-shares are
-suppressed even for owned grains outside the preview or in the trash. Trashed,
-suspended, and directly revoked records are excluded. A limit indicator links to
-the complete main-shell list; this is not a paginated replacement yet.
+Clicking a grain opens it in the native shell; the leased app session is still
+created through Meteor. Account switching, logout, and subscription failures
+clear the old projection. App names come from packages for owned grains and
+recipient metadata for shares.
 
 Shared entries use recipient token metadata for display names and upstream
 owner titles, matching the main shell’s title helper. Menu presence does not grant

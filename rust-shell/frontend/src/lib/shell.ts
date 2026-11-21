@@ -80,7 +80,7 @@ export class ShellService {
     this.profile.observe(snapshot.profileVersion);
     const entries = this.notificationList.apply(snapshot.entries.delta, [...snapshot.entries.upserts].map(notificationRow));
     const grains = this.grainList.apply(snapshot.grains.delta, [...snapshot.grains.upserts].map(grainRow));
-    this.update({hasUnread:snapshot.hasUnread, accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grains.hasMore,
+    this.update({appsVersion:snapshot.appsVersion, hasUnread:snapshot.hasUnread, accountPictureUrl:snapshot.accountPictureUrl, status: 'ready', entries, grains, grainsLimited: snapshot.grains.hasMore,
       revision: snapshot.revision, total: snapshot.entries.total, connectionError: '' });
     this.grains.applyMenu(grains);
   }

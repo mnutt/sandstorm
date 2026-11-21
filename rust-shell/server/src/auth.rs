@@ -1,7 +1,4 @@
-use crate::{
-    bridge::{Bridge, Session},
-    AppState,
-};
+use crate::{bridge::Bridge, session::Session, AppState};
 use axum::{
     extract::{Form, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -16,6 +13,7 @@ const FLOW: &str = "__Host-sandstorm-rust-flow";
 
 #[derive(Clone)]
 pub struct Auth {
+    pub repository: Option<std::sync::Arc<crate::repository::Repository>>,
     pub bridge: Option<Bridge>,
     pub main_url: String,
     pub main_origin: String,
@@ -66,6 +64,7 @@ pub fn error((status, message): crate::bridge::Error) -> Response {
 
 pub fn session(auth: &Auth, headers: &HeaderMap) -> Option<Session> {
     Some(Session {
+        repository: auth.repository.clone(),
         bridge: auth.bridge.clone()?,
         token: cookie(headers, SESSION)?,
     })
@@ -78,8 +77,9 @@ pub async fn status(State(state): State<AppState>, headers: HeaderMap) -> Respon
     let Some(session) = session(&state.auth, &headers) else {
         return error((StatusCode::UNAUTHORIZED, "Sign in with Sandstorm.".into()));
     };
-    match session.call("session", json!({})).await {
-        Ok(mut value) => {
+    match session.info().await {
+        Ok(info) => {
+            let mut value = json!(info);
             value["fixture"] = json!(false);
             Json(value).into_response()
         }
@@ -223,7 +223,7 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     }
     let mut result = json!({});
     if let Some(session) = session(&state.auth, &headers) {
-        match session.call("logout", json!({})).await {
+        match session.logout().await {
             Ok(value) => result = value,
             Err(err) => return error(err),
         }

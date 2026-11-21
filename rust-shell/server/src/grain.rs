@@ -1,4 +1,4 @@
-use crate::{bridge::Session, shell_capnp::grain_session};
+use crate::{session::Session, shell_capnp::grain_session};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -376,6 +376,7 @@ mod tests {
                     axum::serve(listener, app).await.unwrap();
                 });
                 let scope = GrainScope::new(Session {
+                    repository: None,
                     bridge: crate::bridge::Bridge::new(path.clone()).unwrap(),
                     token: "token".into(),
                 })
@@ -409,6 +410,7 @@ mod tests {
         tokio::task::LocalSet::new()
             .run_until(async {
                 let scope = GrainScope::new(Session {
+                    repository: None,
                     bridge: crate::bridge::Bridge::new("/dev/null/grain-test.sock".into()).unwrap(),
                     token: "test".into(),
                 })

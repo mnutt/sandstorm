@@ -9,10 +9,13 @@ mod notification;
 mod observation;
 mod powerbox;
 mod profile;
+mod read_model;
 mod readiness;
+mod repository;
 mod resources;
 mod rpc_protocol;
 mod service;
+mod session;
 mod shared;
 mod sharing;
 mod template;
@@ -44,7 +47,7 @@ use tower_http::{
 
 type Connection = (
     axum::extract::ws::WebSocket,
-    Option<bridge::Session>,
+    Option<crate::session::Session>,
     Option<bridge::Bridge>,
 );
 
@@ -96,7 +99,7 @@ async fn upgrade(
         let Some(session) = auth::session(&state.auth, &headers) else {
             return StatusCode::UNAUTHORIZED.into_response();
         };
-        if let Err(error) = session.call("session", serde_json::json!({})).await {
+        if let Err(error) = session.info().await {
             return auth::error(error);
         }
         Some(session)
@@ -172,10 +175,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if bridge.is_some() && !origin.starts_with("https://") {
         return Err("The authenticated bridge requires an HTTPS origin behind the gateway".into());
     }
+    let repository = match std::env::var("RUST_SHELL_MONGO_URL") {
+        Ok(uri) => Some(
+            repository::Repository::connect(
+                &uri,
+                &main_url,
+                &std::env::var("RUST_SHELL_WILDCARD_HOST")?,
+            )
+            .await?,
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(error.into()),
+    };
     let fixture = bridge.is_none();
     let state = AppState {
         backup_dir: std::env::var_os("RUST_SHELL_BACKUP_DIR").map(PathBuf::from),
         auth: auth::Auth {
+            repository,
             bridge,
             main_origin: reqwest::Url::parse(&main_url)?
                 .origin()

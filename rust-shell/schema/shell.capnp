@@ -48,6 +48,7 @@ struct Snapshot {
   profileVersion @3 :Text;
   accountPictureUrl @4 :Text;
   hasUnread @5 :Bool;
+  appsVersion @6 :Text; # Account-scoped material app-list version.
   # Each callback replaces scalar fields and applies both list deltas atomically.
   # First callback means ready.
   # Reconnecting replaces state with an authorized snapshot and a new revision sequence.

@@ -1,8 +1,8 @@
 // Installed-server recovery gate. Called only by tests/tests/rust-recovery.js.
 import assert from 'node:assert/strict';
-import {execFile} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFile, appendFile, realpath} from 'node:fs/promises';
+import {readFile, appendFile, realpath, readdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {join} from 'node:path';
 import {createHash, X509Certificate} from 'node:crypto';
@@ -23,6 +23,77 @@ export async function prepareRecovery(directory) {
     '-addext','subjectAltName=DNS:local.sandstorm.io,DNS:*.local.sandstorm.io','-keyout',key,'-out',cert]);
   return {key:await readFile(key,'utf8'),certChain:await readFile(cert,'utf8')};
 }
+// Select by ancestry under this installation's supervisor. Sandstorm's user
+// namespace may prevent /proc/<pid>/root inspection even for its owning user.
+async function meteorProcess(directory) {
+  const supervisor = Number((await readFile(join(directory, 'var/pid/sandstorm.pid'), 'utf8')).trim());
+  assert.ok(Number.isSafeInteger(supervisor) && supervisor > 1);
+  const processes = new Map();
+  for (const name of await readdir('/proc')) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const status = await readFile(`/proc/${name}/status`, 'utf8');
+      const args = (await readFile(`/proc/${name}/cmdline`, 'utf8')).split('\0');
+      processes.set(Number(name), {parent:Number(status.match(/^PPid:\s+(\d+)/m)?.[1]), args});
+    } catch { /* Process exited or belongs to another user. */ }
+  }
+  const matches = [];
+  for (const [pid, {args}] of processes) {
+    if (!args.includes('sandstorm-main.js')) continue;
+    let parent = processes.get(pid)?.parent;
+    while (parent > 1 && parent !== supervisor) parent = processes.get(parent)?.parent;
+    if (parent === supervisor) matches.push(pid);
+  }
+  assert.equal(matches.length, 1, 'one Meteor descendant of the isolated supervisor');
+  return matches[0];
+}
+
+function mongo(directory, script) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(join(directory, 'sandstorm'), ['mongo'], {stdio:['pipe','ignore','pipe']});
+    let error = '';
+    child.stderr.on('data', chunk => { error += chunk; });
+    child.on('error', reject);
+    child.on('exit', code => code === 0 ? resolve() : reject(new Error(`Isolated Mongo command failed: ${error}`)));
+    child.stdin.end(`try { ${script}; quit(0); } catch (error) { print(error); quit(1); }\n`);
+  });
+}
+
+async function withoutMeteor(directory, page, context, grainId, login) {
+  await isolated(directory);
+  // Discard open-grain restoration: opening apps is a later migration slice.
+  await page.evaluate(() => sessionStorage.clear());
+  await page.goto(origin + '/grains');
+  await page.locator('.grain-name').first().waitFor();
+  const pid = await meteorProcess(directory);
+  process.kill(pid, 'SIGSTOP');
+  try {
+    await page.reload();
+    await page.locator('.grain-name').first().waitFor({timeout:30000});
+    assert.equal((await context.request.get(origin + '/auth/session')).status(), 200);
+    await mongo(directory, `db.grains.updateOne({_id:${JSON.stringify(grainId)}},{$set:{title:'Written while Meteor stopped'}})`);
+    await expect(page.locator('.grain-name').filter({hasText:'Written while Meteor stopped'})).toBeVisible();
+    await page.getByRole('link', {name:'Apps', exact:true}).click();
+    await page.locator('.app-tile[href^="/apps/"]').first().waitFor();
+    await mongo(directory, `const account=db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId; db.userActions.updateMany({userId:account},{$set:{appTitle:{defaultText:'Updated while Meteor stopped'}}})`);
+    await page.locator('.app-tile').filter({hasText:'Updated while Meteor stopped'}).first().waitFor();
+    // Invalidate an already-open root RPC, not just the next HTTP request.
+    await mongo(directory, `db.users.updateOne({_id:db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId},{$set:{suspended:{reason:'isolated test'}}})`);
+    await expect.poll(async () => (await context.request.get(origin + '/auth/session')).status()).toBe(401);
+    await expect(page.getByRole('link', {name:'Sign in with Sandstorm', exact:true})).toBeVisible({timeout:15000});
+    await mongo(directory, `db.users.updateOne({_id:db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId},{$unset:{suspended:''}})`);
+    await page.reload();
+    await expect(page.locator('.account-name')).toHaveText(/Alice/);
+    const logout = await page.evaluate(async () => (await fetch('/auth/logout', {method:'POST'})).status);
+    assert.equal(logout,200);
+    assert.equal((await context.request.get(origin + '/auth/session')).status(),401);
+    // Replaying the old cookie must fail too: logout revoked durable authority.
+    const replay = await context.request.get(origin + '/auth/session', {headers:{Cookie:`__Host-sandstorm-rust-session=${login}`}});
+    assert.equal(replay.status(),401);
+    console.log('Verified Meteor stopped: authenticated reload, live grain/app reads, live suspension, native logout');
+  } finally { process.kill(pid, 'SIGCONT'); }
+}
+
 export async function runRecovery(directory, bundle, grainId, meteorToken, keys) {
   await isolated(directory);
   assert.ok(bundle && grainId && meteorToken);
@@ -94,6 +165,7 @@ export async function runRecovery(directory, bundle, grainId, meteorToken, keys)
       assert.equal(await cookie(),login,'reload after '+action+' preserves login');
       console.log('Verified installed '+action+': login, fresh grain lease, live list/title updates, reload');
     }
+    await withoutMeteor(directory, page, context, grainId, login);
   } catch (error) {
     if (page) console.error('Recovery page:',await page.locator('body').innerText().catch(()=>'(unavailable)'));
     throw error;

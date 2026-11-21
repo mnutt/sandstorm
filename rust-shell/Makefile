@@ -37,3 +37,8 @@ dev:
 # Destructive only to tests/tmp-sandstorm, guarded by the recovery runner.
 test-recovery:
 	cd .. && RUN_RUST_RECOVERY=1 TESTCASE=tests/rust-recovery.js tests/run-local.sh build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk
+
+# Owns a temporary single-node replica set; never uses an installed database.
+.PHONY: test-mongo
+test-mongo:
+	cargo test --locked repository::tests -- --include-ignored

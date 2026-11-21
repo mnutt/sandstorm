@@ -1,4 +1,4 @@
-use crate::{bridge::Session, shell_capnp as api, workflow::failure};
+use crate::{session::Session, shell_capnp as api, workflow::failure};
 use serde::Deserialize;
 use serde_json::json;
 use std::rc::Rc;

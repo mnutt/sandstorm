@@ -1,6 +1,7 @@
 use crate::{
-    bridge::{Bridge, Session},
+    bridge::Bridge,
     grain::View,
+    session::Session,
     shell_capnp::{shared_session, shared_shell},
 };
 use serde_json::{json, Value};

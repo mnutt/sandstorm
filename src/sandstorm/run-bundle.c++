@@ -2890,6 +2890,8 @@ private:
       } else {
         KJ_SYSCALL(unsetenv("RUST_SHELL_DEV_PORT"));
       }
+      setupMongoEnvironment(config);
+      KJ_SYSCALL(setenv("RUST_SHELL_MONGO_URL", getenv("MONGO_URL"), true));
       KJ_SYSCALL(setenv("RUST_SHELL_BACKUP_DIR", "/var/sandstorm/backups", true));
       KJ_SYSCALL(setenv("RUST_SHELL_ASSETS", "/rust-shell/dist", true));
       KJ_SYSCALL(setenv("RUST_SHELL_MAIN_URL", config.rootUrl.cStr(), true));
@@ -2953,7 +2955,7 @@ private:
     return result;
   }
 
-  void setupShellEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
+  void setupMongoEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
     kj::String authPrefix;
     kj::String authSuffix;
     auto passwordFile = kj::str(sandstormHome, "/var/mongo/passwd");
@@ -2971,6 +2973,15 @@ private:
           true));
     }
 
+    KJ_SYSCALL(setenv("MONGO_URL",
+        kj::str("mongodb://", authPrefix, "127.0.0.1:", config.mongoPort,
+                "/meteor", authSuffix).cStr(),
+        true));
+  }
+
+  void setupShellEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
+    setupMongoEnvironment(config, sandstormHome);
+
     KJ_SYSCALL(setenv("HTTP_GATEWAY", "local", true));
 
     KJ_SYSCALL(setenv("PORT", kj::str(config.ports[0]).cStr(), true));
@@ -2979,10 +2990,6 @@ private:
       KJ_SYSCALL(setenv("HTTPS_PORT", kj::str(*httpsPort).cStr(), true));
     }
 
-    KJ_SYSCALL(setenv("MONGO_URL",
-        kj::str("mongodb://", authPrefix, "127.0.0.1:", config.mongoPort,
-                "/meteor", authSuffix).cStr(),
-        true));
     KJ_SYSCALL(setenv("BIND_IP", config.bindIp.cStr(), true));
     KJ_SYSCALL(setenv("SANDCATS_ADDRESS_MODE", config.sandcatsAddressMode.cStr(), true));
     KJ_SYSCALL(setenv("SANDCATS_IP_ADDRESS", config.sandcatsIpAddress.cStr(), true));

@@ -38,7 +38,7 @@ fn admit_frame(bytes: &[u8], protocol: &mut crate::rpc_protocol::Protocol) -> ca
 pub async fn serve(
     socket: WebSocket,
     fixture_socket: Option<PathBuf>,
-    session: Option<crate::bridge::Session>,
+    session: Option<crate::session::Session>,
 ) {
     let initial = if let Some(session) = &session {
         match session.snapshot().await {
@@ -71,7 +71,7 @@ pub async fn serve(
 pub async fn serve_shared(
     socket: WebSocket,
     bridge: crate::bridge::Bridge,
-    account: Option<crate::bridge::Session>,
+    account: Option<crate::session::Session>,
 ) {
     let Ok(service) = crate::shared::SharedShell::new(bridge, account) else {
         return;

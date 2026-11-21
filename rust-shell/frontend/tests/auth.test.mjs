@@ -1377,8 +1377,8 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal((await context.cookies()).find((entry) => entry.name === cookie.name).value, cookie.value,
       'ordinary reload must preserve the linked session');
     await expect.poll(() => [...observers.values()]).toEqual(expect.arrayContaining([
-      {pages:{},query:undefined},
-      {pages:{notifications:0},query:undefined},
+      {pages:{grains:0,notifications:0},query:undefined},
+      {pages:{grains:0,notifications:0},query:undefined},
     ]));
     await expect.poll(() => [...observers.values()]).toHaveLength(2);
     const starts = observationStarts;

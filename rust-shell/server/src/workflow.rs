@@ -2,8 +2,8 @@ use crate::{bridge, shell_capnp as api};
 use serde_json::{json, Value};
 use std::rc::Rc;
 
-pub struct Installer(pub bridge::Session, pub crate::observation::Scope);
-pub struct Account(pub bridge::Session);
+pub struct Installer(pub crate::session::Session, pub crate::observation::Scope);
+pub struct Account(pub crate::session::Session);
 
 // The bridge remains an implementation detail; browser payloads are typed.
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -429,7 +429,7 @@ impl api::account::Server for Account {
 
 struct Installation {
     observations: crate::observation::Scope,
-    session: bridge::Session,
+    session: crate::session::Session,
     id: String,
     url: String,
 }
