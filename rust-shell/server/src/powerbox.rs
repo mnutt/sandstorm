@@ -85,7 +85,11 @@ pub(crate) fn write(v: &Value, mut out: api::powerbox_state::Builder<'_>) -> cap
                 item.set_hosted_object(row["hostedObject"].as_bool().unwrap_or(false));
                 item.set_url_input(row["urlInput"].as_bool().unwrap_or(false));
                 item.set_email_input(row["emailInput"].as_bool().unwrap_or(false));
-                item.set_github(row["github"].as_bool().unwrap_or(false));
+                item.set_oauth_provider(match row["oauthProvider"].as_str() {
+                    Some("github") => api::HttpOAuthProvider::Github,
+                    Some("google") => api::HttpOAuthProvider::Google,
+                    _ => api::HttpOAuthProvider::None,
+                });
                 if let Some(roles) = row["roles"].as_array() {
                     let mut list = item.init_roles(roles.len() as u32);
                     for (j, role) in roles.iter().enumerate() {
@@ -136,8 +140,8 @@ impl powerbox_request::Server for Request {
             Which::Url(v) => ("url", "url", v?.to_str()?),
             Which::SendEmail(v) => ("sendEmail", "email", v?.to_str()?),
             Which::VerifyEmail(v) => ("verifyEmail", "code", v?.to_str()?),
-            Which::StartGithub(()) => ("githubStart", "key", key),
-            Which::FinishGithub(()) => ("githubFinish", "key", key),
+            Which::StartOAuth(()) => ("oauthStart", "key", key),
+            Which::FinishOAuth(()) => ("oauthFinish", "key", key),
         };
         let mut data = json!({"key":key,"mode":mode});
         data[field] = json!(value);

@@ -128,8 +128,13 @@ test('authenticated notifications: handoff, shared writes, account switching and
     grains: {
       waitForResponse,
       powerbox: {
-        open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
+        open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'google',title:'Connect to Google',oauthProvider:'google',detail:'Read your Drive files'},{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
         select: async (request, input) => {
+          if (input.key === 'google') {
+            if(input.mode === 'oauthStart') {oauthReady.google=false;return {status:'oauth',request:'a'.repeat(64),url:oauthUrl('google')};}
+            assert.equal(input.mode,'oauthFinish');
+            return oauthReady.google ? {status:'complete',token:'native-google-token'} : {status:'waiting'};
+          }
           if (input.mode === 'nested') {
             if (input.nestedOperation === 'begin') return {status:'nested',view:{status:'choices',candidates:[{key:'child',title:'Nested grain',uiView:true,roles:[]}],limited:false,legacy:false}};
             if (input.nestedOperation === 'select') return {status:'nested',view:{status:'complete',token:'native-nested-token'}};
@@ -1075,6 +1080,14 @@ test('authenticated notifications: handoff, shared writes, account switching and
       await expect(nativeDialog).toHaveCount(0);
       assert.equal(await page.locator('iframe').count(), 1, 'a request failure must not close the app');
     }
+    await app.evaluate(() => {
+      window.googleResult = new Promise(resolve => addEventListener('message',event => {if(event.data?.rpcId==='google-powerbox') resolve(event.data);}));
+      parent.postMessage({powerboxRequest:{rpcId:'google-powerbox',query:[]}},'*');
+    });
+    await nativeDialog.getByRole('button',{name:/Connect to Google/}).click();
+    await nativeDialog.getByRole('button',{name:'Authorize Google',exact:true}).click();
+    assert.equal((await app.evaluate(()=>window.googleResult)).token,'native-google-token');
+
     await app.evaluate(() => parent.postMessage({powerboxRequest:{rpcId:'cancel-webkey',query:[]}},'*'));
     await nativeDialog.getByRole('button',{name:'Paste capability link',exact:true}).click();
     await nativeDialog.getByLabel('API capability link',{exact:true}).fill('https://api.example.test/#source-secret');

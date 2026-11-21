@@ -278,6 +278,7 @@ interface Account {
 
 
 struct PowerboxRole { key @0 :Text; title @1 :Text; }
+enum HttpOAuthProvider { none @0; github @1; google @2; }
 struct PowerboxCandidate {
   key @0 :Text;
   title @1 :Text;
@@ -287,7 +288,7 @@ struct PowerboxCandidate {
   hostedObject @5 :Bool;
   urlInput @6 :Bool;
   emailInput @7 :Bool;
-  github @8 :Bool;
+  oauthProvider @8 :HttpOAuthProvider;
   roles @9 :List(PowerboxRole);
 }
 struct PowerboxChoices { candidates @0 :List(PowerboxCandidate); limited @1 :Bool; legacy @2 :Bool; }
@@ -315,8 +316,8 @@ struct PowerboxSelection {
     url @5 :Text;
     sendEmail @6 :Text;
     verifyEmail @7 :Text;
-    startGithub @8 :Void;
-    finishGithub @9 :Void;
+    startOAuth @8 :Void;
+    finishOAuth @9 :Void;
   }
 }
 interface PowerboxRequest {

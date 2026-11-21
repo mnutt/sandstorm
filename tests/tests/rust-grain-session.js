@@ -226,6 +226,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
     .executeAsync(async function (done) {
       try {
         await Meteor.callAsync('testRustNativePowerbox','checkBuiltins',window.nativePowerboxGrain);
+        await Meteor.callAsync('testRustNativePowerbox','checkOAuth',window.nativePowerboxGrain);
         await Meteor.callAsync('testRustNativePowerbox','close',window.nativePowerboxGrain);
         document.getElementById('native-powerbox-requester').remove();
         removeEventListener('message',window.nativePowerboxListener);

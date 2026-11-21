@@ -5,6 +5,8 @@ import { SAML } from "/imports/server/accounts/saml-utils";
 import Zlib from "node:zlib";
 import { handleSamlRequest, finishNativeSaml, cancelNativeSaml } from "/imports/server/accounts/saml/saml-server";
 import { rustNativeAuth, loginWithSaml } from "/imports/server/rust-shell-auth";
+import { fetchApiToken } from "/imports/server/persistent";
+import { rustPowerbox } from "/imports/server/rust-shell-powerbox";
 import { finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
 import { OAuth } from "meteor/oauth";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
@@ -1852,6 +1854,87 @@ if(isTesting) {
           if (parent.status !== 'waiting') throw new Error('Nested completion completed the parent request');
           return true;
         } finally { await call('cancel'); if (tokenId) await globalDb.removeApiTokens({_id:tokenId}); }
+      }
+      if (action === "checkOAuth") {
+        const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
+        const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
+        const call = (operation,extra={}) => rustShellBridge.handle("powerbox",{...extra,token:record.token,
+          scope:record.scope,lease:record.lease,request:record.request,operation});
+        const originalOrigin = Meteor.settings.public.rustShellOrigin;
+        const require = (value,message) => { if (!value) throw new Error(message); };
+        Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+        try {
+          for (const provider of ['github','google']) {
+            const enabled = Accounts.loginServices[provider].isEnabled;
+            const config = await ServiceConfiguration.configurations.findOneAsync({service:provider});
+            const url = provider === 'google' ? 'https://www.googleapis.com/drive/v3/' : 'https://api.github.com/';
+            const scope = provider === 'google' ? 'https://www.googleapis.com/auth/drive.readonly' : 'repo';
+            const tag = Capnp.serialize(ApiSession.PowerboxTag,{canonicalUrl:url,oauthScopes:[{name:scope}]});
+            const query = [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:ApiSession.typeId,value:tag}]}).toString('base64')];
+            let tokenId;
+            try {
+              Accounts.loginServices[provider].isEnabled = () => true;
+              if (!config) await ServiceConfiguration.configurations.insertAsync({service:provider,clientId:'powerbox-test'});
+              for (const mode of ['success','wrong-provider','cancel']) {
+                const choices = await call('begin',{query});
+                const candidate = choices.candidates.find(item=>item.oauthProvider===provider);
+                require(!!candidate,'Missing native '+provider+' Powerbox candidate');
+                const pending = await call('select',{key:candidate.key,mode:'oauthStart'});
+                const authorize = new URL(pending.url);
+                require(authorize.searchParams.get('scope') === (provider === 'google' ? 'email '+scope : scope),'Powerbox changed requested scopes');
+                if (provider === 'google') require(authorize.searchParams.get('access_type') === 'offline' && authorize.searchParams.get('prompt') === 'consent','Google capability did not request offline consent');
+                let denied=false;
+                try {await finishOAuth(provider,'powerbox:'+record.requesterId,pending.request);} catch (_) {denied=true;}
+                require(denied,'OAuth completion was not isolated to its Powerbox request');
+                if (mode==='success') {
+                  const adapter=rustPowerbox(globalDb);
+                  const sibling=await adapter.open({accountId:this.userId,sessionId:record.requesterId,grainId},{query},async()=>{});
+                  try {
+                    const siblingCandidate=sibling.view.candidates.find(item=>item.oauthProvider===provider);
+                    await adapter.select(sibling.handle,{key:siblingCandidate.key,mode:'oauthStart'},async()=>{});
+                    require((await call('select',{key:candidate.key,mode:'oauthFinish'})).status==='waiting','Sibling authorization displaced this request');
+                  } finally {await adapter.close(sibling.handle);}
+                }
+                require((await call('select',{key:candidate.key,mode:'oauthFinish'})).status==='waiting','Unfinished authorization completed');
+                const secret=Random.secret(), access=Random.secret(), refresh=Random.secret();
+                const serviceName=mode==='wrong-provider' ? (provider==='google' ? 'github' : 'google') : provider;
+                await OAuth._storePendingCredential(pending.request,{serviceName,serviceData:{accessToken:OAuth.sealSecret(access),...(provider==='google' ? {refreshToken:OAuth.sealSecret(refresh)} : {})}},secret);
+                await OAuth._endOfLoginResponse({writeHead(){},end(){}},{query:{state:authorize.searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret}});
+                if (mode==='cancel') {
+                  await call('cancel');
+                  require(!await OAuth.retrieveCredential(pending.request,secret),'Canceled request retained provider credentials');
+                  continue;
+                }
+                if (mode==='wrong-provider') {
+                  denied=false;
+                  try {await call('select',{key:candidate.key,mode:'oauthFinish'});} catch (_) {denied=true;}
+                  require(denied,'Mismatched OAuth provider issued a capability');
+                  await call('cancel');
+                  continue;
+                }
+                const result=await call('select',{key:candidate.key,mode:'oauthFinish',url:'https://attacker.invalid/'});
+                require(result.status==='complete','OAuth capability was not issued');
+                require(![secret,access,refresh].some(value=>JSON.stringify(result).includes(value)),'Provider credentials leaked to browser');
+                tokenId=Crypto.createHash('sha256').update(result.token).digest('base64');
+                const token=await globalDb.collections.apiTokens.findOneAsync(tokenId);
+                require(token?.owner?.clientPowerboxRequest?.sessionId===record.requesterId,'OAuth capability targeted the wrong session');
+                require(token.frontendRef?.http?.url===url,'Client changed the authorized API URL');
+                require(provider==='google' ? token.frontendRef.http.auth.refresh!==refresh : token.frontendRef.http.auth.bearer!==access,'Provider token was stored unencrypted');
+                const decrypted=await fetchApiToken(globalDb,result.token);
+                require(provider==='google' ? decrypted.frontendRef.http.auth.refresh===refresh : decrypted.frontendRef.http.auth.bearer===access,'Provider token was not stored in the capability');
+                require(!await OAuth.retrieveCredential(pending.request,secret),'OAuth credential was not consumed');
+                await call('cancel');
+                await globalDb.removeApiTokens({_id:tokenId});tokenId=null;
+              }
+            } finally {
+              await call('cancel');
+              if(tokenId) await globalDb.removeApiTokens({_id:tokenId});
+              Accounts.loginServices[provider].isEnabled=enabled;
+              if(!config) await ServiceConfiguration.configurations.removeAsync({service:provider});
+            }
+          }
+        } finally {Meteor.settings.public.rustShellOrigin=originalOrigin;}
+        return true;
       }
       if (action === "checkBuiltins") {
         const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");

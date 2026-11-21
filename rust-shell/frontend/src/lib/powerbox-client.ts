@@ -1,13 +1,13 @@
 import type { GrainSession$Client, PowerboxRequest$Client, PowerboxState as WireState } from '../generated/shell';
 import { unwrap, ApplicationError } from './results';
-import { FailureCode } from '../generated/shell';
+import { FailureCode, HttpOAuthProvider } from '../generated/shell';
 import type { ShellConnection } from './connection';
 import type { PowerboxActions, PowerboxState } from './powerbox-native';
 
 function state(value: WireState): PowerboxState {
   if (value._isChoices) return {status:'choices',limited:value.choices.limited,legacy:value.choices.legacy,
     candidates:[...value.choices.candidates].map(c=>({key:c.key,title:c.title,detail:c.detail,iconSrc:c.iconSrc,
-      uiView:c.uiView,hostedObject:c.hostedObject,urlInput:c.urlInput,emailInput:c.emailInput,github:c.github,
+      uiView:c.uiView,hostedObject:c.hostedObject,urlInput:c.urlInput,emailInput:c.emailInput,oauthProvider:c.oauthProvider === HttpOAuthProvider.GITHUB ? 'github' as const : c.oauthProvider === HttpOAuthProvider.GOOGLE ? 'google' as const : undefined,
       roles:[...c.roles].map(r=>({key:r.key,title:r.title}))}))};
   if (value._isProvider) return {status:'provider',title:value.provider.title,origin:value.provider.origin,url:value.provider.url};
   if (value._isOauth) return {status:'oauth',request:value.oauth.request,url:value.oauth.url};
@@ -63,8 +63,8 @@ export class PowerboxRequests {
         case 'url':selection.url=String(input.url || '');break;
         case 'sendEmail':selection.sendEmail=String(input.email || '');break;
         case 'verifyEmail':selection.verifyEmail=String(input.code || '');break;
-        case 'githubStart':selection.startGithub=true;break;
-        case 'githubFinish':selection.finishGithub=true;break;
+        case 'oauthStart':selection.startOAuth=true;break;
+        case 'oauthFinish':selection.finishOAuth=true;break;
         default: selection.direct=true;
       }
     });

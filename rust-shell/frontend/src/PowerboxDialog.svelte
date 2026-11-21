@@ -2,7 +2,7 @@
   import { applicationErrorMessage } from './lib/results';
   import NestedPowerbox from './PowerboxDialog.svelte';
   import { record, powerboxRequest, rpcId } from './lib/protocol';
-  import { authorizePopup } from './lib/oauth';
+  import { authorizePopup, signInProviders } from './lib/oauth';
   import { onMount } from 'svelte';
   import Modal from './components/ui/Modal.svelte';
   import Button from './components/ui/Button.svelte';
@@ -118,19 +118,20 @@
     catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not confirm the connection. Cancel and check the current status before trying again.'); }
     finally { if (alive) busy = false; }
   }
-  async function github() {
-    if (!selected || busy) return;
+  async function authorize() {
+    if (!selected?.oauthProvider || busy) return;
     const key = selected.key;
+    const provider = selected.oauthProvider;
     busy=true;
     try {
       const result = await authorizePopup(async () => {
-        const result = await actions.call(id,'select',{key,mode:'githubStart'});
-        if (result.status !== 'oauth') throw new Error('Could not start GitHub authorization.');
+        const result = await actions.call(id,'select',{key,mode:'oauthStart'});
+        if (result.status !== 'oauth') throw new Error('Could not start authorization.');
         return result;
       }, async () => {
-        const result = await actions.call(id,'select',{key,mode:'githubFinish'});
+        const result = await actions.call(id,'select',{key,mode:'oauthFinish'});
         return result.status === 'waiting' ? null : result;
-      }, () => actions.call(id,'cancel'), lifetime.signal, 'github');
+      }, () => actions.call(id,'cancel'), lifetime.signal, provider);
       await accept(result);
     } catch (failure) { if (alive) error=applicationErrorMessage(failure, 'Could not complete authorization. Cancel and try again.'); }
     finally { if (alive) busy=false; }
@@ -182,9 +183,9 @@
       <div class="actions">
         {#if selected.uiView}<Button disabled={!!error} onclick={() => connect('view')}>Connect grain</Button>{/if}
         {#if selected.hostedObject}<Button disabled={!!error} onclick={() => connect('hosted')}>Choose from app</Button>{/if}
-        {#if selected.github}<Button disabled={!!error} onclick={github}>Authorize GitHub</Button>{/if}
+        {#if selected.oauthProvider}<Button disabled={!!error} onclick={authorize}>Authorize {signInProviders.find(provider => provider.key === selected?.oauthProvider)?.label}</Button>{/if}
         {#if selected.emailInput}<Button disabled={!!error || (verifyingEmail ? !code.trim() : !email.includes('@'))} onclick={() => connect(verifyingEmail ? 'verifyEmail' : 'sendEmail')}>{verifyingEmail ? 'Verify and connect' : 'Send verification code'}</Button>{/if}
-        {#if !selected.uiView && !selected.hostedObject && !selected.emailInput && !selected.github}<Button disabled={!!error || (selected.urlInput && !url.trim())} onclick={() => connect()}>Allow connection</Button>{/if}
+        {#if !selected.uiView && !selected.hostedObject && !selected.emailInput && !selected.oauthProvider}<Button disabled={!!error || (selected.urlInput && !url.trim())} onclick={() => connect()}>Allow connection</Button>{/if}
         <Button variant="secondary" disabled={!!error || verifyingEmail} onclick={() => { selected = undefined; }}>Back</Button>
       </div>
     {:else if !error}

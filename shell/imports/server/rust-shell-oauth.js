@@ -26,9 +26,9 @@ async function discard(key, request) {
   if (request.secret || request.error) await OAuth.retrieveCredential(key,request.secret || null);
 }
 
-export async function startOAuth(provider, binding, scopes = oauthProvider(provider).scopes) {
+export async function startOAuth(provider, binding, scopes = oauthProvider(provider).scopes, {offline = false} = {}) {
   const definition = oauthProvider(provider);
-  if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string' || !/^[a-zA-Z0-9_:.-]+$/.test(scope))) fail('Invalid OAuth scopes.');
+  if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string' || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) fail('Invalid OAuth scopes.');
   if (!oauthEnabled(provider)) throw new Meteor.Error(403,definition.label+' sign-in is disabled.');
   const config = await ServiceConfiguration.configurations.findOneAsync({service:provider});
   if (!config?.clientId) throw new Meteor.Error(503,definition.label+' is not configured.');
@@ -46,7 +46,11 @@ export async function startOAuth(provider, binding, scopes = oauthProvider(provi
   requests.set(key,{provider,binding,expires:Date.now()+lifetime,origin});
   const url = new URL(definition.url);
   const parameters = provider === 'google' ? {...config.loginUrlParameters} : {};
-  if (provider === 'google') parameters.response_type = 'code';
+  if (provider === 'google') {
+    parameters.response_type = 'code';
+    scopes = [...new Set(['email',...scopes])];
+    if (offline) Object.assign(parameters,{access_type:'offline',prompt:'consent'});
+  }
   Object.assign(parameters,{client_id:config.clientId,redirect_uri:OAuth._redirectUri(provider,config),
     scope:scopes.join(' '),state});
   url.search = new URLSearchParams(parameters).toString();

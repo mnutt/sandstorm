@@ -545,11 +545,22 @@ iframe origin/source validation. It offers a searchable list of matching grains
 and built-in capabilities. Users can grant a UiView with selected permissions,
 open a provider app inside the dialog to choose an object, use an existing
 verified email/network capability, enter an HTTP(S) URL, or paste a local API
-capability link. New email verification and GitHub OAuth authorization are also native. Provider
+capability link. New email verification and GitHub/Google OAuth authorization are also native. Provider
 iframes can request nested native Powerbox choosers.
 Each child is bound to its provider session, not the outer requesting grain;
-closing a parent closes its children. Other OAuth providers and unsupported shell
+closing a parent closes its children. Unsupported shell
 interactions retain **More options in main shell** as an explicit fallback.
+
+OAuth candidates carry a typed provider; selection supplies only the candidate key.
+The server owns the target API URL and requested scopes. Google uses the same
+email scope, offline access, and consent prompt as the Meteor chooser, so the
+existing HTTP capability driver stores a refresh token when available.
+Authorization state is isolated to each Powerbox request, including nested
+requests. Provider credentials remain server-side, are consumed once by the
+driver, and are discarded on cancellation or a failed exchange. The packaged
+suite covers GitHub and Google capability issuance, target/session ownership,
+provider mismatch, and cancellation with synthetic OAuth responses.
+
 
 `GrainSession.powerbox` exposes only begin/select/poll/cancel operations. Each
 request is bound to its account, grain lease, and random request ID, expires in

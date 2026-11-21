@@ -1,4 +1,5 @@
-import { oauthEnabled, startOAuth, finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
+import { OAuth } from "meteor/oauth";
+import { oauthProvider, oauthEnabled, startOAuth, finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
 import { rustAccount } from "/imports/server/rust-shell-account";
 import { Accounts } from "meteor/accounts-base";
 import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
@@ -37,7 +38,7 @@ export function rustPowerbox(db) {
       check(input.query, [String]);
       await validate(parent);
       const options = await queryPowerboxOptions(db, globalFrontendRefRegistry, parent.accountId, input.query);
-      const request = {parent, query:input.query, options:new Map(), provider:null, result:null, delivered:false};
+      const request = {parent, query:input.query, options:new Map(), provider:null, result:null, delivered:false,oauthBinding:'powerbox:'+parent.sessionId+':'+Crypto.randomBytes(32).toString('hex')};
       const candidates = [];
       let legacy = false;
       for (const option of options) {
@@ -50,8 +51,8 @@ export function rustPowerbox(db) {
             const roles = (grain.cachedViewInfo?.roles || []).map((role, index) => ({key:String(index),title:text(role.title)}));
             candidate = {title:text(titles.title),iconSrc:titles.iconSrc,uiView:!!option.uiView,hostedObject:!!option.hostedObject,roles};
           } catch { continue; }
-        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && option.oauthServiceInfo.service === 'github' && oauthEnabled('github')) {
-          candidate = {title:'Connect to GitHub',github:true,detail:text(option.oauthScopes.map(scope=>scope.name).join(', '))};
+        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && ['github','google'].includes(option.oauthServiceInfo.service) && oauthEnabled(option.oauthServiceInfo.service)) {
+          candidate = {title:'Connect to '+oauthProvider(option.oauthServiceInfo.service).label,oauthProvider:option.oauthServiceInfo.service,detail:text(option.oauthScopes.map(scope=>scope.name).join(', '))};
         } else if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard" && Accounts.loginServices.email.isEnabled()) {
           candidate = {title:"Verify a new email address",emailInput:true};
         } else if (option.cardTemplate === "httpArbitraryPowerboxCard") {
@@ -81,70 +82,78 @@ export function rustPowerbox(db) {
       if (!option) fail("Unknown Powerbox option.");
       await validate(request.parent);
       await beforeWrite();
-      let githubCredential;
-      if (option.cardTemplate === 'httpOAuthPowerboxCard') {
-        if (option.oauthServiceInfo.service !== 'github') fail('Unsupported OAuth provider.');
-        if (input.mode === 'githubStart') {
-          if (request.github) fail('Authorization is already in progress.');
-          const binding = 'powerbox:'+request.parent.sessionId;
-          const oauth = await startOAuth('github',binding,option.oauthScopes.map(scope=>scope.name));
-          request.github = {...oauth,binding,key:input.key};
-          return {status:'oauth',...oauth};
+      let oauthCredential;
+      try {
+        if (option.cardTemplate === 'httpOAuthPowerboxCard') {
+          const provider = option.oauthServiceInfo.service;
+          if (!['github','google'].includes(provider)) fail('Unsupported OAuth provider.');
+          if (input.mode === 'oauthStart') {
+            if (request.oauth) fail('Authorization is already in progress.');
+            const binding = request.oauthBinding;
+            const oauth = await startOAuth(provider,binding,option.oauthScopes.map(scope=>scope.name),{offline:true});
+            if (request.closed) { await cancelOAuth(provider,binding,oauth.request); fail('Connection request ended.'); }
+            request.oauth = {...oauth,provider,binding,key:input.key};
+            return {status:'oauth',...oauth};
+          }
+          if (input.mode !== 'oauthFinish' || request.oauth?.key !== input.key) fail('Start authorization for this option first.');
+          oauthCredential = await finishOAuth(provider,request.oauth.binding,request.oauth.request);
+          if (!oauthCredential) return {status:'waiting'};
         }
-        if (input.mode !== 'githubFinish' || request.github?.key !== input.key) fail('Start GitHub authorization first.');
-        githubCredential = await finishOAuth('github',request.github.binding,request.github.request);
-        if (!githubCredential) return {status:'waiting'};
-      }
-      if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
-        if (input.mode === "sendEmail") {
-          if (request.email || typeof input.email !== "string" || !input.email.includes("@")) fail("Invalid verification request.");
-          request.email = {key:input.key,address:input.email};
-          await rustAccount(request.parent.accountId,"sendEmail",{email:input.email,allowLogin:false},beforeWrite);
-          return {status:"email",address:input.email};
-        }
-        if (input.mode !== "verifyEmail" || request.email?.key !== input.key || typeof input.code !== "string" || !input.code) fail("Send a verification code first.");
-        await rustAccount(request.parent.accountId,"verifyEmail",{email:request.email.address,code:input.code,allowLogin:false},beforeWrite);
-      }
-      if (option.grainId) {
-        // Revalidate the provider separately from the requesting grain.
-        const origin = Meteor.settings.public.rustShellOrigin;
-        if (!origin) fail("Rust shell origin is unavailable.");
-        const provider = await createRustGrainSession(db, request.parent.accountId, option.grainId, origin,
-          input.mode === "hosted" && option.hostedObject ? {descriptors:request.query,requestingSession:request.parent.sessionId} : undefined);
-        request.provider = {sessionId:provider._id, accountId:request.parent.accountId, grainId:option.grainId};
-        await beforeWrite();
-        if (input.mode === "hosted" && option.hostedObject) {
-          const frameOrigin = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("ui-" + provider.hostId);
-          return {status:"provider",title:text(await db.userGrainTitle(option.grainId, request.parent.accountId)),
-            origin:frameOrigin,url:frameOrigin+"/_sandstorm-init?sessionid="+provider._id+"&path=%2F"};
-        }
-        if (input.mode !== "view" || !option.uiView) fail("This grain cannot fulfill that request type.");
-        const grain = await db.collections.grains.findOneAsync(option.grainId);
-        let role;
-        if (input.role === "all") role = {allAccess:null};
-        else if (typeof input.role === "string" && /^(0|[1-9][0-9]?)$/.test(input.role) && Number(input.role) < Math.min(32, grain.cachedViewInfo?.roles?.length || 0)) role = {roleId:Number(input.role)};
-        else fail("Choose a valid permission role.");
-        await keepRustGrainSession(db, request.provider);
-        await beforeWrite();
-        const result = await fulfillPowerboxUiView(db, request.parent.accountId, request.parent.sessionId,
-          option.grainId, "selected via Powerbox", role, request.parent.grainId);
-        request.result = {token:result.sturdyRef,descriptor:result.descriptor};
-      } else {
-        let ref = githubCredential ? {http:{url:option.httpUrl,auth:{oauth:githubCredential}}} : option.frontendRef;
         if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
-          ref = {verifiedEmail:{...option.frontendRef.verifiedEmail,address:request.email.address}};
+          if (input.mode === "sendEmail") {
+            if (request.email || typeof input.email !== "string" || !input.email.includes("@")) fail("Invalid verification request.");
+            request.email = {key:input.key,address:input.email};
+            await rustAccount(request.parent.accountId,"sendEmail",{email:input.email,allowLogin:false},beforeWrite);
+            return {status:"email",address:input.email};
+          }
+          if (input.mode !== "verifyEmail" || request.email?.key !== input.key || typeof input.code !== "string" || !input.code) fail("Send a verification code first.");
+          await rustAccount(request.parent.accountId,"verifyEmail",{email:request.email.address,code:input.code,allowLogin:false},beforeWrite);
         }
-        if (option.cardTemplate === "httpArbitraryPowerboxCard") {
-          if (typeof input.url !== "string") fail("Invalid URL.");
-          const url = new URL(input.url);
-          if (!["http:","https:"].includes(url.protocol) || url.username || url.password) fail("Use an HTTP or HTTPS URL without embedded credentials.");
-          ref = {http:{url:url.href,auth:{none:null}}};
+        if (option.grainId) {
+          // Revalidate the provider separately from the requesting grain.
+          const origin = Meteor.settings.public.rustShellOrigin;
+          if (!origin) fail("Rust shell origin is unavailable.");
+          const provider = await createRustGrainSession(db, request.parent.accountId, option.grainId, origin,
+            input.mode === "hosted" && option.hostedObject ? {descriptors:request.query,requestingSession:request.parent.sessionId} : undefined);
+          request.provider = {sessionId:provider._id, accountId:request.parent.accountId, grainId:option.grainId};
+          await beforeWrite();
+          if (input.mode === "hosted" && option.hostedObject) {
+            const frameOrigin = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("ui-" + provider.hostId);
+            return {status:"provider",title:text(await db.userGrainTitle(option.grainId, request.parent.accountId)),
+              origin:frameOrigin,url:frameOrigin+"/_sandstorm-init?sessionid="+provider._id+"&path=%2F"};
+          }
+          if (input.mode !== "view" || !option.uiView) fail("This grain cannot fulfill that request type.");
+          const grain = await db.collections.grains.findOneAsync(option.grainId);
+          let role;
+          if (input.role === "all") role = {allAccess:null};
+          else if (typeof input.role === "string" && /^(0|[1-9][0-9]?)$/.test(input.role) && Number(input.role) < Math.min(32, grain.cachedViewInfo?.roles?.length || 0)) role = {roleId:Number(input.role)};
+          else fail("Choose a valid permission role.");
+          await keepRustGrainSession(db, request.provider);
+          await beforeWrite();
+          const result = await fulfillPowerboxUiView(db, request.parent.accountId, request.parent.sessionId,
+            option.grainId, "selected via Powerbox", role, request.parent.grainId);
+          request.result = {token:result.sturdyRef,descriptor:result.descriptor};
+        } else {
+          let ref = oauthCredential ? {http:{url:option.httpUrl,auth:{oauth:oauthCredential}}} : option.frontendRef;
+          if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
+            ref = {verifiedEmail:{...option.frontendRef.verifiedEmail,address:request.email.address}};
+          }
+          if (option.cardTemplate === "httpArbitraryPowerboxCard") {
+            if (typeof input.url !== "string") fail("Invalid URL.");
+            const url = new URL(input.url);
+            if (!["http:","https:"].includes(url.protocol) || url.username || url.password) fail("Use an HTTP or HTTPS URL without embedded credentials.");
+            ref = {http:{url:url.href,auth:{none:null}}};
+          }
+          await beforeWrite();
+          const result = await newPowerboxFrontendRef(db, globalFrontendRefRegistry, request.parent.accountId, request.parent.sessionId, structuredClone(ref));
+          request.result = {token:result.sturdyRef,descriptor:result.descriptor};
         }
-        await beforeWrite();
-        const result = await newPowerboxFrontendRef(db, globalFrontendRefRegistry, request.parent.accountId, request.parent.sessionId, structuredClone(ref));
-        request.result = {token:result.sturdyRef,descriptor:result.descriptor};
+        return {status:"complete",...request.result};
+      } finally {
+        // The driver consumes this credential. Clean it up if validation or the
+        // receiving session fails before the exchange reaches the driver.
+        if (oauthCredential) await OAuth.retrieveCredential(oauthCredential.credentialToken,oauthCredential.credentialSecret);
       }
-      return {status:"complete",...request.result};
     },
     async nested(request,input,beforeWrite) {
       if (!request.provider || request.closed || typeof input.nestedRequest !== 'string' || !/^[a-f0-9]{64}$/.test(input.nestedRequest) ||
@@ -198,7 +207,7 @@ export function rustPowerbox(db) {
       request.closed=true;
       const child=request.nested; request.nested=null;
       if (child?.handle) await api.close(child.handle);
-      if (request.github) await cancelOAuth('github',request.github.binding,request.github.request);
+      if (request.oauth) await cancelOAuth(request.oauth.provider,request.oauth.binding,request.oauth.request);
       // Undelivered provider results must not survive cancellation. The requesting
       // session owns delivered tokens, which the existing gateway redeems/cleans up.
       if (request.provider) await db.collections.sessions.updateAsync({_id:request.provider.sessionId}, {$set:{rustPowerboxClosing:true}});
