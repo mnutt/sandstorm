@@ -1,4 +1,4 @@
-.PHONY: build check test test-package run dev cpp-fixture
+.PHONY: build check test test-package test-recovery run dev cpp-fixture
 
 cpp-fixture: target/cpp-fixture
 
@@ -33,3 +33,7 @@ run:
 dev:
 	@echo "Open the existing Rust-shell HTTPS URL for hot reload."
 	cd frontend && npm run dev
+
+# Destructive only to tests/tmp-sandstorm, guarded by the recovery runner.
+test-recovery:
+	cd .. && RUN_RUST_RECOVERY=1 TESTCASE=tests/rust-recovery.js tests/run-local.sh build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk

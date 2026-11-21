@@ -842,6 +842,25 @@ passed 100 assertions; `TESTCASE=tests/rust-auth.js tests/run-local.sh
 build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk` passed
 18 account/profile/list assertions. Both packaged suites use isolated servers.
 
+## Installed restart and update recovery
+
+After `make fast`, run `make -C rust-shell test-recovery`. This dedicated gate
+uses `tests/run-local.sh` to install the bundle in `tests/tmp-sandstorm`, creates
+a test account and grain, and enables the packaged HTTPS gateway and Rust shell
+with a short-lived test certificate. It refuses any other installation directory
+and is disabled in the ordinary Nightwatch suite.
+
+A browser stays open through both `sandstorm restart` and `sandstorm update`.
+The gate checks that the HttpOnly login cookie survives, old grain iframes close,
+and the grain route offers an explicit **Reopen grain** after recovery. Reopening
+gets a fresh lease. A real Meteor rename must reach the existing Rust browser's
+title and grain-list subscriptions, and reloading must reopen without signing in
+again. The test also exercises persisted TLS keys through both restarts.
+
+The installed recovery gate passed against the fast bundle. This is a same-bundle
+update smoke test, not a cross-version database migration test or a live-server
+certificate renewal test. It does not modify the development installation.
+
 ## Executor and transport
 
 A current-thread Tokio runtime runs a `LocalSet`. Axum transfers upgraded sockets
@@ -1020,8 +1039,8 @@ subscriptions, and popup blocking in addition to the browser integration suite.
 Next useful slices:
 
 1. Add notification app icons and localized copy.
-2. Validate full installed-server update recovery and main-shell visual/behavioral
-   parity before migrating production UI.
+2. Validate main-shell visual/behavioral parity before migrating production UI.
+   Installed restart/update recovery now has the dedicated gate described above.
 3. Extend embedded-app compatibility (Powerbox and other postMessage APIs), with
    existing services retaining authority and lifecycle ownership.
 
