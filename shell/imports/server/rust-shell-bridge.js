@@ -1,3 +1,4 @@
+import { samlLogoutUrl } from "/imports/server/accounts/saml/saml-server";
 import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
 import { rustAccount } from "/imports/server/rust-shell-account";
@@ -54,6 +55,7 @@ async function accountProfile(accountId) {
 }
 
 export const rustShellBridge = createRustShellBridge({
+  logoutDestination: accountId => samlLogoutUrl(accountId,{optional:true}),
   nativeAuth: rustNativeAuth,
   accountSettings: rustAccount,
   notification: rustNotificationAction,

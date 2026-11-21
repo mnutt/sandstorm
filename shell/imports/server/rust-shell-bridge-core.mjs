@@ -11,7 +11,7 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, nativeAuth, logoutDestination, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   const creating = new Set();
   const installing = new Set();
   const notificationWrites = new Set();
@@ -92,9 +92,20 @@ export function createRustShellBridge({ authorize, nativeAuth, snapshot, dismiss
         return result;
       }
       if (action === "logout") {
+        let accountId;
         if (validSecret(input.token)) {
+          if (logoutDestination) {
+            try { accountId = (await session(input.token)).record.accountId; }
+            catch (error) { if (error.status !== 401) throw error; }
+          }
           await sessions.remove(hash(input.token));
           await leases.revoke(input.token);
+        }
+        // Local revocation must succeed before directing the browser to an IdP.
+        // A broken or missing provider endpoint must never prevent local logout.
+        if (accountId) {
+          try { return {redirectUrl:await logoutDestination(accountId)}; }
+          catch { return {warning:"Signed out of Sandstorm, but identity-provider logout could not start."}; }
         }
         return {};
       }

@@ -504,3 +504,30 @@ test('revocation after a completed write hides its result without claiming rejec
     assert.equal(writes,1,action+' must not replay or undo a committed write');
   }
 });
+
+test('logout revokes locally before provider work and never uses caller-supplied account authority', async () => {
+  let token, mode='redirect', calls=0;
+  const bridge=createRustShellBridge({
+    authorize:async()=>({name:'Alice',expires:Date.now()+60000}),
+    logoutDestination:async accountId=>{
+      ++calls;
+      assert.equal(accountId,'alice');
+      await assert.rejects(bridge.handle('session',{token}),{status:401});
+      if(mode==='failure') throw new Error('private provider detail');
+      return 'https://idp.example/logout';
+    },
+  });
+  const login=async()=>{
+    const state='b'.repeat(64), code=await bridge.issue('alice','hash',state);
+    token=(await bridge.handle('exchange',{code,state})).token;
+  };
+  await login();
+  assert.deepEqual(await bridge.handle('logout',{token,accountId:'bob'}),{redirectUrl:'https://idp.example/logout'});
+  assert.deepEqual(await bridge.handle('logout',{token}),{});
+  assert.equal(calls,1);
+  mode='failure';await login();
+  const result=await bridge.handle('logout',{token});
+  assert.match(result.warning,/Signed out/);
+  assert.ok(!JSON.stringify(result).includes('private provider detail'));
+  await assert.rejects(bridge.handle('session',{token}),{status:401});
+});

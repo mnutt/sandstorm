@@ -263,48 +263,55 @@ WebApp.connectHandlers.use(BodyParser.urlencoded({ extended: false })).use(funct
   handleSamlRequest(req, res, next);
 });
 
-Meteor.methods({
-  async generateSamlLogout() {
-    const service = await generateService();
-    if (!service.logoutUrl) {
-      throw new Meteor.Error(500, "No SAML logout url specified");
-    }
+export async function samlLogoutUrl(accountId, {optional = false} = {}) {
+  const user = await Meteor.users.findOneAsync({ _id: accountId });
+  if (!user) {
+    throw new Meteor.Error(403, "Not logged in.");
+  }
 
-    const _saml = new SAML(service);
-    const user = await Meteor.users.findOneAsync({ _id: this.userId });
-    if (!user) {
-      throw new Meteor.Error(403, "Not logged in.");
+  let credential;
+  const credentials = await Meteor.users.find({
+    _id: { $in: (user.loginCredentials || []).map((_credential) => _credential.id) },
+  }).fetchAsync();
+  credentials.forEach((currCredential) => {
+    if (currCredential.services.saml) {
+      credential = currCredential;
     }
+  });
+  if (!credential && optional) return null;
+  if (!credential) {
+    throw new Meteor.Error(400, "No SAML credential found for current user.");
+  }
+  // TODO(someday): handle user having more than one SAML credential
 
-    let credential;
-    const credentials = await Meteor.users.find({
-      _id: { $in: user.loginCredentials.map((_credential) => _credential.id) },
-    }).fetchAsync();
-    credentials.forEach((currCredential) => {
-      if (currCredential.services.saml) {
-        credential = currCredential;
+  const service = await generateService();
+  if (!service.logoutUrl) throw new Meteor.Error(500, "No SAML logout url specified");
+  const _saml = new SAML(service);
+  const url = await new Promise((resolve, reject) => {
+    _saml.getLogoutUrl({
+      user: {
+        nameID: credential.services.saml.id,
+        nameIDFormat: credential.services.saml.nameIDFormat ||
+          "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+      },
+    }, (err, url) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(url);
       }
     });
-    if (!credential) {
-      throw new Meteor.Error(400, "No SAML credential found for current user.");
-    }
-    // TODO(someday): handle user having more than one SAML credential
+  });
+  const parsed = new URL(url);
+  if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
+    throw new Meteor.Error(400, "Invalid SAML logout URL.");
+  }
+  return parsed.href;
+}
 
-    return await new Promise((resolve, reject) => {
-      _saml.getLogoutUrl({
-        user: {
-          nameID: credential.services.saml.id,
-          nameIDFormat: credential.services.saml.nameIDFormat ||
-            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
-        },
-      }, (err, url) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(url);
-        }
-      });
-    });
+Meteor.methods({
+  async generateSamlLogout() {
+    return samlLogoutUrl(this.userId);
   },
 
   validateSamlLogout: async function (samlRequest) {

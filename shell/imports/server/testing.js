@@ -1429,7 +1429,7 @@ if(isTesting) {
       const originalOrigin = Meteor.settings.public.rustShellOrigin;
       const originalValidate = SAML.prototype.validateResponse;
       const settings = globalDb.collections.settings;
-      const settingIds = ['samlEntryPoint','samlPublicCert','samlEntityId'];
+      const settingIds = ['samlEntryPoint','samlPublicCert','samlEntityId','samlLogout'];
       const saved = await settings.find({_id:{$in:settingIds}}).fetchAsync();
       const flow = Crypto.randomBytes(32).toString('hex');
       const identity = 'rust-saml-'+Random.id();
@@ -1455,7 +1455,7 @@ if(isTesting) {
       try {
         Accounts.loginServices.saml.isEnabled = () => true;
         Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
-        for (const [id,value] of [['samlEntryPoint','https://idp.example/sso'],['samlPublicCert','TEST_CERT'],['samlEntityId','rust-test']]) {
+        for (const [id,value] of [['samlEntryPoint','https://idp.example/sso'],['samlPublicCert','TEST_CERT'],['samlEntityId','rust-test'],['samlLogout','https://idp.example/logout']]) {
           await settings.upsertAsync({_id:id},{$set:{value}});
         }
         pending = await native('samlStart');
@@ -1504,6 +1504,17 @@ if(isTesting) {
         denied=false;
         try {await native('samlFinish',{request:pending.request});} catch (_) {denied=true;}
         require(denied,'Disabled SAML request completed');
+        const legacyUrl=await getMethodHandler('generateSamlLogout').apply({userId:accountId},[]);
+        require(new URL(legacyUrl).origin==='https://idp.example','Legacy SAML logout changed');
+        const logout=await rustShellBridge.handle('logout',{token:linked.token});
+        const destination=new URL(logout.redirectUrl);
+        require(destination.origin==='https://idp.example' && destination.pathname==='/logout','Native logout did not target the configured IdP');
+        const xml=Zlib.inflateRawSync(Buffer.from(destination.searchParams.get('SAMLRequest'),'base64')).toString();
+        require(xml.includes(identity+'-linked'),'Logout used the wrong SAML credential');
+        denied=false;
+        try {await rustShellBridge.handle('session',{token:linked.token});} catch (_) {denied=true;}
+        require(denied,'SAML logout left the local session usable');
+
       } finally {
         if(pending) cancelNativeSaml('login:'+flow,pending.request);
         if(linkPending) cancelNativeSaml('link:'+accountId,linkPending.request);

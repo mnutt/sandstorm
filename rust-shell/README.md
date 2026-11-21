@@ -342,8 +342,11 @@ The AuthnRequest ID sent to the identity provider is separate from both
 that polling key and the one-use DDP credential, which never reaches the browser.
 Canceled, expired, disabled, and consumed native requests cannot accept callbacks;
 pending requests expire after five minutes. Account linking revalidates account
-authority before writing. This covers sign-in and linking; provider-initiated
-single logout still uses Meteor's existing SAML logout route.
+authority before writing. Native logout also generates the existing SAML LogoutRequest for accounts with
+SAML login credentials. It revokes the Rust session and grain leases before
+returning the configured identity-provider URL. Missing or broken provider
+configuration leaves the user locally signed out with a visible warning.
+Provider-initiated single logout still uses Meteor's existing SAML logout route.
 
 
 Lists now have native Previous/Next controls. Grains and notification pages remain

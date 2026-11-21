@@ -217,12 +217,25 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     if headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) != Some(state.origin.as_str()) {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let mut result = json!({});
     if let Some(session) = session(&state.auth, &headers) {
-        if let Err(err) = session.call("logout", json!({})).await {
-            return error(err);
+        match session.call("logout", json!({})).await {
+            Ok(value) => result = value,
+            Err(err) => return error(err),
         }
     }
-    let mut response = StatusCode::NO_CONTENT.into_response();
+    if let Some(destination) = result["redirectUrl"].as_str() {
+        let valid = reqwest::Url::parse(destination).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.fragment().is_none()
+        });
+        if !valid {
+            result = json!({"warning":"Signed out of Sandstorm, but identity-provider logout could not start."});
+        }
+    }
+    let mut response = Json(result).into_response();
     set_cookie(&mut response, SESSION, "", 0);
     response
 }

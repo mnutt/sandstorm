@@ -32,6 +32,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const releaseAssets = () => {stallAssets=false;for(const res of heldAssets)res.end('window.assetFinished=true;');heldAssets.clear();};
   let grainOrigin;
   let mainOrigin;
+  let logoutMode = 'none';
   let serial = 0;
   let leaseClockOffset = 0;
   let renewals = 0;
@@ -76,6 +77,15 @@ test('authenticated notifications: handoff, shared writes, account switching and
   const oauthUrl = provider => provider === 'saml' ? 'https://identity.example.test/saml?SAMLRequest=fixture' : provider === 'oidc' ? 'https://identity.example.test/authorize?state=fixture' : provider === 'google' ? 'https://accounts.google.com/o/oauth2/auth?state=fixture' : 'https://github.com/login/oauth/authorize?state=fixture';
   let paginated = false, laterTitle = 'Older notification';
   const bridgeOptions = {
+    logoutDestination: async () => {
+      if(logoutMode==='failure') throw new Error('private provider configuration detail');
+      if(logoutMode==='unsafe') return 'javascript:alert(1)';
+      if(logoutMode==='redirect') {
+        await new Promise(resolve=>setTimeout(resolve,250));
+        return 'https://idp.example/logout?SAMLRequest=fixture';
+      }
+      return null;
+    },
     nativeAuth: async (operation,data) => {
       if(operation.startsWith('saml')) {operation=operation.replace('saml','oauth');data={...data,provider:'saml'};}
       if (operation === 'options') return {dev:true,email:false,ldap:false,github:true,google:true,oidc:true,saml:true};
@@ -1276,6 +1286,24 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await fresh.frameLocator('iframe').getByRole('heading', {name:'Embedded test grain'}).waitFor();
     assert.equal(new URL(fresh.url()).pathname + new URL(fresh.url()).search + new URL(fresh.url()).hash,
       '/grain/alice-hidden/clients?tab=sync#url');
+    for (const mode of ['failure','unsafe','redirect']) {
+      logoutMode=mode;
+      if(mode==='redirect') await freshContext.route('https://idp.example/logout**',route=>route.fulfill({contentType:'text/html',body:'Identity provider signed out'}));
+      await fresh.getByRole('button',{name:'Account: Alice',exact:true}).click();
+      await fresh.getByRole('button',{name:'Disconnect',exact:true}).click();
+      if(mode==='redirect') {
+        await fresh.waitForURL('https://idp.example/logout?SAMLRequest=fixture');
+        assert.equal((await freshContext.cookies(proxy.origin)).some(cookie=>cookie.name==='__Host-sandstorm-rust-session'),false);
+        assert.equal((await freshContext.request.get(proxy.origin+'/auth/session',{ignoreHTTPSErrors:true})).status(),401);
+      } else {
+        await expect(fresh.getByRole('alert')).toContainText('Signed out of Sandstorm, but identity-provider logout could not start.');
+        assert.equal((await freshContext.request.get(proxy.origin+'/auth/session',{ignoreHTTPSErrors:true})).status(),401);
+        await fresh.goto(proxy.origin+'/login');
+        await fresh.getByRole('button',{name:'Alice (admin)',exact:true}).click();
+        await fresh.getByRole('heading',{name:/Alice notification/}).waitFor();
+      }
+    }
+    logoutMode='none';
     await freshContext.close();
     assert.deepEqual(errors, []);
   } catch (error) {

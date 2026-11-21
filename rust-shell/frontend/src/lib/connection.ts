@@ -128,17 +128,25 @@ export class ShellConnection {
     void this.connect();
   }
   async logout() {
-    const generation = this.generation;
-    const response = await fetch('/auth/logout', {
-      method: 'POST', signal: AbortSignal.any([this.signal, AbortSignal.timeout(10000)]),
-    });
-    if (generation !== this.generation) return;
-    if (!response.ok) throw new Error('Unable to disconnect. Please try again.');
-    ++this.generation;
+    // Ignore transport closure caused by revocation while awaiting the logout
+    // response; reconnecting here could abort the IdP redirect response.
+    const generation = ++this.generation;
     clearTimeout(this.retryTimer);
-    this.clear();
-    this.events.session({ fixture: false, account: null });
-    this.events.status('signed-out', '');
+    try {
+      const response = await fetch('/auth/logout', {
+        method: 'POST', signal: AbortSignal.any([this.signal, AbortSignal.timeout(10000)]),
+      });
+      if (!response.ok) throw new Error('Unable to disconnect. Please try again.');
+      const result = await response.json();
+      if (generation !== this.generation) return;
+      this.clear();
+      this.events.session({ fixture: false, account: null });
+      this.events.status('signed-out', typeof result.warning === 'string' ? result.warning : '');
+      if (result.redirectUrl) location.assign(result.redirectUrl);
+    } catch (error) {
+      if (generation === this.generation) this.reconnect();
+      throw error;
+    }
   }
   stop() {
     this.stopped = true;
