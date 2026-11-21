@@ -1,3 +1,20 @@
+import { open as openFile } from "node:fs/promises";
+import { createNativeGrainBackup, nativeBackupDownload, restoreGrainBackup } from "/imports/server/backup";
+import { manageGrainForUser } from "/imports/shared/grain-shared";
+import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
+import { appInstallPermissions } from "/imports/server/install-server";
+import { grainMenu } from "/imports/server/rust-shell-grains";
+import { SAML } from "/imports/server/accounts/saml-utils";
+import Zlib from "node:zlib";
+import { handleSamlRequest, finishNativeSaml, cancelNativeSaml } from "/imports/server/accounts/saml/saml-server";
+import { rustNativeAuth, loginWithSaml } from "/imports/server/rust-shell-auth";
+import { fetchApiToken } from "/imports/server/persistent";
+import { rustPowerbox } from "/imports/server/rust-shell-powerbox";
+import { finishOAuth, cancelOAuth } from "/imports/server/rust-shell-oauth";
+import { OAuth } from "meteor/oauth";
+import { redeemPowerboxWebkey } from "/imports/server/powerbox-webkey";
+import Capnp from "/imports/server/capnp";
+import { createRustShellBridge } from "./rust-shell-bridge-core.mjs";
 // Sandstorm - Personal Cloud Sandbox
 // Copyright (c) 2014 Sandstorm Development Group, Inc. and contributors
 // All rights reserved.
@@ -46,6 +63,10 @@ import {
   waitForMigrationDocument,
   waitForReplicaMigrations,
 } from "/imports/server/migration-coordination";
+import { closeRustSharedGrainSession, keepRustSharedGrainSession, inspectRustSharedGrain, createRustSharedGrainSession, createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
+import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
+import { rustShellBridge, rustShellSessionStore, authorizeRustShellAccount } from "/imports/server/rust-shell-bridge";
+import { renameGrainForUser, restartGrainForUser } from "/imports/server/grain-server";
 import { runDueJobs } from "/imports/server/scheduled-job";
 import {
   Downloader,
@@ -58,6 +79,9 @@ import { SandstormAutoupdateApps } from "/imports/sandstorm-autoupdate-apps/auto
 import { isTesting } from "/imports/shared/testing";
 import Crypto from "crypto";
 import { EventEmitter } from "events";
+
+const rustGrainTestSessions = new Map();
+const rustNativePowerboxTests = new Map();
 
 async function clearUser(id) {
   await globalDb.collections.userActions.removeAsync({ userId: id });
@@ -434,7 +458,7 @@ if(isTesting) {
         services: {
           email: {
             email,
-            tokens: [{ digest: SHA256(token), algorithm: "sha-256" }],
+            tokens: [{ digest: SHA256(token), algorithm: "sha-256", createdAt: new Date() }],
           },
         },
       });
@@ -456,7 +480,23 @@ if(isTesting) {
             },
           }, [email, token, false]);
         } catch (err) {
-          if (err && err.error === "test-link-failed") return true;
+          if (err && err.error === "test-link-failed") {
+            let linked = 0;
+            Accounts.linkCredentialToAccount = async () => { ++linked; };
+            await Meteor.users.updateAsync(credentialId, {$set:{'services.email.tokens':[
+              {digest:SHA256(token),algorithm:'sha-256',createdAt:new Date()},
+            ]}});
+            const invoke = () => handler.apply({userId:accountId,connection:{sandstormDb:globalDb,sandstormBackend:globalThis.globalBackend}},[email,token,false]);
+            const outcomes = await Promise.allSettled([invoke(),invoke()]);
+            if (linked !== 1 || outcomes.filter(result=>result.status==='fulfilled').length !== 1) throw new Error('Email token was consumed more than once');
+            await Meteor.users.updateAsync(credentialId, {$set:{'services.email.tokens':[
+              {digest:SHA256(token),algorithm:'sha-256',createdAt:new Date(Date.now()-7200000)},
+            ]}});
+            let expired = false;
+            try { await invoke(); } catch (error) { expired = error.error === 403; }
+            if (!expired || linked !== 1) throw new Error('Expired email token was accepted');
+            return true;
+          }
           throw err;
         }
 
@@ -1384,6 +1424,1508 @@ if(isTesting) {
         await globalDb.collections.scheduledJobs.removeAsync({ _id: { $in: [ownerJobId, otherJobId] } });
         await globalDb.collections.grains.removeAsync({ _id: { $in: [ownerGrainId, otherGrainId] } });
         await Meteor.users.removeAsync({ _id: { $in: [ownerId, otherId, adminId] } });
+      }
+    },
+
+    async testRustSaml() {
+      const originalEnabled = Accounts.loginServices.saml.isEnabled;
+      const originalOrigin = Meteor.settings.public.rustShellOrigin;
+      const originalValidate = SAML.prototype.validateResponse;
+      const settings = globalDb.collections.settings;
+      const settingIds = ['samlEntryPoint','samlPublicCert','samlEntityId','samlLogout'];
+      const saved = await settings.find({_id:{$in:settingIds}}).fetchAsync();
+      const flow = Crypto.randomBytes(32).toString('hex');
+      const identity = 'rust-saml-'+Random.id();
+      let pending, linked, linkPending, accountId;
+      const require = (value,message) => { if (!value) throw new Error(message); };
+      const native = (operation,data={}) => rustShellBridge.handle('nativeAuth',{operation,data,flow});
+      const requestId = pending => {
+        const url = new URL(pending.url);
+        require(url.origin === 'https://idp.example','Unexpected SAML endpoint');
+        const xml = Zlib.inflateRawSync(Buffer.from(url.searchParams.get('SAMLRequest'),'base64')).toString();
+        require(xml.includes('/_saml/validate/default'),'SAML callback changed');
+        const id = xml.match(/ ID="([^"]+)"/)[1];
+        require(id !== pending.request && !xml.includes(pending.request),'Browser polling key leaked into SAML request');
+        return id;
+      };
+      const complete = async (id,name=identity) => {
+        SAML.prototype.validateResponse = (_response,callback) => callback(null,{inResponseToId:id,nameID:name,email:name+'@example.invalid',displayName:'SAML test'});
+        let status,headers,body;
+        await handleSamlRequest({url:'/_saml/validate/default/unsigned-token',body:{SAMLResponse:'fixture'}},
+          {writeHead(code,value){status=code;headers=value;},end(value){body=value;}},()=>{throw new Error('Callback was not handled');});
+        return {status,headers,body};
+      };
+      try {
+        Accounts.loginServices.saml.isEnabled = () => true;
+        Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+        for (const [id,value] of [['samlEntryPoint','https://idp.example/sso'],['samlPublicCert','TEST_CERT'],['samlEntityId','rust-test'],['samlLogout','https://idp.example/logout']]) {
+          await settings.upsertAsync({_id:id},{$set:{value}});
+        }
+        pending = await native('samlStart');
+        const id = requestId(pending);
+        let denied=false;
+        try { finishNativeSaml('login:foreign',pending.request); } catch(error) {denied=error.error===403;}
+        require(denied,'Foreign flow consumed SAML request');
+        cancelNativeSaml('login:foreign',pending.request);
+        require((await native('samlFinish',{request:pending.request})).pending,'Uncompleted SAML request was accepted');
+        await Meteor.users.insertAsync({_id:identity,type:'credential',services:{saml:{id:identity,email:identity+'@example.invalid'}},profile:{name:'SAML test'}});
+        const response=await complete(id);
+        require(response.status===303 && response.headers.Location==='https://rust.example.test/oauth-complete','SAML completion did not return to native shell');
+        for (const credentialToken of [id,pending.request,'unsigned-token']) {
+          denied=false;
+          try {await loginWithSaml({credentialToken});} catch (_) {denied=true;}
+          require(denied,'Public SAML identifier was redeemable as a credential');
+        }
+        linked=await native('samlFinish',{request:pending.request});
+        require(!!linked.token,'SAML login did not issue a session');
+        denied=false;
+        try {await native('samlFinish',{request:pending.request});} catch (_) {denied=true;}
+        require(denied,'SAML request was reused');
+        require((await complete(id)).status!==303,'Consumed SAML response was replayed');
+        accountId=(await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
+        const account=(operation,data={})=>rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
+        linkPending=(await account('samlStart')).authorization;
+        await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{saml:{id:identity+'-linked',email:identity+'-linked@example.invalid'}},profile:{name:'Linked SAML test'}});
+        require((await complete(requestId(linkPending),identity+'-linked')).status===303,'SAML link callback failed');
+        const result=await account('samlFinish',{request:linkPending.request});
+        require(result.credentials.some(item=>item.id===identity+'-linked' && item.login),'SAML credential was not linked');
+        pending=await native('samlStart');
+        const canceledId=requestId(pending);
+        await native('samlCancel',{request:pending.request});
+        require((await complete(canceledId)).status!==303,'Canceled SAML response was accepted');
+        pending=await native('samlStart');
+        const realNow=Date.now;
+        const expiredTime=realNow()+300001;
+        denied=false;
+        try {
+          Date.now=()=>expiredTime;
+          try {finishNativeSaml('login:'+flow,pending.request);} catch (_) {denied=true;}
+        } finally {Date.now=realNow;}
+        require(denied,'Expired SAML request completed');
+        pending=await native('samlStart');
+        Accounts.loginServices.saml.isEnabled=()=>false;
+        denied=false;
+        try {await native('samlFinish',{request:pending.request});} catch (_) {denied=true;}
+        require(denied,'Disabled SAML request completed');
+        const legacyUrl=await getMethodHandler('generateSamlLogout').apply({userId:accountId},[]);
+        require(new URL(legacyUrl).origin==='https://idp.example','Legacy SAML logout changed');
+        const logout=await rustShellBridge.handle('logout',{token:linked.token});
+        const destination=new URL(logout.redirectUrl);
+        require(destination.origin==='https://idp.example' && destination.pathname==='/logout','Native logout did not target the configured IdP');
+        const xml=Zlib.inflateRawSync(Buffer.from(destination.searchParams.get('SAMLRequest'),'base64')).toString();
+        require(xml.includes(identity+'-linked'),'Logout used the wrong SAML credential');
+        denied=false;
+        try {await rustShellBridge.handle('session',{token:linked.token});} catch (_) {denied=true;}
+        require(denied,'SAML logout left the local session usable');
+
+      } finally {
+        if(pending) cancelNativeSaml('login:'+flow,pending.request);
+        if(linkPending) cancelNativeSaml('link:'+accountId,linkPending.request);
+        SAML.prototype.validateResponse=originalValidate;
+        Accounts.loginServices.saml.isEnabled=originalEnabled;
+        Meteor.settings.public.rustShellOrigin=originalOrigin;
+        if(linked?.token) await rustShellBridge.handle('logout',{token:linked.token});
+        await Meteor.users.removeAsync({'loginCredentials.id':identity});
+        await Meteor.users.removeAsync({_id:{$in:[identity,identity+'-linked']}});
+        await settings.removeAsync({_id:{$in:settingIds}});
+        for(const doc of saved) await settings.insertAsync(doc);
+      }
+      return true;
+    },
+
+    async testRustOAuth() {
+      for (const provider of ['github','google','oidc']) {
+        const originalEnabled = Accounts.loginServices[provider].isEnabled;
+        const originalOrigin = Meteor.settings.public.rustShellOrigin;
+        const configuration = await ServiceConfiguration.configurations.findOneAsync({service:provider});
+        const identity = 'rust-'+provider+'-'+Random.id();
+        const serviceData = id => provider === 'github' ? {id,username:id,emails:[]} : {id,email:id+'@example.invalid',verified_email:true,name:'Rust Google test'};
+        const registered = Accounts.oauth.serviceNames().includes(provider);
+        let pending, linked, linkPending, accountId;
+        const flow = Crypto.randomBytes(32).toString("hex");
+        const require = (value,message) => { if (!value) throw new Error(message); };
+        try {
+          Accounts.loginServices[provider].isEnabled = () => true;
+          if (!registered) Accounts.oauth.registerService(provider);
+          Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+          if (!configuration) await ServiceConfiguration.configurations.insertAsync({service:provider,clientId:'test-only',...(provider === 'oidc' ? {secret:'test-secret',issuer:{issuer:'https://identity.example.test',authorization_endpoint:'https://identity.example.test/authorize',token_endpoint:'https://identity.example.test/token'},requestPermissions:['openid','email','custom']} : {})});
+          pending = await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
+          const url = new URL(pending.url);
+          require(url.origin === (provider === 'oidc' ? 'https://identity.example.test' : provider === 'github' ? 'https://github.com' : 'https://accounts.google.com'),'Incorrect authorization origin');
+          require(!JSON.stringify(pending).includes('credentialSecret'),'Secret exposed before authorization');
+          let denied = false;
+          try { await finishOAuth(provider,'login:foreign',pending.request); } catch (error) { denied=error.error===403; }
+          require(denied,'OAuth request accepted a foreign flow');
+          require(await finishOAuth(provider,'login:'+flow,pending.request) === null,'Incomplete OAuth was accepted');
+          const other = provider === 'google' ? 'github' : 'google';
+          denied=false;
+          try { await finishOAuth(other,'login:'+flow,pending.request); } catch (error) { denied=error.error===403; }
+          require(denied,'OAuth request accepted a different provider');
+          await cancelOAuth(other,'login:'+flow,pending.request);
+          require(await finishOAuth(provider,'login:'+flow,pending.request) === null,'A different provider canceled the request');
+          if (provider === 'oidc') {
+            require(url.searchParams.get('scope') === 'openid email custom','OIDC configured permissions changed');
+            require(url.searchParams.get('response_type') === 'code','OIDC must use the authorization-code flow');
+            require(url.searchParams.get('redirect_uri').includes('/_oauth/oidc'),'OIDC callback changed');
+          }
+          if (provider === 'google') {
+            require(url.searchParams.get('response_type') === 'code','Google must use the authorization-code flow');
+            require(url.searchParams.get('scope') === 'email profile','Unexpected Google login permissions');
+            require(url.searchParams.get('redirect_uri').includes('/_oauth/google'),'Google callback changed');
+          }
+
+          // Existing synthetic credentials avoid triggering external avatar downloads.
+          await Meteor.users.insertAsync({_id:identity,type:'credential',services:{[provider]:serviceData(identity)},profile:{name:'Rust OAuth test'}});
+          const secret = Random.secret();
+          await OAuth._storePendingCredential(pending.request,{serviceName:provider,serviceData:serviceData(identity),options:{profile:{name:'Rust OAuth test'}}},secret);
+          let location;
+          await OAuth._endOfLoginResponse({writeHead(status,headers){ require(status===303,'OAuth callback did not redirect'); location=headers.Location; },end(){}},
+            {query:{state:url.searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret}});
+          require(location === 'https://rust.example.test/oauth-complete','Callback did not return to Rust');
+          linked = await rustShellBridge.handle('nativeAuth',{operation:'oauthFinish',data:{provider,request:pending.request},flow});
+          require(!!linked.token && !JSON.stringify(linked).includes(secret),'OAuth secret leaked or login failed');
+          denied=false;
+          try { await finishOAuth(provider,'login:'+flow,pending.request); } catch (_) { denied=true; }
+          require(denied,'OAuth result could be reused');
+          accountId = (await Meteor.users.findOneAsync({'loginCredentials.id':identity}))._id;
+          const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token:linked.token,operation,data});
+          linkPending = (await settings('oauthStart',{provider})).authorization;
+          await Meteor.users.insertAsync({_id:identity+'-linked',type:'credential',services:{[provider]:serviceData(identity+'-linked')},profile:{name:'Linked OAuth test'}});
+          const linkSecret = Random.secret();
+          await OAuth._storePendingCredential(linkPending.request,{serviceName:provider,serviceData:serviceData(identity+'-linked'),options:{}},linkSecret);
+          await OAuth._endOfLoginResponse({writeHead(){},end(){}},
+            {query:{state:new URL(linkPending.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:linkPending.request,secret:linkSecret}});
+          const settingsResult = await settings('oauthFinish',{provider,request:linkPending.request});
+          require(settingsResult.credentials.some(item=>item.id===identity+'-linked' && item.login),'OAuth credential was not linked for login');
+          require(!JSON.stringify(settingsResult).includes(linkSecret),'Linking exposed an OAuth secret');
+          // A removed native request must never fall back to Meteor's browser
+          // credential-delivery handler, even when a callback arrives late.
+          for (const request of [pending,linkPending]) {
+            const lateSecret=Random.secret();
+            await OAuth._storePendingCredential(request.request,{serviceName:provider,serviceData:{}},lateSecret);
+            let status,body;
+            await OAuth._endOfLoginResponse({writeHead(code){status=code;},end(value){body=value;}},
+              {query:{state:new URL(request.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:request.request,secret:lateSecret}});
+            require(status===410 && !String(body).includes(lateSecret),'Consumed native callback exposed credentials');
+            require(!await OAuth.retrieveCredential(request.request,lateSecret),'Late native callback left credentials behind');
+          }
+          const canceled=await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
+          await cancelOAuth(provider,'login:'+flow,canceled.request);
+          const canceledSecret=Random.secret();
+          await OAuth._storePendingCredential(canceled.request,{serviceName:provider,serviceData:{}},canceledSecret);
+          let canceledStatus;
+          await OAuth._endOfLoginResponse({writeHead(code){canceledStatus=code;},end(){}},
+            {query:{state:new URL(canceled.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:canceled.request,secret:canceledSecret}});
+          require(canceledStatus===410,'Canceled native callback used legacy credential delivery');
+          require(!await OAuth.retrieveCredential(canceled.request,canceledSecret),'Canceled callback retained credentials');
+
+          // A valid credential from another provider must not complete this flow.
+          const otherEnabled = Accounts.loginServices[other].isEnabled;
+          const otherRegistered = Accounts.oauth.serviceNames().includes(other);
+          const wrongId = identity+'-wrong';
+          try {
+            Accounts.loginServices[other].isEnabled = () => true;
+            if (!otherRegistered) Accounts.oauth.registerService(other);
+            const wrongData = other === 'github' ? {id:wrongId,username:wrongId,emails:[]} :
+              {id:wrongId,email:wrongId+'@example.invalid',verified_email:true,name:'Wrong provider'};
+            await Meteor.users.insertAsync({_id:wrongId,type:'credential',services:{[other]:wrongData},profile:{name:'Wrong provider'}});
+            pending = await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
+            const wrongSecret = Random.secret();
+            await OAuth._storePendingCredential(pending.request,{serviceName:other,serviceData:wrongData,options:{}},wrongSecret);
+            await OAuth._endOfLoginResponse({writeHead(){},end(){}},
+              {query:{state:new URL(pending.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret:wrongSecret}});
+            denied = false;
+            try {
+              await rustShellBridge.handle('nativeAuth',{operation:'oauthFinish',data:{provider,request:pending.request},flow});
+            } catch (error) { denied = /Expected a .* credential/.test(error.reason || error.message); }
+            require(denied,'A different provider credential completed sign-in');
+            require(!await Meteor.users.findOneAsync({'loginCredentials.id':wrongId}),'Wrong-provider sign-in created an account');
+            const wrongCredential = await Meteor.users.findOneAsync(wrongId);
+            require(!wrongCredential.services.resume?.loginTokens?.length,'Wrong-provider credential retained a login token');
+          } finally {
+            Accounts.loginServices[other].isEnabled = otherEnabled;
+            if (!otherRegistered) Accounts.oauth.unregisterService(other);
+            await Meteor.users.removeAsync({'loginCredentials.id':wrongId});
+            await Meteor.users.removeAsync(wrongId);
+          }
+
+        } finally {
+          if (pending) await cancelOAuth(provider,'login:'+flow,pending.request);
+          if (linkPending) await cancelOAuth(provider,'link:'+accountId,linkPending.request);
+          if (!registered) Accounts.oauth.unregisterService(provider);
+          Accounts.loginServices[provider].isEnabled=originalEnabled;
+          Meteor.settings.public.rustShellOrigin=originalOrigin;
+          if (linked?.token) await rustShellBridge.handle('logout',{token:linked.token});
+          const credential = await Meteor.users.findOneAsync({['services.'+provider+'.id']:identity});
+          if (credential) {
+            await Meteor.users.removeAsync({'loginCredentials.id':credential._id});
+            await Meteor.users.removeAsync(credential._id);
+          }
+          await Meteor.users.removeAsync(identity+'-linked');
+          if (!configuration) await ServiceConfiguration.configurations.removeAsync({service:provider});
+        }
+      }
+      return true;
+    },
+
+
+    async testRustEmailDeliveryFailure() {
+      const originalEnabled = Accounts.loginServices.email.isEnabled;
+      const email = 'rust-email-failure-' + Random.id() + '@example.invalid';
+      const flow = Crypto.randomBytes(32).toString('hex');
+      let attempts = 0;
+      try {
+        Accounts.loginServices.email.isEnabled = () => true;
+        setTokenEmailSenderForTests(async () => {
+          ++attempts;
+          throw Object.assign(new Error('test transport failure'), {code:'ECONNREFUSED'});
+        });
+        for (let i = 0; i < 4; ++i) {
+          let failure;
+          try { await rustShellBridge.handle('nativeAuth',{operation:'sendEmail',data:{email},flow}); }
+          catch (error) { failure = error; }
+          if (failure?.error !== 503 || !failure.reason.includes('SMTP settings')) {
+            throw new Error('Email transport failure did not return actionable advice');
+          }
+          const user = await Meteor.users.findOneAsync({'services.email.email':email});
+          if (user?.services.email.tokens.length !== 0) throw new Error('Failed delivery retained a pending code');
+        }
+        if (attempts !== 4) throw new Error('Failed email deliveries exhausted the pending-code allowance');
+        return true;
+      } finally {
+        Accounts.loginServices.email.isEnabled = originalEnabled;
+        setTokenEmailSenderForTests(null);
+        await Meteor.users.removeAsync({'services.email.email':email});
+      }
+    },
+
+    async testRustDevAccountIdentity() {
+      for (const [name, legacyName] of Object.entries({Alice:'Alice Dev Admin',Bob:'Bob Dev User',Carol:'Carol Dev User',Dave:'Dave Dev User'})) {
+        let credential = await Meteor.users.findOneAsync({'services.dev.name':legacyName});
+        let account = credential && await Meteor.users.findOneAsync({'loginCredentials.id':credential._id});
+        const createdCredential = !credential;
+        const createdAccount = !account;
+        let login;
+        try {
+          if (!credential) {
+            credential = {_id:Random.id(),type:'credential',services:{dev:{name:legacyName,isAdmin:name==='Alice'}},profile:{name:legacyName}};
+            await Meteor.users.insertAsync(credential);
+          }
+          if (!account) {
+            account = {_id:Random.id(),type:'account',loginCredentials:[{id:credential._id}],nonloginCredentials:[],profile:{name:'Customized display name'},hasCompletedSignup:true};
+            await Meteor.users.insertAsync(account);
+          }
+          login = await rustNativeAuth('dev',{name},Crypto.randomBytes(32).toString('hex'));
+          login.commit();
+          if (login.accountId !== account._id) throw new Error(name+' did not reopen the legacy account');
+        } finally {
+          if (login) await Meteor.users.updateAsync(login.accountId,{$pull:{'services.resume.loginTokens':{hashedToken:login.loginHash}}});
+          if (createdAccount && account) await Meteor.users.removeAsync(account._id);
+          if (createdCredential && credential) await Meteor.users.removeAsync(credential._id);
+        }
+      }
+      return true;
+    },
+
+    async testRustNativeLogin() {
+      const flow = Crypto.randomBytes(32).toString('hex');
+      const options = await rustShellBridge.handle('nativeAuth',{operation:'options',data:{},flow});
+      if (!options.dev) throw new Error('Dev sign-in was not advertised');
+      const result = await rustShellBridge.handle('nativeAuth',{operation:'dev',data:{name:'Alice'},flow});
+      try {
+        const session = await rustShellBridge.handle('session',{token:result.token});
+        if (!session.account.name.includes('Alice')) throw new Error('Native login selected the wrong account');
+        if (result.loginHash || result.accountId) throw new Error('Native login exposed credential internals');
+      } finally { await rustShellBridge.handle('logout',{token:result.token}); }
+      return true;
+    },
+
+    async testRustProfile() {
+      const accountId = "rust_profile_" + Random.id();
+      const hash = Crypto.randomBytes(32).toString("hex");
+      const credentialIds = [accountId + "_email1", accountId + "_email2"];
+      let token;
+      const require = (condition, message) => { if (!condition) throw new Error(message); };
+      try {
+        await Meteor.users.insertAsync({ _id: accountId, type: "account", loginCredentials: [], nonloginCredentials: [],
+          profile: { name: "Before", handle: "before", pronoun: "neutral", picture: "preserved-picture" },
+          services: { resume: { loginTokens: [{ hashedToken: hash, when: new Date() }] } } });
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(accountId, hash, state);
+        ({ token } = await rustShellBridge.handle("exchange", { code, state }));
+        const profile = { name: "Rust profile", handle: "rust_profile", pronoun: "robot" };
+        const saved = await rustShellBridge.handle("updateProfile", { token, accountId: this.userId, profile });
+        require(saved.name === profile.name && saved.handle === profile.handle && saved.pronoun === profile.pronoun, "Profile save returned incorrect fields");
+        const user = await Meteor.users.findOneAsync(accountId);
+        require(user.hasCompletedSignup, "Profile update did not preserve signup completion");
+        require(user.profile.picture === "preserved-picture", "Profile update changed picture");
+        require(user.services.resume.loginTokens[0].hashedToken === hash, "Profile update changed login token");
+        const beforeProfileEdit = await rustShellBridge.handle("snapshot",{token});
+        const legacy = { name: "Legacy profile", handle: "legacy_profile", pronoun: "female" };
+        await getMethodHandler("updateProfile").call({ userId: accountId }, null, legacy);
+        require((await rustShellBridge.handle("getProfile", { token })).name === legacy.name, "Rust profile did not read legacy edit");
+        const afterProfileEdit = await rustShellBridge.handle("watch",{token,after:beforeProfileEdit.version});
+        require(afterProfileEdit.profileVersion !== beforeProfileEdit.profileVersion,"Profile change did not invalidate live snapshot");
+        require(afterProfileEdit.profileVersion === (await rustShellBridge.handle("getProfile",{token})).version,"Live profile version differs from read");
+        let invalid = false;
+        try { await getMethodHandler("updateProfile").call({ userId: accountId }, null, { ...legacy, handle: "INVALID" }); }
+        catch (_) { invalid = true; }
+        require(invalid, "Legacy validation changed");
+        const upload = () => rustShellBridge.handle("uploadPicture",{token,accountId:this.userId});
+        const first = await upload();
+        const firstKey = new URL(first.uploadUrl).pathname.slice(1);
+        const second = await upload();
+        require(!await globalDb.collections.assetUploadTokens.findOneAsync(firstKey),"Superseded picture upload remained valid");
+        const secondKey = new URL(second.uploadUrl).pathname.slice(1);
+        const uploadRecord = await globalDb.collections.assetUploadTokens.findOneAsync(secondKey);
+        require(uploadRecord.purpose.profilePicture.userId === accountId,"Picture upload crossed account boundary");
+        let rejected=false;
+        try { await httpCallAsync('POST',second.uploadUrl,{content:'<svg/>',headers:{'Content-Type':'image/png'},timeout:5000}); }
+        catch (error) { rejected=error.response?.statusCode === 400; }
+        require(rejected,"Image validation trusted the supplied MIME type");
+        require(!await globalDb.collections.assetUploadTokens.findOneAsync(secondKey),"Rejected upload token was reusable");
+        await Meteor.users.updateAsync(accountId,{$unset:{'profile.picture':1}});
+        const validUpload = await upload();
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+        require((await httpCallAsync('POST',validUpload.uploadUrl,{content:png,headers:{'Content-Type':'image/png'},timeout:5000})).statusCode === 204,"Picture upload failed");
+        const uploadedUser = await Meteor.users.findOneAsync(accountId);
+        const asset = await globalDb.getStaticAsset(uploadedUser.profile.picture);
+        require(asset.mimeType === 'image/png' && asset.content.equals(png),"Picture bytes were not stored canonically");
+        const refreshed = await rustShellBridge.handle('getProfile',{token});
+        require(refreshed.pictureUrl.endsWith('/'+uploadedUser.profile.picture),"Picture URL not projected");
+        require((await rustShellBridge.handle('snapshot',{token})).accountPictureUrl === refreshed.pictureUrl,"Topbar picture did not update");
+        let reused=false;
+        try { await httpCallAsync('POST',validUpload.uploadUrl,{content:png,timeout:5000}); }
+        catch (error) { reused=error.response?.statusCode === 404; }
+        require(reused,"Consumed picture upload token was reusable");
+
+        for (const [index,id] of credentialIds.entries()) {
+          await Meteor.users.insertAsync({_id:id,type:'credential',profile:{name:'Email '+index},
+            services:{email:{email:id+'@example.test',tokens:[]}}});
+        }
+        await Meteor.users.updateAsync(accountId,{$set:{loginCredentials:credentialIds.map(id=>({id}))}});
+        const settings = (operation,data={}) => rustShellBridge.handle('accountSettings',{token,operation,data,accountId:this.userId});
+        const accountState = await settings('state');
+        require(accountState.credentials.length === 2,'Own credentials were not projected');
+        require(!JSON.stringify(accountState).includes('tokens'),'Credential secrets leaked in account settings');
+        await settings('primary',{email:credentialIds[1]+'@example.test'});
+        require((await Meteor.users.findOneAsync(accountId)).primaryEmail === credentialIds[1]+'@example.test','Primary email was not saved');
+        let denied=false;
+        try { await settings('primary',{email:'foreign@example.test'}); } catch (_) { denied=true; }
+        require(denied,'Unverified primary email was accepted');
+        denied=false;
+        try { await settings('unlink',{id:this.userId}); } catch (_) { denied=true; }
+        require(denied,'Foreign credential unlink was accepted');
+        await settings('allowLogin',{id:credentialIds[1],allowLogin:false});
+        denied=false;
+        try { await settings('unlink',{id:credentialIds[0]}); } catch (_) { denied=true; }
+        require(denied,'Last login credential could be removed');
+        await settings('unlink',{id:credentialIds[1]});
+        require((await settings('state')).credentials.length === 1,'Credential was not unlinked');
+
+        await rustShellBridge.handle("logout", { token });
+        let revoked = false;
+        try { await rustShellBridge.handle("updateProfile", { token, profile }); }
+        catch (error) { revoked = error.status === 401; }
+        require(revoked, "Revoked login updated profile");
+        revoked=false;
+        try { await upload(); } catch (error) { revoked=error.status === 401; }
+        require(revoked,"Revoked login issued picture upload token");
+        return true;
+      } finally {
+        if (token) await rustShellBridge.handle("logout", { token });
+        const uploadedUser = await Meteor.users.findOneAsync(accountId);
+        if (uploadedUser?.profile?.picture && uploadedUser.profile.picture !== 'preserved-picture') await globalDb.unrefStaticAsset(uploadedUser.profile.picture);
+        await globalDb.collections.assetUploadTokens.removeAsync({rustShellAccount:accountId});
+        await Meteor.users.removeAsync({_id:{$in:[accountId,...credentialIds]}});
+      }
+    },
+
+    async testRustNativePowerbox(action, grainId, input = {}) {
+      check(action, String);
+      check(grainId, String);
+      const grain = await globalDb.collections.grains.findOneAsync({_id:grainId,userId:this.userId});
+      if (!grain || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const key = this.userId + ":" + grainId;
+      let record = rustNativePowerboxTests.get(key);
+      if (action === "open") {
+        if (record) throw new Error("Test request already open");
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
+        const {token} = await rustShellBridge.handle("exchange",{code,state});
+        record = {token,scope:Crypto.randomBytes(32).toString("hex"),request:Crypto.randomBytes(32).toString("hex"),
+          previousOrigin:Meteor.settings.public.rustShellOrigin};
+        rustNativePowerboxTests.set(key,record);
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        const view = await rustShellBridge.handle("openGrain",{token,scope:record.scope,grainId});
+        record.lease = view.lease;
+        record.requesterId = new URL(view.url).searchParams.get("sessionid");
+        return view;
+      }
+      if (!record) throw new Error("No native Powerbox test session");
+      if (action === "close") {
+        await rustShellBridge.handle("logout",{token:record.token});
+        Meteor.settings.public.rustShellOrigin = record.previousOrigin;
+        rustNativePowerboxTests.delete(key);
+        return true;
+      }
+      if (action === 'checkNested') {
+        const child=Crypto.randomBytes(32).toString('hex');
+        const Powerbox=Capnp.importSystem('sandstorm/powerbox.capnp');
+        const UiView=Capnp.importSystem('sandstorm/grain.capnp').UiView;
+        const query=[Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:UiView.typeId}]}).toString('base64')];
+        const call = (nestedOperation,nestedInput={}) => rustShellBridge.handle('powerbox',{token:record.token,scope:record.scope,lease:record.lease,request:record.request,operation:'select',mode:'nested',nestedRequest:child,nestedOperation,nestedInput});
+        let tokenId;
+        try {
+          const choices=await call('begin',{query});
+          if (choices.status !== 'nested') throw new Error('Nested result leaked into parent lifecycle');
+          const candidate=choices.view.candidates.find(item=>item.uiView);
+          if (!candidate) throw new Error('Nested provider had no UiView options');
+          const result=await call('select',{key:candidate.key,mode:'view',role:'all'});
+          tokenId=Crypto.createHash('sha256').update(result.view.token).digest('base64');
+          const token=await globalDb.collections.apiTokens.findOneAsync(tokenId);
+          if (token?.owner?.clientPowerboxRequest?.sessionId !== record.providerId) throw new Error('Nested token targeted the outer requesting session');
+          await call('cancel');
+          const parent=await rustShellBridge.handle('powerbox',{token:record.token,scope:record.scope,lease:record.lease,request:record.request,operation:'poll'});
+          if (parent.status !== 'waiting') throw new Error('Nested completion completed the parent request');
+          return true;
+        } finally { await call('cancel'); if (tokenId) await globalDb.removeApiTokens({_id:tokenId}); }
+      }
+      if (action === "checkOAuth") {
+        const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
+        const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
+        const call = (operation,extra={}) => rustShellBridge.handle("powerbox",{...extra,token:record.token,
+          scope:record.scope,lease:record.lease,request:record.request,operation});
+        const originalOrigin = Meteor.settings.public.rustShellOrigin;
+        const require = (value,message) => { if (!value) throw new Error(message); };
+        Meteor.settings.public.rustShellOrigin = 'https://rust.example.test';
+        try {
+          for (const provider of ['github','google']) {
+            const enabled = Accounts.loginServices[provider].isEnabled;
+            const config = await ServiceConfiguration.configurations.findOneAsync({service:provider});
+            const url = provider === 'google' ? 'https://www.googleapis.com/drive/v3/' : 'https://api.github.com/';
+            const scope = provider === 'google' ? 'https://www.googleapis.com/auth/drive.readonly' : 'repo';
+            const tag = Capnp.serialize(ApiSession.PowerboxTag,{canonicalUrl:url,oauthScopes:[{name:scope}]});
+            const query = [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:ApiSession.typeId,value:tag}]}).toString('base64')];
+            let tokenId;
+            try {
+              Accounts.loginServices[provider].isEnabled = () => true;
+              if (!config) await ServiceConfiguration.configurations.insertAsync({service:provider,clientId:'powerbox-test'});
+              for (const mode of ['success','wrong-provider','cancel']) {
+                const choices = await call('begin',{query});
+                const candidate = choices.candidates.find(item=>item.oauthProvider===provider);
+                require(!!candidate,'Missing native '+provider+' Powerbox candidate');
+                const pending = await call('select',{key:candidate.key,mode:'oauthStart'});
+                const authorize = new URL(pending.url);
+                require(authorize.searchParams.get('scope') === (provider === 'google' ? 'email '+scope : scope),'Powerbox changed requested scopes');
+                if (provider === 'google') require(authorize.searchParams.get('access_type') === 'offline' && authorize.searchParams.get('prompt') === 'consent','Google capability did not request offline consent');
+                let denied=false;
+                try {await finishOAuth(provider,'powerbox:'+record.requesterId,pending.request);} catch (_) {denied=true;}
+                require(denied,'OAuth completion was not isolated to its Powerbox request');
+                if (mode==='success') {
+                  const adapter=rustPowerbox(globalDb);
+                  const sibling=await adapter.open({accountId:this.userId,sessionId:record.requesterId,grainId},{query},async()=>{});
+                  try {
+                    const siblingCandidate=sibling.view.candidates.find(item=>item.oauthProvider===provider);
+                    await adapter.select(sibling.handle,{key:siblingCandidate.key,mode:'oauthStart'},async()=>{});
+                    require((await call('select',{key:candidate.key,mode:'oauthFinish'})).status==='waiting','Sibling authorization displaced this request');
+                  } finally {await adapter.close(sibling.handle);}
+                }
+                require((await call('select',{key:candidate.key,mode:'oauthFinish'})).status==='waiting','Unfinished authorization completed');
+                const secret=Random.secret(), access=Random.secret(), refresh=Random.secret();
+                const serviceName=mode==='wrong-provider' ? (provider==='google' ? 'github' : 'google') : provider;
+                await OAuth._storePendingCredential(pending.request,{serviceName,serviceData:{accessToken:OAuth.sealSecret(access),...(provider==='google' ? {refreshToken:OAuth.sealSecret(refresh)} : {})}},secret);
+                await OAuth._endOfLoginResponse({writeHead(){},end(){}},{query:{state:authorize.searchParams.get('state')},loginStyle:'popup',credentials:{token:pending.request,secret}});
+                if (mode==='cancel') {
+                  await call('cancel');
+                  require(!await OAuth.retrieveCredential(pending.request,secret),'Canceled request retained provider credentials');
+                  continue;
+                }
+                if (mode==='wrong-provider') {
+                  denied=false;
+                  try {await call('select',{key:candidate.key,mode:'oauthFinish'});} catch (_) {denied=true;}
+                  require(denied,'Mismatched OAuth provider issued a capability');
+                  await call('cancel');
+                  continue;
+                }
+                const result=await call('select',{key:candidate.key,mode:'oauthFinish',url:'https://attacker.invalid/'});
+                require(result.status==='complete','OAuth capability was not issued');
+                require(![secret,access,refresh].some(value=>JSON.stringify(result).includes(value)),'Provider credentials leaked to browser');
+                tokenId=Crypto.createHash('sha256').update(result.token).digest('base64');
+                const token=await globalDb.collections.apiTokens.findOneAsync(tokenId);
+                require(token?.owner?.clientPowerboxRequest?.sessionId===record.requesterId,'OAuth capability targeted the wrong session');
+                require(token.frontendRef?.http?.url===url,'Client changed the authorized API URL');
+                require(provider==='google' ? token.frontendRef.http.auth.refresh!==refresh : token.frontendRef.http.auth.bearer!==access,'Provider token was stored unencrypted');
+                const decrypted=await fetchApiToken(globalDb,result.token);
+                require(provider==='google' ? decrypted.frontendRef.http.auth.refresh===refresh : decrypted.frontendRef.http.auth.bearer===access,'Provider token was not stored in the capability');
+                require(!await OAuth.retrieveCredential(pending.request,secret),'OAuth credential was not consumed');
+                await call('cancel');
+                await globalDb.removeApiTokens({_id:tokenId});tokenId=null;
+              }
+            } finally {
+              await call('cancel');
+              if(tokenId) await globalDb.removeApiTokens({_id:tokenId});
+              Accounts.loginServices[provider].isEnabled=enabled;
+              if(!config) await ServiceConfiguration.configurations.removeAsync({service:provider});
+            }
+          }
+        } finally {Meteor.settings.public.rustShellOrigin=originalOrigin;}
+        return true;
+      }
+      if (action === "checkBuiltins") {
+        const Powerbox = Capnp.importSystem("sandstorm/powerbox.capnp");
+        const UiView = Capnp.importSystem("sandstorm/grain.capnp").UiView;
+        const ApiSession = Capnp.importSystem("sandstorm/api-session.capnp").ApiSession;
+        const call = (operation, extra = {}) => rustShellBridge.handle("powerbox", {...extra,token:record.token,
+          scope:record.scope,lease:record.lease,request:record.request,operation});
+        const query = type => [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:type.typeId}]}).toString("base64")];
+        for (const kind of ["view","url","basic","bearer"]) {
+          let id;
+          try {
+            const state = await call("begin", {query:query(kind === "view" ? UiView : ApiSession)});
+            const candidate = state.candidates.find(row => kind === "view" ? row.uiView : row.urlInput);
+            if (!candidate) throw new Error("Missing native " + kind + " option");
+            const result = await call("select",{key:candidate.key,mode:kind === "view" ? "view" : "url",role:"all",url:kind === "basic" ? "https://user:password@example.com/" : kind === "bearer" ? "https://example.com/#bearer-secret" : "https://example.com/"});
+            id = Crypto.createHash("sha256").update(result.token).digest("base64");
+            const token = await globalDb.collections.apiTokens.findOneAsync(id);
+            if (!token || token.owner?.clientPowerboxRequest?.sessionId !== record.requesterId ||
+                token.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Powerbox result has incorrect receiving authority");
+            if (kind !== "view" && token.frontendRef?.http?.url !== "https://example.com/") throw new Error("URL capability differs from selected URL");
+            const decrypted = await fetchApiToken(globalDb,result.token);
+            if (kind === "basic" && decrypted.frontendRef.http.auth.basic.password !== "password") throw new Error("URL basic credentials were lost");
+            if (kind === "bearer" && decrypted.frontendRef.http.auth.bearer !== "bearer-secret") throw new Error("URL bearer credentials were lost");
+            let replayed = false;
+            try { await call("select",{key:candidate.key,mode:"view",role:"all"}); replayed = true; } catch (_) {}
+            if (replayed) throw new Error("Completed Powerbox request replayed");
+          } finally { await call("cancel"); if (id) await globalDb.removeApiTokens({_id:id}); }
+        }
+        // Identity choices use the requester's contacts and grant only the
+        // selected role on the requesting grain, never a client-supplied user.
+        const Identity = Capnp.importSystem("sandstorm/identity.capnp").Identity;
+        const person = "rust-powerbox-person-" + Random.id();
+        const session = await globalDb.collections.sessions.findOneAsync(record.requesterId);
+        let contact, identityToken;
+        try {
+          await Meteor.users.insertAsync({_id:person,type:"account",profile:{name:"Powerbox person",handle:"powerbox-person",pronoun:"neutral"},loginCredentials:[],nonloginCredentials:[]});
+          contact = await globalDb.collections.contacts.insertAsync({ownerId:this.userId,accountId:person});
+          await globalDb.collections.sessions.updateAsync(record.requesterId,{$set:{viewInfo:{...session.viewInfo,roles:[
+            {title:{defaultText:"Obsolete"},permissions:[true],obsolete:true},
+            {title:{defaultText:"Insufficient"},permissions:[false]},
+            {title:{defaultText:"Contributor"},permissions:[true]},
+          ]}}});
+          const identityQuery = [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:Identity.typeId,
+            value:Capnp.serialize(Identity.PowerboxTag,{permissions:[true]})}]}).toString("base64")];
+          let choices = await call("begin",{query:identityQuery});
+          let candidate = choices.candidates.find(row => row.identity && row.title === "Powerbox person");
+          if (!candidate || choices.legacy || JSON.stringify(candidate.roles.map(role=>role.key)) !== '["2"]') throw new Error("Identity roles were not filtered without reindexing");
+          for (const role of ['0','1','99']) {
+            let accepted = false;
+            try { await call("select",{key:candidate.key,mode:"identity",role}); accepted = true; } catch (_) {}
+            if (accepted) throw new Error("Invalid identity role accepted");
+            choices = await call("begin",{query:identityQuery});
+            candidate = choices.candidates.find(row => row.identity && row.title === "Powerbox person");
+          }
+          const result = await call("select",{key:candidate.key,mode:"identity",role:"all",id:this.userId});
+          identityToken = Crypto.createHash("sha256").update(result.token).digest("base64");
+          const token = await globalDb.collections.apiTokens.findOneAsync(identityToken);
+          if (token?.frontendRef?.identity !== person || token.owner?.clientPowerboxRequest?.sessionId !== record.requesterId) throw new Error("Identity token has the wrong recipient or receiving session");
+          if (!await globalDb.collections.apiTokens.findOneAsync({grainId,'owner.user.accountId':person})) throw new Error("Identity selection did not grant access");
+        } finally {
+          await call("cancel");
+          await globalDb.collections.sessions.updateAsync(record.requesterId,{$set:{viewInfo:session.viewInfo}});
+          if (identityToken) await globalDb.removeApiTokens({_id:identityToken});
+          await globalDb.removeApiTokens({grainId,'owner.user.accountId':person});
+          if (contact) await globalDb.collections.contacts.removeAsync(contact);
+          await Meteor.users.removeAsync(person);
+        }
+        await call("begin",{query:query(UiView)});
+        let forged = false;
+        try { await call("select",{key:"grain-"+grainId,mode:"view",role:"all"}); forged = true; } catch (_) {}
+        if (forged) throw new Error("Powerbox accepted a forged option key");
+        const sourceCap = await globalThis.globalFrontendRefRegistry.create(globalDb,
+          {http:{url:"https://example.com/",auth:{none:null}}}, []);
+        const ids = [];
+        const remember = token => { const id = Crypto.createHash("sha256").update(token).digest("base64"); ids.push(id); return id; };
+        const webkeyUrl = token => new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeApiHost(token) + "/#" + token;
+        try {
+          const source = (await sourceCap.save({webkey:null})).sturdyRef.toString();
+          const sourceId = remember(source);
+          const link = webkeyUrl(source);
+          await call("begin",{query:[]});
+          const result = await call("select",{mode:"webkey",url:link,grainId:"must-not-own",sessionId:"must-not-own"});
+          const id = remember(result.token);
+          if (result.token === source) throw new Error("Powerbox returned the source webkey");
+          const row = await globalDb.collections.apiTokens.findOneAsync(id);
+          if (row.owner?.clientPowerboxRequest?.sessionId !== record.requesterId || row.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Pasted capability has the wrong owner");
+          await call("cancel");
+          const legacy = await getMethodHandler("finishPowerboxRequest").call({connection:{sandstormDb:globalDb}},record.requesterId,link,"label",null,"must-not-own");
+          remember(legacy);
+          const legacyRow = await globalDb.collections.apiTokens.findOneAsync(ids[ids.length-1]);
+          if (legacyRow.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Legacy webkey caller chose its own receiving grain");
+          const owned = (await sourceCap.save({clientPowerboxRequest:{sessionId:record.requesterId,grainId}})).sturdyRef.toString();
+          remember(owned);
+          const bad = ["https://example.com/#secret", link.split("#")[0],
+            link.slice(0,link.indexOf("#")) + "#wrong-token", process.env.ROOT_URL + "/shared/" + source];
+          bad.push(webkeyUrl(owned));
+          for (const url of bad) {
+            await call("begin",{query:[]});
+            let accepted = false;
+            try { await call("select",{mode:"webkey",url}); accepted = true; } catch (_) {}
+            finally { await call("cancel"); }
+            if (accepted) throw new Error("Invalid or non-webkey capability accepted");
+          }
+          let wrongAccount = false;
+          try { await redeemPowerboxWebkey(globalDb,"another-account",record.requesterId,link); wrongAccount = true; } catch (_) {}
+          if (wrongAccount) throw new Error("Webkey exchange crossed account session boundary");
+          await globalDb.collections.apiTokens.updateAsync(sourceId,{$set:{revoked:true}});
+          await call("begin",{query:[]});
+          let revoked = false;
+          try { await call("select",{mode:"webkey",url:link}); revoked = true; } catch (_) {}
+          finally { await call("cancel"); }
+          if (revoked) throw new Error("Revoked webkey was accepted");
+        } finally {
+          sourceCap.close();
+          await call("cancel");
+          for (const id of ids) await globalDb.removeApiTokens({_id:id});
+        }
+
+        return true;
+      }
+      if (action === "verifyProviderClosed") {
+        if (await globalDb.collections.sessions.findOneAsync(record.providerId)) throw new Error("Provider survived request close");
+        return true;
+      }
+      const result = await rustShellBridge.handle("powerbox",{...input,token:record.token,scope:record.scope,lease:record.lease,request:record.request,operation:action});
+      if (result.status === "provider") record.providerId = new URL(result.url).searchParams.get("sessionid");
+      return result;
+    },
+
+    async testRustNativeSharing(grainId) {
+      check(grainId, String);
+      const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!source || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const recipient = "rust-sharing-" + Random.id();
+      const otherGrain = "rust-sharing-other-" + Random.id();
+      const hash = Crypto.randomBytes(32).toString("hex");
+      const previousOrigin = Meteor.settings.public.rustShellOrigin;
+      const tokens = [];
+      const tokenIds = [];
+      const require = (condition, message) => { if (!condition) throw new Error(message); };
+      const denied = async (operation, message) => {
+        let failed = false;
+        try { await operation(); } catch (_) { failed = true; }
+        require(failed, message);
+      };
+      const link = async (accountId, loginHash) => {
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(accountId, loginHash, state);
+        const { token } = await rustShellBridge.handle("exchange", { code, state });
+        tokens.push(token);
+        const scope = Crypto.randomBytes(32).toString("hex");
+        const view = await rustShellBridge.handle("openGrain", { token, scope, grainId });
+        return (action, input = {}) => rustShellBridge.handle(action, { ...input, token, scope, lease: view.lease });
+      };
+      const remember = result => {
+        tokenIds.push(Crypto.createHash("sha256").update(result.token).digest("base64"));
+        return tokenIds[tokenIds.length - 1];
+      };
+      try {
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        await Meteor.users.insertAsync({ _id: recipient, type: "account", loginCredentials: [], nonloginCredentials: [],
+          profile: { name: "Native sharing recipient", handle: "recipient", pronoun: "neutral" },
+          services: { resume: { loginTokens: [{ hashedToken: hash, when: new Date() }] } } });
+        const owner = await link(this.userId, Accounts._getLoginToken(this.connection.id));
+        const share = await owner("createShare", {label:"Native sharing",role:"all"});
+        const shareId = remember(share);
+        const stored = await globalDb.collections.apiTokens.findOneAsync(shareId);
+        require(stored.forSharing && stored.grainId === grainId && stored.accountId === this.userId && !stored.expiresIfUnused,
+          "Native sharing created incorrect authority or an expiring API token");
+        await inspectRustSharedGrain(globalDb, share.token);
+        for (const accountId of [null, this.userId]) {
+          const session = await createRustSharedGrainSession(globalDb, share.token, accountId, process.env.ROOT_URL);
+          await closeRustSharedGrainSession(globalDb, {sessionId:session._id,hashedToken:session.hashedToken});
+        }
+        const redeemed = await SandstormPermissions.createNewApiToken(globalDb, {rawParentToken:share.token}, grainId,
+          "Recipient copy", {allAccess:null}, {user:{accountId:recipient,title:source.title}});
+        tokenIds.push(redeemed.id);
+        const recipientCall = await link(recipient, hash);
+        const onward = await recipientCall("createShare", {label:"Onward share",role:"all"});
+        const onwardId = remember(onward);
+        const snapshot = await owner("getSharing");
+        require(snapshot.grants.some(row => row.id === shareId && row.editable), "Own link missing");
+        require(snapshot.grants.some(row => row.id === redeemed.id && row.inherited && !row.editable && row.recipient === "Native sharing recipient"), "Redeemed access was not projected safely");
+        require(snapshot.grants.some(row => row.id === onwardId && !row.editable), "Downstream share incorrectly editable");
+        require(!JSON.stringify(snapshot).includes(share.token), "Sharing projection exposed raw bearer token");
+        await denied(() => owner("updateShare",{id:onwardId,changes:{revoked:true}}), "Owner changed another account's token");
+        await denied(() => recipientCall("updateShare",{id:shareId,changes:{revoked:true}}), "Recipient changed owner's token");
+        await denied(() => owner("updateShare",{id:redeemed.id,changes:{revoked:true}}), "Derived grant was edited as an independent source");
+        await globalDb.collections.grains.insertAsync({_id:otherGrain,userId:this.userId,private:true,packageId:source.packageId,title:"Other grain"});
+        const foreign = await SandstormPermissions.createNewApiToken(globalDb, {accountId:this.userId}, otherGrain,
+          "Foreign grain", {allAccess:null}, {webkey:{forSharing:true}});
+        tokenIds.push(foreign.id);
+        await denied(() => owner("updateShare",{id:foreign.id,changes:{revoked:true}}), "Grain-scoped capability changed another grain");
+        await globalDb.collections.apiTokens.updateAsync(shareId, {$unset:{owner:1}});
+        require((await owner("getSharing")).grants.some(row => row.id === shareId && row.editable), "Legacy ownerless link was omitted");
+        await globalDb.collections.apiTokens.updateAsync(shareId, {$set:{owner:{webkey:null}}});
+        await denied(() => owner("createShare",{label:"Invalid",role:"999"}), "Invalid role accepted");
+        await denied(() => owner("updateShare",{id:shareId,changes:{accountId:recipient}}), "Unrecognized mutation fields accepted");
+        const direct = await SandstormPermissions.createNewApiToken(globalDb, {accountId:this.userId}, grainId,
+          "Direct grant", {allAccess:null}, {user:{accountId:recipient,title:source.title}});
+        tokenIds.push(direct.id);
+        require((await owner("getSharing")).grants.some(row => row.id === direct.id && row.editable && !row.inherited), "Direct grant not editable");
+        await globalDb.collections.apiTokens.updateAsync(direct.id, {$set:{roleAssignment:{allAccess:null,removePermissions:[true]}}});
+        require((await owner("getSharing")).grants.find(row => row.id === direct.id).role === "custom", "Custom grant was mislabeled as a full role");
+        await owner("updateShare",{id:direct.id,changes:{label:"Custom grant renamed"}});
+        require((await globalDb.collections.apiTokens.findOneAsync(direct.id)).roleAssignment.removePermissions[0], "Label edit overwrote custom restrictions");
+        await owner("updateShare",{id:direct.id,changes:{role:"none"}});
+        await owner("updateShare",{id:direct.id,changes:{revoked:true}});
+        await getMethodHandler("updateApiToken").call({userId:this.userId,connection:{sandstormDb:globalDb}}, shareId, {petname:"Legacy edit"});
+        require((await owner("getSharing")).grants.find(row => row.id === shareId).label === "Legacy edit", "Legacy token updates diverged");
+        await owner("updateShare",{id:shareId,changes:{label:"Edited link",role:"none"}});
+        const edited = await globalDb.collections.apiTokens.findOneAsync(shareId);
+        require(edited.petname === "Edited link" && Object.hasOwn(edited.roleAssignment,"none"), "Permission or label edit was not canonical");
+        await owner("updateShare",{id:shareId,changes:{revoked:true}});
+        require(!(await owner("getSharing")).grants.some(row => row.id === shareId), "Revoked link remains active in listing");
+        await denied(() => inspectRustSharedGrain(globalDb, share.token), "Revoked webkey still opens");
+        await denied(() => recipientCall("createShare",{label:"Revoked",role:"all"}), "Revoked recipient created a share");
+        await denied(() => recipientCall("getSharing"), "Revoked recipient read sharing metadata");
+        return true;
+      } finally {
+        for (const token of tokens) await rustShellBridge.handle("logout", {token});
+        for (const id of tokenIds) await globalDb.removeApiTokens({_id:id});
+        await Meteor.users.removeAsync(recipient);
+        await globalDb.collections.grains.removeAsync(otherGrain);
+        Meteor.settings.public.rustShellOrigin = previousOrigin;
+      }
+    },
+
+    async testRustRenameGrain(grainId) {
+      check(grainId, String);
+      const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!source || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const recipient = "rust-rename-" + Random.id();
+      const hash = Crypto.randomBytes(32).toString("hex");
+      const previousOrigin = Meteor.settings.public.rustShellOrigin;
+      const tokens = [];
+      let share;
+      const require = (condition, message) => { if (!condition) throw new Error(message); };
+      const link = async (accountId, loginHash) => {
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(accountId, loginHash, state);
+        const { token } = await rustShellBridge.handle("exchange", { code, state });
+        tokens.push(token);
+        const scope = Crypto.randomBytes(32).toString("hex");
+        const view = await rustShellBridge.handle("openGrain", { token, scope, grainId });
+        return title => rustShellBridge.handle("renameGrain", { token, scope, lease: view.lease, title });
+      };
+      try {
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        await Meteor.users.insertAsync({ _id: recipient, type: "account", loginCredentials: [], nonloginCredentials: [],
+          profile: { name: "Rename recipient", handle: "recipient", pronoun: "neutral" },
+          services: { resume: { loginTokens: [{ hashedToken: hash, when: new Date() }] } } });
+        share = await SandstormPermissions.createNewApiToken(globalDb, { accountId: this.userId }, grainId,
+          "Rename test", { allAccess: null }, { user: { accountId: recipient, title: source.title } });
+        const ownerRename = await link(this.userId, Accounts._getLoginToken(this.connection.id));
+        const recipientRename = await link(recipient, hash);
+        await ownerRename("Owner rename");
+        require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "Owner rename", "Recipient did not follow owner rename");
+        const personalRename = await recipientRename("My private name");
+        require(personalRename.title === "My private name", "Rename response used the wrong title");
+        require(personalRename.ownerTitle === "Owner rename", "Rename response exposed the personal alias as owner title");
+        require((await globalDb.collections.grains.findOneAsync(grainId)).title === "Owner rename", "Recipient changed owner's title");
+        require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "My private name", "Recipient rename was not saved");
+        await ownerRename("Later owner rename");
+        require((await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId).title === "My private name", "Owner overwrote recipient's personal title");
+        const personalProjection = (await rustShellBridge.handle("snapshot", { token: tokens[1] })).grains.find(row => row.key === grainId);
+        require(personalProjection.ownerTitle === "Later owner rename", "Projection did not preserve the distinct owner title");
+        await recipientRename("Later owner rename");
+        const row = await globalDb.collections.apiTokens.findOneAsync(share.id);
+        require(!row.owner.user.renamed, "Matching upstream title did not reset personal rename");
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { revoked: true } });
+        let denied = false;
+        try { await recipientRename("Must not change"); }
+        catch (error) { denied = error.error === 403 || error.status === 410; }
+        require(denied, "Revoked recipient renamed a grain");
+        require((await globalDb.collections.grains.findOneAsync(grainId)).title === "Later owner rename", "Revoked rename altered owner title");
+        return true;
+      } finally {
+        for (const token of tokens) await rustShellBridge.handle("logout", { token });
+        if (share) await globalDb.removeApiTokens({ _id: share.id });
+        await renameGrainForUser(this.userId, grainId, source.title);
+        await Meteor.users.removeAsync(recipient);
+        Meteor.settings.public.rustShellOrigin = previousOrigin;
+      }
+    },
+
+    async testRustInstall(grainId) {
+      const source = await globalDb.collections.grains.findOneAsync({_id:grainId,userId:this.userId});
+      if (!source || !this.userId) throw new Meteor.Error(403,"Owned test grain required");
+      const pkg = await globalDb.collections.packages.findOneAsync(source.packageId);
+      const version = pkg.manifest.appVersion;
+      const foreign = "rust-install-foreign-" + Random.id();
+      const newer = "rust-install-newer-" + Random.id();
+      const oldPackage = "f".repeat(32);
+      let token, uploadToken;
+      const originalReportSetting = await globalDb.collections.settings.findOneAsync('reportStats');
+      const originalReportNotices = await globalDb.collections.notifications.find({'admin.type':'reportStats'}).fetchAsync();
+      const originalUser = await Meteor.users.findOneAsync(this.userId);
+      const notificationIds = Array.from({length:7}, () => "rust-notification-" + Random.id());
+      const require = (ok,message) => { if (!ok) throw new Error(message); };
+      try {
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
+        ({token} = await rustShellBridge.handle("exchange",{code,state}));
+        const call = (operation,data={packageId:pkg._id}) => rustShellBridge.handle("install",{token,operation,data,accountId:"must-not-own"});
+        const notifications = [
+          {grainId,path:"folder/document?mode=read#comment"},
+          {appUpdates:{[pkg.appId]:{name:"Test update",packageId:pkg._id}}},
+          {admin:{action:"/admin"}},
+          {grainId,userId:"another-account"},
+          {admin:{action:'/admin/stats',type:'reportStats'}},
+          {referral:true},
+          {identityChanges:true},
+        ];
+        for (let i=0;i<notifications.length;i++) await globalDb.collections.notifications.insertAsync({
+          _id:notificationIds[i],userId:this.userId,timestamp:new Date(),isUnread:true,...notifications[i],
+        });
+        const snapshot = await rustShellBridge.handle("snapshot",{token});
+        const notification = index => snapshot.entries.find(row => row.key === notificationIds[index]);
+        require(notification(0)?.nativePath === "/grain/"+grainId+"/folder/document?mode=read#comment","Grain notification path lost");
+        require(notification(1)?.nativePath === "/install","Update notification did not target native installer");
+        require(notification(2)?.nativePath === "" && notification(2).href.endsWith("/admin"),"Unsupported notification lost its legacy destination");
+        require(!notification(3),"Another account's notification leaked");
+        const noticeCall = (index,operation='details',enabled=false) => rustShellBridge.handle('notification',{token,key:notificationIds[index],operation,enabled,accountId:'another-account'});
+        require(notification(4)?.nativeAction === 'stats' && notification(5)?.nativeAction === 'referrals' && notification(6)?.nativeAction === 'identity','Native notice actions missing');
+        require((await noticeCall(6)).kind === 'identity','Identity notice missing');
+        require((await noticeCall(5)).kind === 'referrals','Referral details missing');
+        for (const [index,operation] of [[3,'details'],[5,'setStats'],[6,'setStats']]) {
+          let denied=false; try { await noticeCall(index,operation); } catch (_) { denied=true; }
+          require(denied,'Notification ownership or action boundary bypassed');
+        }
+        await Meteor.users.updateAsync(this.userId,{$set:{isAdmin:false}});
+        for (const operation of ['details','setStats']) {
+          let denied=false; try { await noticeCall(4,operation); } catch (_) { denied=true; }
+          require(denied,'Non-admin accessed statistics preferences');
+        }
+        await Meteor.users.updateAsync(this.userId,{$set:{isAdmin:true}});
+        require((await noticeCall(4)).kind === 'stats','Admin could not view statistics');
+        require((await noticeCall(4,'setStats',false)).enabled === false,'Statistics setting did not update');
+        require((await globalDb.collections.settings.findOneAsync('reportStats')).value === false,'Canonical reportStats setting unchanged');
+        require(!await globalDb.collections.notifications.findOneAsync(notificationIds[4]),'Stats notice not dismissed');
+        await rustShellBridge.handle('read',{token,key:notificationIds[6]});
+        require((await globalDb.collections.notifications.findOneAsync(notificationIds[6])).isUnread === false,'Individual notification not marked read');
+        require((await globalDb.collections.notifications.findOneAsync(notificationIds[5])).isUnread === true,'Other notification marked read');
+        await rustShellBridge.handle('read',{token,key:notificationIds[3]});
+        require((await globalDb.collections.notifications.findOneAsync(notificationIds[3])).isUnread === true,'Another account notification marked read');
+        const initial = await call("status");
+        require(initial.status === "ready" && initial.installed && initial.iconSrc,"Missing installation projection");
+        const catalog = await call("catalog",{});
+        require(/^https?:/.test(catalog.marketUrl),"Missing market URL");
+        for (const [operation,data] of [["confirm",{packageId:"0".repeat(32)}],["download",{packageId:pkg._id,url:"file:///etc/passwd"}],["upgrade",{packageId:"0".repeat(32)}]]) {
+          let denied = false; try { await call(operation,data); } catch (_) { denied = true; }
+          require(denied,"Invalid installation request accepted");
+        }
+        const upload = await call("upload",{});
+        uploadToken = new URL(upload.uploadUrl).pathname.split("/").pop();
+        require(await globalDb.collections.spkTokens.findOneAsync(uploadToken),"Upload credential was not issued by canonical installer");
+        await call("download",{packageId:pkg._id,url:""});
+        await call("confirm");
+        require(await globalDb.collections.userActions.findOneAsync({userId:this.userId,packageId:pkg._id}),"Confirmation did not install actions");
+        require(!await globalDb.collections.userActions.findOneAsync({userId:"must-not-own",packageId:pkg._id}),"Confirmation crossed account boundary");
+        await globalDb.collections.grains.insertAsync({...source,_id:foreign,userId:"another-account",packageId:oldPackage});
+        await globalDb.collections.grains.insertAsync({...source,_id:newer,appVersion:version+1,packageId:oldPackage});
+        await globalDb.collections.grains.updateAsync(grainId,{$set:{packageId:oldPackage,appVersion:version}});
+        require((await call("status")).olderGrains >= 1,"Older grains not projected");
+        await call("upgrade");
+        require((await globalDb.collections.grains.findOneAsync(grainId)).packageId === pkg._id,"Owned grain not upgraded");
+        require((await globalDb.collections.grains.findOneAsync(foreign)).packageId === oldPackage,"Another account's grain was upgraded");
+        require((await globalDb.collections.grains.findOneAsync(newer)).packageId === oldPackage,"Newer grain was downgraded");
+        await globalDb.collections.userActions.updateAsync({userId:this.userId,packageId:pkg._id},{$set:{appVersion:version+1}},{multi:true});
+        let denied = false; try { await call("confirm"); } catch (_) { denied = true; }
+        require(denied,"Newer installed app was downgraded");
+        await rustShellBridge.handle("logout",{token});
+        denied = false; try { await call("confirm"); } catch (_) { denied = true; }
+        require(denied,"Revoked session installed app");
+        return true;
+      } finally {
+        await Meteor.users.updateAsync(this.userId, originalUser.isAdmin === undefined ? {$unset:{isAdmin:1}} : {$set:{isAdmin:originalUser.isAdmin}});
+        if (originalReportSetting) await globalDb.collections.settings.upsertAsync('reportStats',originalReportSetting);
+        else await globalDb.collections.settings.removeAsync('reportStats');
+        for (const notice of originalReportNotices) await globalDb.collections.notifications.upsertAsync(notice._id,notice);
+        await globalDb.collections.notifications.removeAsync({_id:{$in:notificationIds}});
+        if (token) await rustShellBridge.handle("logout",{token});
+        if (uploadToken) await globalDb.collections.spkTokens.removeAsync(uploadToken);
+        await globalDb.collections.grains.removeAsync({_id:{$in:[foreign,newer]}});
+        await globalDb.collections.grains.updateAsync(grainId,{$set:{packageId:source.packageId,appVersion:source.appVersion}});
+        await globalDb.collections.userActions.updateAsync({userId:this.userId,packageId:pkg._id},{$set:{appVersion:version}},{multi:true});
+      }
+    },
+
+    async testRustInstallPermissions() {
+      if (!this.userId) throw new Meteor.Error(403, "Sign in first");
+      const original = Meteor.settings.public.allowUninvited;
+      const account = {type:"account",loginCredentials:[],signupKey:"test"};
+      const require = (value, message) => { if (!value) throw new Error(message); };
+      try {
+        Meteor.settings.public.allowUninvited = false;
+        let policy = await appInstallPermissions(globalDb, account);
+        require(policy.canInstall && policy.canUpload, "Invited account was denied");
+        policy = await appInstallPermissions(globalDb, {...account, signupKey:undefined});
+        require(!policy.canInstall && !policy.canUpload && policy.installReason && policy.uploadReason, "Uninvited account lacks an explanation");
+        policy = await appInstallPermissions(globalDb, {...account,expires:new Date(Date.now()+60000)});
+        require(policy.canInstall && !policy.canUpload, "Demo upload policy changed");
+        Meteor.settings.public.allowUninvited = true;
+        policy = await appInstallPermissions(globalDb, {...account,plan:"free"});
+        require(policy.canInstall && !policy.canUpload && policy.uploadReason, "Free account upload policy changed");
+        policy = await appInstallPermissions(globalDb, {...account,plan:"paid"});
+        require(policy.canInstall && policy.canUpload, "Paid account was denied");
+        return true;
+      } finally { Meteor.settings.public.allowUninvited = original; }
+    },
+
+    async testRustGrainReadiness() {
+      if (!this.userId) throw new Meteor.Error(403, "Sign in first");
+      const sessions = globalDb.collections.sessions;
+      const sessionId = "rust-ready-" + Random.id();
+      const handle = {sessionId};
+      const signal = new AbortController().signal;
+      const require = (ok, message) => { if (!ok) throw new Error(message); };
+      try {
+        await sessions.insertAsync({_id:sessionId,rustShellSession:true,hasLoaded:false,timestamp:new Date()});
+        const ready = waitForGrainResponse(globalDb, handle, signal);
+        await sessions.updateAsync(sessionId, {$set:{hasLoaded:true}});
+        require((await ready).loaded, "Gateway response did not wake readiness observer");
+        require((await waitForGrainResponse(globalDb, handle, signal)).loaded, "Initial ready state was lost");
+        await sessions.updateAsync(sessionId, {$set:{hasLoaded:false}});
+        const controller = new AbortController();
+        const aborted = waitForGrainResponse(globalDb, handle, controller.signal);
+        controller.abort();
+        try { await aborted; throw new Error("Disconnected observer did not stop"); }
+        catch (error) { require(error.status === 410, "Incorrect cancellation result"); }
+        const removed = waitForGrainResponse(globalDb, handle, signal).then(
+            () => null, error => error);
+        await sessions.removeAsync(sessionId);
+        require((await removed)?.status === 410, "Incorrect removed-session result");
+        return true;
+      } finally { await sessions.removeAsync(sessionId); }
+    },
+
+    async testRustGrainManagement() {
+      if (!this.userId) throw new Meteor.Error(403,"Sign in first");
+      const prefix='rust-management-'+Random.id();
+      const owned=prefix+'-owned', shared=prefix+'-shared';
+      const mine=prefix+'-mine', other=prefix+'-other', ui=prefix+'-session';
+      const require=(ok,message)=>{if(!ok)throw new Error(message);};
+      const call=(id,operation)=>manageGrainForUser(this.userId,id,operation,async()=>{});
+      const query=trash=>grainMenu(globalDb,this.userId,process.env.ROOT_URL,0,{search:prefix,appId:'',ownership:'all',sort:'title',trash});
+      try {
+        await globalDb.collections.grains.insertAsync({_id:owned,userId:this.userId,title:owned,appId:'test',packageId:prefix+'-package'});
+        await globalDb.collections.grains.insertAsync({_id:shared,userId:'other-account',title:shared});
+        for(const [id,accountId] of [[mine,this.userId],[other,'other-account']]) {
+          await globalDb.collections.apiTokens.insertAsync({_id:id,grainId:shared,created:new Date(),owner:{user:{accountId,title:shared,
+            denormalizedGrainMetadata:{appId:'test',appTitle:{defaultText:'Test'}}}}});
+        }
+        await globalDb.collections.sessions.insertAsync({_id:ui,grainId:shared,userId:this.userId,rustShellSession:true});
+        let denied=false;
+        try {await call(owned,'remove');} catch(_){denied=true;}
+        require(denied,'Active grain was permanently deleted');
+        require((await query(false)).grains.length===2,'Active management list is incomplete');
+        for(const id of [owned,shared])await call(id,'trash');
+        require((await query(true)).grains.length===2 && (await query(false)).grains.length===0,'Trash query did not move both owned and shared grains');
+        require(!await globalDb.collections.sessions.findOneAsync(ui),'Trashed recipient session remained open');
+        require(!(await globalDb.collections.apiTokens.findOneAsync(other)).trashed,'Trashing affected another recipient');
+        require((await call(shared,'read')).state==='trashed','Shared trash state missing');
+        for(const id of [owned,shared])await call(id,'restore');
+        require((await query(false)).grains.length===2 && !(await query(true)).grains.length,'Restore did not update canonical lists');
+        // Use the real legacy method too: both shells share the same operations.
+        await getMethodHandler('moveGrainsToTrash').call({userId:this.userId,isSimulation:false,
+          connection:{sandstormBackend:globalThis.globalBackend}},[owned,shared]);
+        await call(shared,'remove');
+        require(!!await globalDb.collections.grains.findOneAsync(shared),'Forgetting a share deleted its owner data');
+        require(!!await globalDb.collections.apiTokens.findOneAsync(other) && !await globalDb.collections.apiTokens.findOneAsync(mine),'Forgetting escaped recipient scope');
+        await call(owned,'remove');
+        require(!await globalDb.collections.grains.findOneAsync(owned),'Owned trashed grain was not deleted');
+        denied=false;
+        try {await call(shared,'trash');} catch(_){denied=true;}
+        require(denied,'Foreign unsaved grain was manageable');
+        return true;
+      } finally {
+        await globalDb.collections.sessions.removeAsync(ui);
+        await globalDb.removeApiTokens({_id:{$in:[mine,other]}});
+        await globalDb.collections.grains.removeAsync({_id:{$in:[owned,shared]}});
+      }
+    },
+
+    async testRustGrainQueries() {
+      if (!this.userId) throw new Meteor.Error(403, "Sign in first");
+      const accountId = "rust-query-" + Random.id();
+      const grains = globalDb.collections.grains;
+      const tokens = globalDb.collections.apiTokens;
+      const ids = Array.from({length:105}, (_, i) => accountId + "-" + i);
+      const sharedId = accountId + "-shared";
+      const tokenIds = [accountId + "-token", accountId + "-duplicate"];
+      const require = (ok, message) => { if (!ok) throw new Error(message); };
+      const query = (changes = {}, page = 0) => grainMenu(globalDb, accountId, process.env.ROOT_URL,
+        page, {search:"",appId:"",ownership:"all",sort:"title",...changes});
+      try {
+        await Promise.all(ids.map((_id, i) => grains.insertAsync({_id, userId:accountId,
+          title:"Document " + String(i).padStart(3,"0"), appId:i === 104 ? "rare-app" : "common-app",
+          created:new Date(i * 1000)})));
+        await grains.insertAsync({_id:sharedId,userId:"other-account",title:"Private owner title"});
+        await Promise.all(tokenIds.map((_id, i) => tokens.insertAsync({_id,grainId:sharedId,created:new Date(i),
+          owner:{user:{accountId,title:"Personal [draft].*",upstreamTitle:"Upstream",renamed:true,
+            denormalizedGrainMetadata:{appId:"shared-app",appTitle:{defaultText:"Shared App"}}}}})));
+        let result = await query();
+        require(result.grains.length === 100 && result.grainsLimited, "First query page was not bounded");
+        result = await query({}, 1);
+        require(result.grains.length === 6 && !result.grainsLimited, "Combined pagination duplicated or lost grains");
+        require(result.grains.filter(g => g.key === sharedId).length === 1, "Shared links were not deduplicated");
+        result = await query({search:"104"});
+        require(result.grains.length === 1 && result.grains[0].key === ids[104], "Search applied after pagination");
+        result = await query({appId:"rare-app"});
+        require(result.grains.length === 1 && result.grains[0].key === ids[104], "App filter applied after pagination");
+        result = await query({search:"[draft].*"});
+        require(result.grains.length === 1 && result.grains[0].key === sharedId, "Search did not treat metacharacters literally");
+        require((await query({search:".*"})).grains.length === 1, "Search accepted a regular expression");
+        result = await query({ownership:"owned",sort:"recent"});
+        require(result.grains[0].key === ids[104] && result.grains.every(g => g.owned), "Recent or ownership ordering failed");
+        result = await query({ownership:"shared"});
+        require(result.grains.length === 1 && result.grains[0].title === "Personal [draft].*", "Shared title override was lost");
+        await tokens.updateAsync({_id:{$in:tokenIds}}, {$set:{"owner.user.renamed":false}}, {multi:true});
+        require((await query({search:"Upstream"})).grains.length === 1, "Owner rename not reflected in search");
+        await tokens.updateAsync({_id:{$in:tokenIds}}, {$set:{revoked:true}}, {multi:true});
+        require((await query({ownership:"shared"})).grains.length === 0, "Revoked share leaked into query");
+        await grains.updateAsync(ids[104], {$set:{trashed:new Date()}});
+        require((await query({appId:"rare-app"})).grains.length === 0, "Trashed grain leaked into query");
+        return true;
+      } finally {
+        await tokens.removeAsync({_id:{$in:tokenIds}});
+        await grains.removeAsync({_id:{$in:[...ids,sharedId]}});
+      }
+    },
+
+    async testRustCreateGrain(grainId) {
+      check(grainId, String);
+      const source = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!source || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const action = await globalDb.collections.userActions.findOneAsync({ userId: this.userId, packageId: source.packageId });
+      if (!action) throw new Error("Test app action not installed");
+      const foreignId = "rust-foreign-action-" + Random.id();
+      let token;
+      try {
+        await globalDb.collections.userActions.insertAsync({ ...action, _id: foreignId, userId: "unrelated-account" });
+        const state = Crypto.randomBytes(32).toString("hex");
+        const code = await rustShellBridge.issue(this.userId, Accounts._getLoginToken(this.connection.id), state);
+        ({ token } = await rustShellBridge.handle("exchange", { code, state }));
+        const call = (name, input = {}) => rustShellBridge.handle(name, { token, ...input });
+        const list = await call("listApps");
+        if (!list.actions.some(row => row.key === action._id) || list.actions.some(row => row.key === foreignId)) {
+          throw new Error("Installed actions leaked or omitted account data");
+        }
+        const projected = list.actions.find(row => row.key === action._id);
+        const sharedGrain = "rust-app-count-" + Random.id();
+        const countTokens = [Random.id(),Random.id(),Random.id()];
+        try {
+          await globalDb.collections.grains.insertAsync({...source,_id:sharedGrain,userId:"other-account"});
+          for (let i=0;i<countTokens.length;i++) await globalDb.collections.apiTokens.insertAsync({
+            _id:countTokens[i],grainId:i===2 ? grainId : sharedGrain,
+            owner:{user:{accountId:this.userId,denormalizedGrainMetadata:{appId:source.appId}}},
+          });
+          const counted = (await call("listApps")).actions.find(row => row.key === action._id);
+          if (counted.grainCount !== projected.grainCount + 1) throw new Error("App grain count duplicated shared links or self-shares");
+          await globalDb.collections.grains.updateAsync(sharedGrain,{$set:{trashed:new Date()}});
+          const trashed = (await call("listApps")).actions.find(row => row.key === action._id);
+          if (trashed.grainCount !== projected.grainCount) throw new Error("App count included trashed shared grains");
+        } finally {
+          await globalDb.collections.apiTokens.removeAsync({_id:{$in:countTokens}});
+          await globalDb.collections.grains.removeAsync(sharedGrain);
+        }
+
+        if (projected.appId !== source.appId || !projected.iconSrc ||
+            !projected.lastUsed || !Number.isFinite(Date.parse(projected.lastUsed))) {
+          throw new Error("App gallery metadata is missing its icon or usage timestamp");
+        }
+        let denied = false;
+        try { await call("createGrain", { actionId: foreignId, title: "Must not create" }); }
+        catch (error) { denied = error.error === 404; }
+        if (!denied) throw new Error("Foreign app action was accepted");
+        const result = await call("createGrain", { actionId: action._id, title: "Created through Rust API" });
+        const grain = await globalDb.collections.grains.findOneAsync(result.grainId);
+        if (!grain || grain.userId !== this.userId || grain.packageId !== action.packageId || grain.title !== "Created through Rust API") {
+          throw new Error("Created grain metadata differs from requested account/action");
+        }
+        return result.grainId;
+      } finally {
+        if (token) await rustShellBridge.handle("logout", { token });
+        await globalDb.collections.userActions.removeAsync(foreignId);
+      }
+    },
+
+    async testRustGrainSession(operation, grainId) {
+      check(operation, String);
+      check(grainId, String);
+      const grain = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: this.userId });
+      if (!grain || !this.userId) throw new Meteor.Error(403, "Owned test grain required");
+      const key = this.userId + ":" + grainId;
+      let record = rustGrainTestSessions.get(key);
+      if (operation === "webkey-anonymous" || operation === "webkey-identity") {
+        if (record) throw new Meteor.Error(409, "Close test session first");
+        const share = await SandstormPermissions.createNewApiToken(globalDb, { accountId: this.userId },
+            grainId, "Rust native shared viewer", { allAccess: null }, { webkey: null });
+        record = { accountId: this.userId, grainId, tokenId: share.id };
+        rustGrainTestSessions.set(key, record);
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { expiresIfUnused: new Date(Date.now() + 60000) } });
+        await inspectRustSharedGrain(globalDb, share.token);
+        if (!(await globalDb.collections.apiTokens.findOneAsync(share.id)).expiresIfUnused) {
+          throw new Error("Inspecting consumed the unused sharing link");
+        }
+        const accountId = operation === "webkey-identity" ? this.userId : null;
+        const session = await createRustSharedGrainSession(globalDb, share.token, accountId, process.env.ROOT_URL);
+        record.sessionId = session._id;
+        record.hashedToken = session.hashedToken;
+        await keepRustSharedGrainSession(globalDb, record);
+        if (session.hashedToken !== share.id || !!session.identityId !== !!accountId ||
+            !!session.userId !== !!accountId || !session.rustShellSession) throw new Error("Incorrect shared identity or authority");
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { revoked: true } });
+        for (const identity of [null, this.userId]) {
+          let denied = false;
+          try { await createRustSharedGrainSession(globalDb, share.token, identity, process.env.ROOT_URL); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Account authority bypassed a revoked webkey");
+        }
+        await globalDb.collections.apiTokens.updateAsync(share.id, { $set: { revoked: false } });
+        const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
+        return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
+      }
+      if (operation === "open" || operation === "shared") {
+        if (record) throw new Meteor.Error(409, "Close test session first");
+        record = { accountId: this.userId, grainId };
+        rustGrainTestSessions.set(key, record);
+        if (operation === "shared") {
+          record.recipient = "rust-session-recipient-" + Random.id();
+          await Meteor.users.insertAsync({ _id: record.recipient, type: "account", loginCredentials: [],
+            nonloginCredentials: [], profile: { name: "Rust session recipient", handle: "recipient", pronoun: "neutral" } });
+          // A stranger cannot obtain a UI session just by knowing a grain ID.
+          let rejected = false;
+          try { await createRustGrainSession(globalDb, record.recipient, grainId, process.env.ROOT_URL); }
+          catch (error) { rejected = error.error === 403; }
+          if (!rejected) throw new Error("Unauthorized UI session was accepted");
+          const share = await SandstormPermissions.createNewApiToken(globalDb, { accountId: this.userId },
+              grainId, "Rust grain session test", { allAccess: null },
+              { user: { accountId: record.recipient, title: "Shared test grain" } });
+          record.tokenId = share.id;
+          record.accountId = record.recipient;
+        }
+        const session = await createRustGrainSession(globalDb, record.accountId, grainId, process.env.ROOT_URL);
+        if (!session.rustShellSession || session.rustShellLeaseExpires <= Date.now() ||
+            session.parentOrigin !== process.env.ROOT_URL) throw new Error("Missing lease or parent-origin contract");
+        record.sessionId = session._id;
+        const context = await rustGrainPowerboxContext(globalDb, record.accountId, session._id);
+        if (context.grainId !== grainId) throw new Error("Wrong Powerbox grain context");
+        for (const accountId of [null, "other-account"]) {
+          let denied = false;
+          try { await rustGrainPowerboxContext(globalDb, accountId, session._id); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Foreign Powerbox context was accepted");
+        }
+        await globalDb.collections.sessions.updateAsync(session._id, { $set: { rustShellLeaseExpires: 0 } });
+        let expired = false;
+        try { await rustGrainPowerboxContext(globalDb, record.accountId, session._id); }
+        catch (error) { expired = error.error === 403; }
+        if (!expired) throw new Error("Expired Powerbox context was accepted");
+        await keepRustGrainSession(globalDb, record);
+        const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
+        return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
+      }
+      if (!record) throw new Meteor.Error(404, "No test session");
+      if (operation === "backup") {
+        for (const accountId of [null, "other-account"]) {
+          let denied = false;
+          try { await createNativeGrainBackup(accountId, grainId, async () => {}); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Non-owner backup accepted");
+        }
+        const before = await globalDb.collections.fileTokens.find({}).countAsync();
+        let checks = 0, canceled = false;
+        try {
+          await createNativeGrainBackup(this.userId, grainId, async () => {
+            if (++checks === 2) throw new Error("Backup login revoked");
+          });
+        } catch (error) { canceled = error.message === "Backup login revoked"; }
+        if (!canceled || checks !== 2 || await globalDb.collections.fileTokens.find({}).countAsync() !== before) {
+          throw new Error("Canceled backup retained its download token");
+        }
+        const {id} = await createNativeGrainBackup(this.userId, grainId, async () => {});
+        let foreignDenied = false;
+        try { await nativeBackupDownload("other-account", id, false, async () => {}); }
+        catch (error) { foreignDenied = error.error === 404; }
+        const legacy = await fetch(new URL("/downloadBackup/" + id, process.env.ROOT_URL));
+        const upload = await fetch(new URL("/uploadBackup/" + id, process.env.ROOT_URL), {method:"POST",body:"overwrite"});
+        let restoreDenied = false;
+        try { await restoreGrainBackup(id, {_id:"other-account"}); }
+        catch (error) { restoreDenied = error.error === 403; }
+        if (upload.status !== 403 || !restoreDenied) throw new Error("Native backup escaped account scope through a legacy operation");
+        const file = await openFile("/var/sandstorm/backups/" + id, "r");
+        try {
+          await nativeBackupDownload(this.userId, id, false, async () => {});
+          await nativeBackupDownload(this.userId, id, true, async () => {});
+          const bytes = Buffer.alloc(2);
+          await file.read(bytes, 0, 2, 0);
+          return {zip:bytes[0]===80 && bytes[1]===75,foreignDenied,legacyStatus:legacy.status};
+        } finally { await file.close(); }
+
+      }
+      if (operation === "restart") {
+        for (const accountId of [null, "other-account"]) {
+          let denied = false;
+          try { await restartGrainForUser(accountId, grainId); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Non-owner restart accepted");
+        }
+        let guarded = false;
+        try { await restartGrainForUser(this.userId, grainId, async () => { throw new Error("Canceled restart"); }); }
+        catch (error) { guarded = error.message === "Canceled restart"; }
+        if (!guarded) throw new Error("Restart bypassed authority guard");
+        await restartGrainForUser(this.userId, grainId);
+        await keepRustGrainSession(globalDb, record);
+        return true;
+      }
+
+      if (operation === "template") {
+        const discovery = { resources: { "/status.php": { type: "text/json", language: "en",
+          body: JSON.stringify({ installed: true, maintenance: false, version: "9.1.0.14", versionstring: "9.1.0 RC4", edition: "" }) } },
+          options: { dav: ["1", "2", "3", "mkcol-extended"] } };
+        const result = await createRustTemplateToken(globalDb, record,
+            { petname: "Rust template test", roleAssignment: { allAccess: null }, forSharing: false, unauthenticated: discovery });
+        try {
+          const row = await globalDb.collections.apiTokens.findOneAsync(result.id);
+          if (!result.token || !result.host || row.grainId !== grainId ||
+              row.accountId !== record.accountId || !row.expiresIfUnused ||
+              row.expiresIfUnused <= new Date() || row.expiresIfUnused > new Date(Date.now() + 300000)) {
+            throw new Error("Invalid template token authority or expiry");
+          }
+          const response = await fetch(new URL(process.env.ROOT_URL).protocol + "//" + result.host,
+              { method: "POST", headers: { Authorization: "Bearer " + result.token,
+                "X-Sandstorm-Token-Keepalive": "300000" } });
+          if (response.status !== 200) throw new Error("Template token keepalive failed: " + response.status);
+          const base = new URL(process.env.ROOT_URL).protocol + "//" + result.host;
+          const status = await fetch(base + "/status.php");
+          if (status.status !== 200 || !(await status.json()).installed) throw new Error("Davros public discovery failed");
+          const options = await fetch(base, { method: "OPTIONS" });
+          if (!options.ok || !options.headers.get("dav")?.includes("mkcol-extended")) throw new Error("Davros DAV options missing");
+          const privatePath = await fetch(base + "/not-public");
+          if (privatePath.status < 400) throw new Error("Unlisted path became public");
+          let rejected = false;
+          try { await createRustTemplateToken(globalDb, record, { petname: "invalid", roleAssignment: { allAccess: null },
+            forSharing: false, unauthenticated: { resources: { "/bad": { type: "text/plain\r\nBad: header", body: "bad" } } } }); }
+          catch { rejected = true; }
+          if (!rejected) throw new Error("Invalid discovery metadata was accepted");
+          return true;
+        } finally { await globalDb.removeApiTokens({ _id: result.id }); }
+      }
+      if (operation === "enablePowerbox") {
+        record.previousRustOrigin = Meteor.settings.public.rustShellOrigin;
+        record.powerboxTest = true;
+        Meteor.settings.public.rustShellOrigin = new URL(process.env.ROOT_URL).origin;
+        return true;
+      }
+      if (operation === "keep") { await keepRustGrainSession(globalDb, record); return true; }
+      if (operation === "revoke") {
+        await globalDb.collections.apiTokens.updateAsync(record.tokenId, { $set: { revoked: true } });
+        let rejected = false;
+        try { await keepRustGrainSession(globalDb, record); }
+        catch (error) { rejected = error.error === 403; }
+        if (!rejected) throw new Error("Revoked UI session renewed");
+        let denied = false;
+        try { await rustGrainPowerboxContext(globalDb, record.accountId, record.sessionId); }
+        catch (error) { denied = error.error === 403; }
+        if (!denied) throw new Error("Revoked Powerbox context was accepted");
+        denied = false;
+        try { await createRustTemplateToken(globalDb, record, { petname: "revoked", roleAssignment: { allAccess: null }, forSharing: false }); }
+        catch (error) { denied = error.error === 403; }
+        if (!denied) throw new Error("Revoked template request was accepted");
+        await closeRustGrainSession(globalDb, record);
+        return true;
+      }
+      if (operation === "close") {
+        if (record.hashedToken) await closeRustSharedGrainSession(globalDb, record);
+        else await closeRustGrainSession(globalDb, record);
+        if (await globalDb.collections.sessions.findOneAsync(record.sessionId)) throw new Error("UI session leaked");
+        if (record.tokenId) await globalDb.removeApiTokens({ _id: record.tokenId });
+        if (record.recipient) await Meteor.users.removeAsync(record.recipient);
+        if (record.powerboxTest) Meteor.settings.public.rustShellOrigin = record.previousRustOrigin;
+        rustGrainTestSessions.delete(key);
+        return true;
+      }
+      throw new Meteor.Error(400, "Unknown test operation");
+    },
+
+    testRegressionRustShellPersistence: async function () {
+      const userId = "test-rust-persistence-" + Random.id();
+      const loginHash = "test-hash-" + Random.id();
+      const state = "a".repeat(64);
+      const tokens = [];
+      const restarted = () => createRustShellBridge({ sessionStore: rustShellSessionStore,
+        authorize: authorizeRustShellAccount });
+      try {
+        await Meteor.users.insertAsync({ _id: userId, loginCredentials: [], profile: { name: "Restart test" },
+          services: { resume: { loginTokens: [{ hashedToken: loginHash, when: new Date() }] } } });
+        const link = async () => {
+          const code = await rustShellBridge.issue(userId, loginHash, state);
+          const value = await rustShellBridge.handle("exchange", { code, state });
+          tokens.push(value.token);
+          return value;
+        };
+        const linked = await link();
+        const recovered = await restarted().handle("session", { token: linked.token });
+        if (recovered.account.name !== "Restart test" || recovered.expires !== linked.expires) throw new Error("Login did not survive bridge recreation");
+        await restarted().handle("logout", { token: linked.token });
+        let denied = false;
+        try { await restarted().handle("session", { token: linked.token }); }
+        catch (error) { denied = error.status === 401; }
+        if (!denied) throw new Error("Logout was not durable");
+        const revoked = await link();
+        await Meteor.users.updateAsync(userId, { $set: { "services.resume.loginTokens": [] } });
+        denied = false;
+        try { await restarted().handle("session", { token: revoked.token }); }
+        catch (error) { denied = error.status === 401; }
+        if (!denied) throw new Error("Source logout did not revoke persisted login");
+        return true;
+      } finally {
+        for (const token of tokens) await rustShellBridge.handle("logout", { token });
+        await Meteor.users.removeAsync(userId);
+      }
+    },
+
+    testRegressionRustShellObservation: async function () {
+      const userId = "test-rust-watch-" + Random.id();
+      const grainId = "test-rust-grain-" + Random.id();
+      const notificationId = "test-rust-notification-" + Random.id();
+      const senderId = "test-rust-sender-" + Random.id();
+      const sharedGrainId = "test-rust-shared-" + Random.id();
+      const tokenId = "test-rust-token-" + Random.id();
+      const duplicateTokenId = "test-rust-duplicate-" + Random.id();
+      const selfTokenId = "test-rust-self-" + Random.id();
+      const extraGrainIds = Array.from({ length: 50 }, () => "test-rust-limit-" + Random.id());
+      const packageId = "test-rust-package-" + Random.id();
+      const loginHash = Crypto.randomBytes(32).toString("hex");
+      const state = Crypto.randomBytes(32).toString("hex");
+      const controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), 10000);
+      let token;
+      const call = (action, input = {}) => rustShellBridge.handle(action, { token, ...input }, controller.signal);
+      const require = (condition, message) => {
+        if (!condition) throw new Meteor.Error("rust-observation-regression", message);
+      };
+      try {
+        await Meteor.users.insertAsync({ _id: userId, loginCredentials: [], profile: { name: "Observer test" },
+          services: { resume: { loginTokens: [{ hashedToken: loginHash, when: new Date() }] } } });
+        await globalDb.collections.packages.insertAsync({ _id: packageId,
+          manifest: { appTitle: { defaultText: "Test editor" }, actions: [] } });
+        await globalDb.collections.grains.insertAsync({ _id: grainId, userId, packageId, title: "Before rename" });
+        const code = await rustShellBridge.issue(userId, loginHash, state);
+        ({ token } = await rustShellBridge.handle("exchange", { code, state }));
+        let view = await call("snapshot");
+        require(view.total === 0, "New account must have an empty projection");
+        require(view.grains.length === 1 && view.grains[0].key === grainId && view.grains[0].owned,
+            "Grain menu must show the owned grain");
+        require(view.grains[0].appTitle === "Test editor", "Owned app name must come from the package");
+        const observeWrite = async (write) => {
+          const pending = call("watch", { after: view.version });
+          // Attach a rejection handler immediately, including if the DB write fails.
+          pending.catch(() => {});
+          await write();
+          view = await pending;
+        };
+        await observeWrite(() => globalDb.collections.notifications.insertAsync({
+          _id: notificationId, userId, grainId, text: { defaultText: "changed a document" },
+          timestamp: new Date(), isUnread: true,
+        }));
+        require(view.total === 1 && view.entries[0].title === "Before rename", "Legacy insert must wake observation");
+        await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $set: { title: "After rename" } }));
+        require(view.entries[0].title === "After rename", "Grain title changes must invalidate the projection");
+        require(view.grains[0].title === "After rename", "Grain menu must receive title changes");
+        await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $set: { trashed: new Date() } }));
+        require(view.grains.length === 0, "Trashed owned grain must disappear from the menu");
+        await observeWrite(() => globalDb.collections.grains.updateAsync(grainId, { $unset: { trashed: 1 } }));
+        require(view.grains.length === 1, "Restored grain must reappear");
+        await observeWrite(() => globalDb.collections.grains.rawCollection().insertMany(extraGrainIds.map((_id) => ({
+          _id, userId, title: "Extra grain", lastUsed: new Date(),
+        }))));
+        require(view.grains.length === 50 && view.grainsLimited, "Large accounts must have a bounded preview");
+        await observeWrite(() => globalDb.collections.grains.removeAsync({ _id: { $in: extraGrainIds } }));
+        require(view.grains.length === 1 && !view.grainsLimited, "Removing excess grains must clear the limit indicator");
+        await observeWrite(() => globalDb.collections.packages.updateAsync(packageId,
+            { $set: { "manifest.appTitle.defaultText": "Renamed editor" } }));
+        require(view.grains[0].appTitle === "Renamed editor", "Package changes must wake the menu projection");
+        await observeWrite(() => call("read"));
+        require(!view.entries[0].unread, "Mark-read must update the observed record");
+        await observeWrite(() => call("dismiss", { id: notificationId }));
+        require(view.total === 0, "Dismiss must remove the shared record");
+        await Meteor.users.insertAsync({ _id: senderId, profile: { name: "Sender name", picture: "sender-avatar" } });
+        await globalDb.collections.grains.insertAsync({ _id: sharedGrainId, userId: senderId, title: "Private owner title" });
+        // Another recipient's token must not reveal its title to this account.
+        await globalDb.collections.apiTokens.insertAsync({ _id: tokenId, grainId: sharedGrainId, created: new Date(),
+          owner: { user: { accountId: senderId, title: "Other recipient title", denormalizedGrainMetadata: {} } } });
+        await observeWrite(() => globalDb.collections.notifications.insertAsync({
+          _id: notificationId, userId, grainId: sharedGrainId, initiatingAccount: senderId,
+          text: { defaultText: "edited a page" }, timestamp: new Date(), isUnread: true,
+        }));
+        require(view.entries[0].title === "Grain activity", "Must not expose another owner's grain or token title");
+        require(!view.grains.some((grain) => grain.key === sharedGrainId), "Another recipient's grain must not appear");
+        require(view.entries[0].senderName === "Sender name", "Referenced sender name must be projected");
+        require(view.entries[0].senderPictureUrl.endsWith('/sender-avatar'),"Referenced sender avatar missing");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
+            { $set: { "owner.user.accountId": userId, "owner.user.title": "Saved title", "owner.user.upstreamTitle": "Shared title", "owner.user.denormalizedGrainMetadata.appTitle": { defaultText: "Shared spreadsheet" } } }));
+        require(view.entries[0].title === "Shared title", "Shared grain must use the recipient's upstream title");
+        require(view.grains.some((grain) => grain.key === sharedGrainId && !grain.owned && grain.title === "Shared title"),
+            "Shared grain must use recipient metadata");
+        require(view.grains.find((grain) => grain.key === sharedGrainId).appTitle === "Shared spreadsheet",
+            "Shared app name must come from recipient metadata");
+        await globalDb.collections.apiTokens.insertAsync({ _id: duplicateTokenId, grainId: sharedGrainId,
+          created: new Date(Date.now() + 1000), owner: { user: { accountId: userId, title: "Later token title", denormalizedGrainMetadata: {} } } });
+        await globalDb.collections.apiTokens.insertAsync({ _id: selfTokenId, grainId,
+          created: new Date(), owner: { user: { accountId: userId, title: "Self share", denormalizedGrainMetadata: {} } } });
+        view = await call("snapshot");
+        require(view.grains.length === 2 && view.grains.find((grain) => grain.key === sharedGrainId).title === "Shared title",
+            "Duplicate and self shares must not duplicate menu entries or override the oldest title");
+        await globalDb.collections.apiTokens.removeAsync({ _id: duplicateTokenId });
+        view = await call("snapshot");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $set: { trashed: new Date() } }));
+        require(view.grains.length === 1, "Trashed share must disappear");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $unset: { trashed: 1 } }));
+        require(view.grains.length === 2, "Restored share must reappear");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId,
+            { $set: { "owner.user.renamed": true, "owner.user.title": "My title" } }));
+        require(view.entries[0].title === "My title", "Recipient rename must take precedence");
+        await observeWrite(() => Meteor.users.updateAsync(senderId, { $set: { "profile.name": "Renamed sender" } }));
+        require(view.entries[0].senderName === "Renamed sender", "Sender rename must wake observation");
+        await observeWrite(() => Meteor.users.updateAsync(senderId,{$set:{'profile.picture':'updated-avatar'}}));
+        require(view.entries[0].senderPictureUrl.endsWith('/updated-avatar'),"Sender picture update must wake observation");
+        await observeWrite(() => globalDb.collections.apiTokens.updateAsync(tokenId, { $set: { revoked: true } }));
+        require(view.entries[0].title === "Grain activity", "Revoked recipient metadata must disappear");
+        require(!view.grains.some((grain) => grain.key === sharedGrainId), "Revoked share must disappear from the menu");
+        await observeWrite(() => globalDb.collections.notifications.updateAsync(notificationId,
+            { $unset: { initiatingAccount: 1 }, $set: { initiatorAnonymous: true } }));
+        require(view.entries[0].senderName === "Anonymous user", "Anonymous activity must have a clear sender label");
+        require(view.entries[0].senderPictureUrl === '',"Anonymous notification exposed a sender picture");
+        const pending = call("watch", { after: view.version }).then(
+            () => { throw new Meteor.Error("rust-observation-regression", "Revoked watch returned data"); },
+            (error) => { require(error.status === 401, "Revoked watch must be unauthorized"); });
+        pending.catch(() => {});
+        await Meteor.users.updateAsync(userId, { $set: { "services.resume.loginTokens": [] } });
+        await pending;
+        return true;
+      } finally {
+        clearTimeout(deadline);
+        controller.abort();
+        if (token) await call("logout");
+        await globalDb.collections.notifications.removeAsync({ userId });
+        await globalDb.collections.apiTokens.removeAsync({ _id: { $in: [tokenId, duplicateTokenId, selfTokenId] } });
+        await globalDb.collections.grains.removeAsync({ _id: { $in: [grainId, sharedGrainId, ...extraGrainIds] } });
+        await globalDb.collections.packages.removeAsync({ _id: packageId });
+        await Meteor.users.removeAsync({ _id: senderId });
+        await Meteor.users.removeAsync({ _id: userId });
       }
     },
 

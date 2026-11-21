@@ -1,0 +1,728 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { build } from 'vite';
+import { fileURLToPath } from 'node:url';
+
+const bundle = await build({ configFile: false, logLevel: 'silent', build: {
+  write: false, minify: false,
+  lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
+} });
+const code = bundle[0].output.find(item => item.type === 'chunk').code;
+const { readTabs, saveTabs, authorizePopup, providerRequest, authorizationUrl, ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+  isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
+  tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
+const emptyDelta = () => ({revision:1n,reset:true,removed:[],order:[]});
+const actionFactory = create => ({action: () => ({getAction: () => ({create, client:{close(){}}})})});
+const viewFactory = open => ({grainView: fill => ({getView: () => ({open: () => open(fill), client:{close(){}}})})});
+const profileResult = value => valueResult({...value,pronoun:ProfilePronoun[value.pronoun.toUpperCase()],pictureUrl:value.pictureUrl || '',version:value.version || ''});
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
+const turn = () => new Promise(resolve => setImmediate(resolve));
+
+function browserGlobals(t) {
+  t.mock.method(globalThis, 'setInterval', () => 1);
+  t.mock.method(globalThis, 'clearInterval', () => {});
+  const old = Object.fromEntries(['location', 'history', 'sessionStorage', 'window'].map(key => [key, globalThis[key]]));
+  globalThis.location = new URL('https://shell.test/grains');
+  globalThis.history = {
+    pushState: (_state, _unused, path) => { globalThis.location = new URL(path, location); },
+    replaceState: (_state, _unused, path) => { globalThis.location = new URL(path, location); },
+  };
+  globalThis.sessionStorage = { getItem: () => null, removeItem: () => {} };
+  globalThis.window = {};
+  t.after(() => { for (const [key, value] of Object.entries(old)) {
+    if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+  } });
+}
+
+test('RPC deadlines settle once, clean up late capabilities, and never replay', async () => {
+  const request = deferred();
+  let timeouts = 0;
+  const late = [];
+  const pending = runOperation(request.promise, 'Open', { timeoutMs: 5,
+    onTimeout: () => ++timeouts, onLateResult: result => late.push(result) });
+  await assert.rejects(pending, OperationTimeout);
+  request.resolve('lease');
+  await turn();
+  assert.equal(timeouts, 1);
+  assert.deepEqual(late, ['lease']);
+  const controller = new AbortController();
+  const canceled = runOperation(new Promise(() => {}), 'Rename', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(canceled, /session changed/);
+  assert.equal(await runOperation(Promise.resolve(7), 'Read', { timeoutMs: 5, onTimeout: () => ++timeouts }), 7);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(timeouts, 1);
+});
+
+test('creation outcomes survive route changes and are isolated by account', async () => {
+  let request = deferred();
+  let calls = 0;
+  const connection = { run: promise => promise, shell: { ...actionFactory(() => { ++calls; return { promise: () => request.promise }; })} };
+  const states = [];
+  const apps = new AppService(connection, state => states.push(state));
+  apps.selectAccount('alice');
+  const creating = apps.create('action', 'Title');
+  assert.equal(apps.state.status, 'pending');
+  await assert.rejects(apps.create('action', 'Title'), /previous creation/);
+  apps.selectAccount('bob');
+  assert.equal(apps.state.status, 'idle');
+  request.resolve(valueResult({ grainId: 'created' }));
+  await assert.rejects(creating, /Account changed/);
+  assert.equal(apps.state.status, 'idle');
+  apps.selectAccount('alice');
+  assert.deepEqual(apps.state, { status: 'created', grainId: 'created' });
+  apps.opened('unrelated');
+  assert.equal(apps.state.status, 'created', 'an unrelated open must preserve recovery');
+  apps.opened('created');
+  assert.equal(apps.state.status, 'idle', 'opening the created grain clears its confirmation');
+  request = deferred();
+  const lost = apps.create('action', 'Title');
+  request.reject(new Error('Lost response'));
+  await assert.rejects(lost);
+  apps.selectAccount('alice');
+  apps.opened('created');
+  assert.equal(apps.state.status, 'unknown', 'opening a grain cannot acknowledge an uncertain creation');
+  await assert.rejects(apps.create('action', 'Title'), /previous creation/);
+  assert.equal(calls, 2);
+});
+
+test('acknowledging an interrupted creation cannot let its late failure overwrite a new attempt', async () => {
+  const old = deferred();
+  const next = deferred();
+  let request = old;
+  const apps = new AppService({ run: promise => promise, shell: { ...actionFactory(() => ({ promise: () => request.promise }))} }, () => {});
+  apps.selectAccount('alice');
+  const first = apps.create('action', 'Title');
+  apps.interrupt();
+  apps.acknowledge();
+  request = next;
+  const second = apps.create('action', 'Title');
+  old.reject(new Error('old failure'));
+  await assert.rejects(first);
+  assert.equal(apps.state.status, 'pending');
+  next.resolve(valueResult({ grainId: 'new' }));
+  await second;
+  assert.deepEqual(apps.state, { status: 'created', grainId: 'new' });
+});
+
+test('snapshots preserve mutation errors; changing account clears them', t => {
+  browserGlobals(t);
+  let state;
+  const service = new ShellService(value => { state = value; });
+  service.connection.events.session({ fixture: false, account: { key: 'alice', name: 'Same name' } });
+  service.update({ notificationError: 'Unknown notification outcome', grainError: 'Unknown rename outcome' });
+  service.connection.events.snapshot({ entries: {upserts:[],delta:emptyDelta(),total:0}, grains: {upserts:[],delta:emptyDelta(),hasMore:false}, revision: 1 });
+  assert.equal(state.notificationError, 'Unknown notification outcome');
+  assert.equal(state.grainError, 'Unknown rename outcome');
+  service.connection.events.session({ fixture: false, account: { key: 'bob', name: 'Same name' } });
+  assert.equal(state.notificationError, '');
+  assert.equal(state.grainError, '');
+});
+
+test('navigation remains immediate during remote cleanup and opens only on explicit intent', async t => {
+  browserGlobals(t);
+  let closeCalls = 0;
+  const opens = [];
+  const navigation = new NavigationController({ close: () => { ++closeCalls; return new Promise(() => {}); },
+    open: async (...args) => { opens.push(args); }, changed: () => {} });
+  navigation.navigate('/grain/a');
+  navigation.sync({ ...initialShellState(), status: 'ready' });
+  navigation.sync({ ...initialShellState(), status: 'reconnecting' });
+  navigation.sync({ ...initialShellState(), status: 'ready' });
+  assert.deepEqual(opens, [['a', '/']]);
+  navigation.navigate('/apps');
+  assert.equal(location.pathname, '/apps');
+  assert.equal(closeCalls, 2);
+  history.pushState(null, '', '/grain/a/document');
+  navigation.navigate(location.href, true);
+  navigation.sync({ ...initialShellState(), status: 'ready' });
+  assert.deepEqual(opens[1], ['a', '/document']);
+  for (const modifier of ['metaKey', 'ctrlKey', 'shiftKey', 'altKey']) {
+    assert.equal(isPlainNavigation({ button: 0, [modifier]: true }), false);
+  }
+  assert.equal(isPlainNavigation({ button: 0 }), true);
+});
+
+test('closing a grain detaches immediately even when remote close throws', async t => {
+  browserGlobals(t);
+  let state;
+  const grains = new GrainService({ run: promise => promise }, patch => { state = { ...state, ...patch }; });
+  let released = false;
+  grains.session = { close: () => { throw new Error('broken connection'); }, client: { close: () => { released = true; } } };
+  grains.active = { grainId: 'grain' };
+  assert.equal(grains.close(), undefined);
+  assert.equal(state.activeGrain, null);
+  await turn();
+  assert.equal(released, true);
+});
+
+test('message parsers reject malformed structured clones without throwing out of the handler', () => {
+  const cyclic = { rpcId: 'request' }; cyclic.self = cyclic;
+  assert.equal(powerboxRequest(cyclic), undefined);
+  assert.equal(powerboxRequest({ rpcId: NaN }), undefined);
+  assert.equal(powerboxRequest({ rpcId: 'request', saveLabel: { defaultText: 'Label', bad: 1n } }), undefined);
+  assert.throws(() => templateRequest({ rpcId: 'request', template: 'hello', roleAssignment: 1n }), /Invalid/);
+  assert.throws(() => templateRequest({ rpcId: 'request', template: 'hello', style: [] }), /Invalid/);
+  assert.equal(shareData({ pathname: '/../admin' }), undefined);
+  assert.deepEqual(shareData({ pathname: '/document', hash: '#a' }), { pathname: '/document', hash: '#a' });
+});
+
+test('owner title subscriptions update once, have no quota, and clear at frame teardown', () => {
+  const replies = [];
+  const titles = new GrainTitleSubscriptions('Owner title', reply => replies.push(reply));
+  titles.request('once', {});
+  titles.request('sub', {}, true);
+  titles.update('Owner title');
+  assert.equal(replies.length, 2);
+  titles.update('Owner renamed');
+  assert.deepEqual(replies.at(-1), { rpcId: 'sub', grainTitle: 'Owner renamed' });
+  for (let i = 0; i < 50; ++i) titles.request(i, {}, true);
+  replies.length = 0;
+  titles.update('Next');
+  assert.equal(replies.length, 51);
+  titles.clear();
+  titles.update('Closed');
+  assert.equal(replies.length, 51);
+});
+
+test('native sharing paths cannot escape the shared route', () => {
+  assert.deepEqual(sharingRequest('share', {pathname:'/folder',hash:'#document'}), {mode:'share',path:'/folder#document'});
+  for (const pathname of ['//evil.test', 'https://evil.test', '/%2e%2e/escape', '/a/../escape', '/\\evil.test', '/?query']) {
+    assert.equal(sharingRequest('share', {pathname}), undefined, pathname);
+  }
+  assert.equal(sharingRequest('share', {roleAssignment:{allAccess:null}}), undefined);
+});
+
+test('repeated navigation preserves pending cleanup before opening a replacement', async t => {
+  browserGlobals(t);
+  const closing = deferred();
+  let opened = 0;
+  const session = { whenReady: () => ({promise: () => new Promise(() => {})}), whenClosed: () => ({promise: () => new Promise(() => {})}), close: () => ({ promise: () => closing.promise }), client: { close: () => {} } };
+  const connection = { run: promise => promise, shell: { ...viewFactory(() => {
+    ++opened;
+    return { promise: async () => valueResult({ session, view: { url: 'https://grain.test/init', origin: 'https://grain.test', ownerTitle: 'Owner' } }) };
+  })} };
+  const grains = new GrainService(connection, () => {});
+  grains.session = session;
+  grains.close();
+  grains.close();
+  const opening = grains.open('next', '/', []);
+  await turn();
+  assert.equal(opened, 0);
+  closing.resolve();
+  await opening;
+  assert.equal(opened, 1);
+  grains.reset();
+});
+
+test('disconnect during rename retains uncertainty without leaking a late error into another account', async t => {
+  browserGlobals(t);
+  const pending = deferred();
+  let state;
+  const grains = new GrainService({ run: promise => promise }, patch => { state = { ...state, ...patch }; });
+  grains.session = { rename: () => ({ promise: () => pending.promise }), client: { close: () => {} } };
+  grains.active = { grainId: 'old' };
+  const rename = grains.rename('New title');
+  grains.reset();
+  assert.match(state.grainError, /Could not confirm rename/);
+  // The composition layer clears errors on account change.
+  state.grainError = '';
+  pending.reject(new Error('old account failure'));
+  await assert.rejects(rename);
+  assert.equal(state.grainError, '');
+});
+
+
+test('profile outcomes survive route changes; late reads and writes cannot overwrite new account state', async () => {
+  const reading = deferred();
+  const saving = deferred();
+  let state;
+  let renamed;
+  const profile = new ProfileService({run:promise=>promise,account:{
+    readProfile:()=>({promise:()=>reading.promise}),
+    updateProfile:()=>({promise:()=>saving.promise}),
+  }}, value=>{state=value;}, value=>{renamed=value;});
+  const load = profile.load();
+  const save = profile.save({name:'New',handle:'alice',pronoun:'neutral'});
+  reading.resolve(profileResult({name:'Stale',handle:'alice',pronoun:'neutral'}));
+  await load;
+  assert.equal(state.value,null);
+  profile.reset();
+  assert.match(state.error,/Could not confirm/);
+  profile.reset(true);
+  saving.resolve(profileResult({name:'Old account',handle:'alice',pronoun:'neutral'}));
+  await save;
+  assert.equal(state.value,null);
+  assert.equal(state.error,'');
+  assert.equal(renamed,undefined);
+});
+
+
+test('workspace isolates tab operations, preserves paths, and discards canceled opens', async t => {
+  browserGlobals(t);
+  let state = initialShellState();
+  const closed = [], renamed = [], pending = new Map();
+  const connection = { run: promise => promise, shell: { ...viewFactory(fill => {
+    const params = {}; fill(params);
+    const request = deferred(); pending.set(params.grainId, request);
+    return { promise: () => request.promise };
+  })} };
+  const workspace = new GrainWorkspace(connection, patch => { state = {...state,...patch}; });
+  const result = id => valueResult({view:{url:`https://${id}.test/init`,origin:`https://${id}.test`,title:id}, session:{
+    whenReady: () => ({promise: () => new Promise(() => {})}), whenClosed: () => ({promise: () => new Promise(() => {})}),
+    close: () => ({promise:async () => { closed.push(id); }}), client:{close:()=>{}},
+    rename: fill => { const params = {}; fill(params); renamed.push([id,params.title]);
+      return {promise:async () => valueResult({title:params.title})}; },
+  }});
+  const openingA = workspace.open('a','/',[]); await turn(); pending.get('a').resolve(result('a')); await openingA;
+  workspace.pathChanged('a','/draft');
+  workspace.select(null);
+  assert.equal(state.activeGrain,null);
+  assert.equal(state.openGrains.length,1);
+  const openingB = workspace.open('b','/',[]); await turn(); pending.get('b').resolve(result('b')); await openingB;
+  await workspace.rename('a','Background name');
+  assert.deepEqual(renamed,[['a','Background name']]);
+  assert.equal(state.activeGrain.grainId,'b');
+  assert.equal(state.openGrains[0].path,'/draft');
+  workspace.close('b'); await turn();
+  assert.deepEqual(closed,['b']);
+  workspace.select('a');
+  assert.equal(state.activeGrain.title,'Background name');
+  const canceled = workspace.open('c','/',[]); await turn();
+  workspace.select('a');
+  pending.get('c').resolve(result('c')); await canceled; await turn();
+  assert.deepEqual(closed,['b','c']);
+  assert.equal(state.activeGrain.grainId,'a');
+  assert.equal(state.openGrains.length,1);
+  workspace.reset();
+  assert.equal(state.openGrains.length,0);
+  assert.throws(() => workspace.rename('a','Not live'),/closed/);
+});
+
+
+test('template credentials are isolated between grains and cleared at shell/session boundaries', async t => {
+  browserGlobals(t);
+  const storage = {};
+  Object.defineProperties(storage, {
+    setItem: {value: (key, value) => { storage[key] = value; }},
+    getItem: {value: key => storage[key] ?? null},
+    removeItem: {value: key => { delete storage[key]; }},
+  });
+  globalThis.sessionStorage = storage;
+  storage['rustOfferTemplate:stale'] = 'old credential';
+  storage['unrelated'] = 'keep me';
+  const shell = new ShellService(() => {});
+  assert.equal(storage['rustOfferTemplate:stale'], undefined, 'boot clears old offers without opening a grain');
+  assert.equal(storage.unrelated, 'keep me');
+  const first = new TemplateOffers();
+  const issue = async () => ({host:'api.test',token:'test-token'});
+  const firstUrl = await first.render({rpcId:'first',template:'$API_TOKEN'},'First',issue);
+  const firstKey = 'rustOfferTemplate:' + new URL(firstUrl).hash.slice(1);
+  const second = new TemplateOffers();
+  assert.ok(storage[firstKey], 'opening another grain must not delete a live offer');
+  const secondUrl = await second.render({rpcId:'second',template:'$API_TOKEN'},'Second',issue);
+  const secondKey = 'rustOfferTemplate:' + new URL(secondUrl).hash.slice(1);
+  second.clear();
+  assert.ok(storage[firstKey]);
+  assert.equal(storage[secondKey],undefined);
+  shell.connection.events.reset();
+  assert.equal(storage[firstKey],undefined, 'session reset clears offers, including orphaned keys');
+  assert.equal(storage.unrelated,'keep me');
+  clearStoredTemplateOffers();
+});
+
+test('notification navigation only accepts supported canonical local destinations', () => {
+  assert.deepEqual(notificationDestination('/grain/grain-1/folder?x=1#comment'),{path:'/grain/grain-1/folder?x=1#comment',label:'Open grain'});
+  assert.deepEqual(notificationDestination('/install'),{path:'/install',label:'Review updates'});
+  for (const path of ['', '//evil.test/grain/a', 'https://evil.test/grain/a', '/admin', '/grain/a/../../install', '/install?url=evil', '/grain/%2e%2e/admin']) {
+    assert.equal(notificationDestination(path),null);
+  }
+});
+
+test('picture uploads validate before issuing tokens and discard late results after account switches', async t => {
+  let requests=0, state;
+  const pending=deferred();
+  const connection={signal:new AbortController().signal,run:promise=>promise,account:{preparePictureUpload:()=>{++requests;return {promise:()=>pending.promise};}}};
+  const profile=new ProfileService(connection,value=>{state=value;},()=>{});
+  await profile.uploadPicture(new File(['<svg/>'],'bad.svg',{type:'image/svg+xml'}));
+  assert.equal(requests,0);
+  assert.match(state.pictureError,/preview/);
+
+  const upload=profile.uploadPicture(new Blob(['jpeg'],{type:'image/jpeg'}));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(requests,1);
+  profile.reset(true);
+  t.mock.method(globalThis,'fetch',()=>{throw new Error('Must not upload after account switch');});
+  pending.resolve(valueResult({url:'https://static.example.test/token'}));
+  await upload;
+  assert.equal(state.value,null);
+  assert.equal(state.error,'');
+});
+
+test('profile notices preserve the displayed values and distinguish own saves from remote edits', async () => {
+  let state;
+  let current={name:'Alice',handle:'alice',pronoun:'neutral',version:'one',pictureUrl:''};
+  let save;
+  const profile=new ProfileService({run:p=>p,account:{readProfile:()=>({promise:async()=>profileResult(current)}),updateProfile:()=>({promise:()=>new Promise(resolve=>{save=resolve;})})}},value=>state=value,()=>{});
+  profile.observe('one'); await profile.load();
+  profile.observe('two');
+  assert.equal(state.stale,true); assert.equal(state.value.name,'Alice');
+  current={...current,name:'Remote',version:'two'};
+  await profile.load(); assert.equal(state.stale,false); assert.equal(state.value.name,'Remote');
+  const saving=profile.save({name:'Mine',handle:'alice',pronoun:'neutral'});
+  profile.observe('three');
+  save(profileResult({...current,name:'Mine',version:'three'})); await saving;
+  profile.observe('three'); assert.equal(state.stale,false);
+  const later=profile.save({name:'Mine again',handle:'alice',pronoun:'neutral'});
+  profile.observe('four'); profile.observe('five');
+  save(profileResult({...current,name:'Mine again',version:'four'})); await later;
+  assert.equal(state.stale,true,'A concurrent remote update after our save still shows the banner');
+  profile.reset(true); assert.equal(state.stale,false); assert.equal(state.value,null);
+});
+
+
+test('operation deadlines preserve the connection and release late results', async () => {
+  let timeouts = 0, late = 0;
+  const connection = new ShellConnection({reset:()=>{throw new Error('Unexpected reset');}});
+  const pending = deferred();
+  await assert.rejects(connection.run(pending.promise, 'Slow operation', {
+    timeoutMs:5, onTimeout:()=>++timeouts, onLateResult:()=>++late,
+  }), OperationTimeout);
+  assert.equal(timeouts, 1);
+  assert.equal(connection.signal.aborted, false);
+  pending.resolve({}); await turn();
+  assert.equal(late, 1);
+  assert.equal(await connection.run(Promise.resolve('healthy'), 'Another operation'), 'healthy');
+});
+
+test('profile denials are readable while unknown outcomes hide RPC details and are not retried', async () => {
+  let state, calls=0, rejectTransport=false;
+  const account={updateProfile:()=>({promise:async()=>{
+    ++calls;
+    if (rejectTransport) throw new Error('CAPNP-TS116 internal database trace');
+    return {result:{_isFailure:true,_isValue:false,failure:{code:FailureCode.INVALID_INPUT,message:'That handle cannot be used.'}}};
+  }})};
+  const profile=new ProfileService({run:p=>p,account},value=>state=value,()=>{});
+  const edit={name:'Alice',handle:'reserved',pronoun:'neutral'};
+  await profile.save(edit);
+  assert.equal(state.error,'That handle cannot be used.');
+  assert.equal(calls,1);
+  rejectTransport=true;
+  await profile.save(edit);
+  assert.match(state.error,/Could not confirm profile save/);
+  assert.doesNotMatch(state.error,/CAPNP|database/);
+  assert.equal(calls,2);
+});
+
+test('denied upload authorization reports the reason without sending the image', async t => {
+  let state;
+  t.mock.method(globalThis,'fetch',()=>{throw new Error('Image must not be sent');});
+  const connection={signal:new AbortController().signal,run:p=>p,account:{preparePictureUpload:()=>({promise:async()=>({
+    result:{_isFailure:true,_isValue:false,failure:{code:FailureCode.PERMISSION_DENIED,message:'This account cannot upload a picture.'}},
+  })})}};
+  const profile=new ProfileService(connection,value=>state=value,()=>{});
+  await profile.uploadPicture(new Blob(['jpeg'],{type:'image/jpeg'}));
+  assert.equal(state.pictureError,'This account cannot upload a picture.');
+  assert.equal(globalThis.fetch.mock.callCount(),0);
+});
+
+
+test('template options reject fields that cannot be represented without losing restrictions', () => {
+  const parse = extra => tokenOptions(templateRequest({rpcId:'test',template:'$API_TOKEN',...extra}));
+  assert.deepEqual(parse({}).roleAssignment, {allAccess:null});
+  assert.deepEqual(parse({roleAssignment:{roleId:65536}}).roleAssignment, {roleId:65536});
+  assert.deepEqual(parse({roleAssignment:{roleId:2,addPermissions:[false,true],removePermissions:[true]}}).roleAssignment,
+    {roleId:2,addPermissions:[false,true],removePermissions:[true]});
+  for (const roleAssignment of [{allAccess:null,roleId:1},{roleId:1.5},{roleId:2147483648},
+    {addPermissions:[1]},{removePermissions:'all'},{unexpected:true}]) {
+    assert.throws(() => parse({roleAssignment}), /Invalid template request/);
+  }
+  for (const unauthenticated of [{options:{dav:[1]}},{options:{extra:true}},
+    {resources:{'/status':{type:'text/plain',body:'ok',extra:'ignored'}}}]) {
+    assert.throws(() => parse({unauthenticated}), /Invalid template request/);
+  }
+});
+
+test('notification writes release scoped handles and separate policy failures from uncertain outcomes', async t => {
+  browserGlobals(t);
+  let state, releases = 0, calls = 0, pending = false;
+  const service = new ShellService(value => { state = value; });
+  const response = {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'This notification belongs to another account.'}}};
+  const notice = {client:{close:()=>{++releases;}},dismiss:()=>({promise:async()=>{++calls;return pending ? new Promise(()=>{}) : response;}})};
+  service.connection = {
+    shell:{notification:fill=>{const params={};fill(params);assert.equal(params.key,'notice');return {getNotice:()=>notice};}},
+    run:promise=>promise,
+  };
+  service.update({status:'ready',fixture:false});
+  await service.dismiss('notice');
+  assert.equal(state.notificationError,'This notification belongs to another account.');
+  assert.equal(releases,1);
+  assert.equal(state.pending,false);
+  pending = true;
+  service.connection.run=()=>Promise.reject(new Error('CAPNP internal details'));
+  await service.dismiss('notice');
+  assert.match(state.notificationError,/outcome may be unknown/);
+  assert.doesNotMatch(state.notificationError,/CAPNP/);
+  assert.equal(releases,2,'timed-out operations release the handle without waiting for RPC completion');
+  assert.equal(calls,2,'neither failure is replayed');
+});
+
+
+test('creation distinguishes policy rejection from unknown outcomes without replay', async () => {
+  let calls = 0, reject = true;
+  const apps = new AppService({run:promise=>promise,shell:{...actionFactory(()=>({promise:async()=>{
+    ++calls;
+    if (!reject) throw new Error('CAPNP internal failure');
+    return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'Invitation required.'}}};
+  }}))}},()=>{});
+  apps.selectAccount('alice');
+  await assert.rejects(apps.create('action','title'), /Invitation required/);
+  assert.deepEqual(apps.state,{status:'rejected',error:'Invitation required.'});
+  apps.selectAccount('bob');
+  assert.equal(apps.state.status,'idle');
+  apps.selectAccount('alice');
+  assert.equal(apps.state.status,'rejected');
+  apps.acknowledge();
+  reject = false;
+  await assert.rejects(apps.create('action','title'));
+  assert.equal(apps.state.status,'unknown');
+  assert.doesNotMatch(apps.state.error,/CAPNP/);
+  assert.equal(calls,2);
+});
+
+test('typed grain-open failures remain readable and do not replay', async t => {
+  browserGlobals(t);
+  let state, calls = 0, failTransport = false;
+  const grains = new GrainService({run:promise=>promise,shell:{...viewFactory(()=>({promise:async()=>{
+    ++calls;
+    if (failTransport) throw new Error('CAPNP secret protocol detail');
+    return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'This grain is not shared with you.'}}};
+  }}))}}, patch=>{state={...state,...patch};});
+  await grains.open('foreign','/',[]);
+  assert.equal(state.grainError,'This grain is not shared with you.');
+  assert.equal(state.openingGrain,false);
+  assert.equal(grains.active,null);
+  failTransport = true;
+  await grains.open('foreign','/',[]);
+  assert.match(state.grainError,/Unable to open grain/);
+  assert.doesNotMatch(state.grainError,/CAPNP/);
+  assert.equal(calls,2);
+});
+
+test('late typed grain-open results release only successful leases', async t => {
+  browserGlobals(t);
+  for (const success of [true,false]) {
+    const request = deferred();
+    let closed = 0, released = 0, state;
+    const session={close:()=>({promise:async()=>{++closed;}}),client:{close:()=>{++released;}}};
+    const connection={run:(promise,label,options)=>runOperation(promise,label,{...options,timeoutMs:5}),
+      shell:{...viewFactory(()=>({promise:()=>request.promise}))}};
+    const grains=new GrainService(connection,patch=>{state={...state,...patch};});
+    await grains.open('grain','/',[]);
+    assert.match(state.grainError,/Unable to open grain/);
+    request.resolve(success ? valueResult({session}) : {result:{_isValue:false,_isFailure:true}});
+    await turn();
+    assert.equal(closed,success ? 1 : 0);
+    assert.equal(released,success ? 1 : 0);
+    assert.equal(grains.active,null);
+  }
+});
+
+test('malformed grain URLs release the issued session', async t => {
+  browserGlobals(t);
+  let closed=0,released=0;
+  const session={close:()=>({promise:async()=>{++closed;}}),client:{close:()=>{++released;}}};
+  const grains=new GrainService({run:promise=>promise,shell:{...viewFactory(()=>({promise:async()=>valueResult({session,view:{url:'invalid URL',origin:'https://grain.test'}})}))}},()=>{});
+  await grains.open('grain','/',[]);
+  await turn();
+  assert.equal(closed,1);
+  assert.equal(released,1);
+  assert.equal(grains.active,null);
+});
+
+
+test('app list errors show policy reasons and hide protocol details', async () => {
+  let transport=false;
+  const apps=new AppService({run:promise=>promise,shell:{listApps:()=>({promise:async()=>{
+    if(transport)throw new Error('CAPNP private details');
+    return {result:{_isValue:false,_isFailure:true,failure:{code:FailureCode.PERMISSION_DENIED,message:'App list denied.'}}};
+  }})}},()=>{});
+  await assert.rejects(apps.list(), /App list denied/);
+  transport=true;
+  await assert.rejects(apps.list(), error=>!error.message.includes('CAPNP') && /Could not load installed apps/.test(error.message));
+});
+
+test('closed Powerbox results terminate rather than becoming a waiting loop', async () => {
+  let released=0,canceled=0;
+  const request={cancel:()=>({promise:async()=>{++canceled;}}),client:{close:()=>{++released;}}};
+  const session={beginPowerbox:()=>({promise:async()=>({request,...valueResult({_isClosed:true})})})};
+  const requests=new PowerboxRequests({run:promise=>promise});
+  await assert.rejects(requests.call(session,'id','begin'), /Connection request closed/);
+  await turn();
+  assert.equal(canceled,1);
+  assert.equal(released,1);
+});
+
+
+test('query failures survive terminal signals and cancellation releases an unresponsive subscription', async () => {
+  const failures=[];
+  let releases=0,cancels=0;
+  const subscription={
+    whenClosed:()=>({promise:async()=>{}}),
+    cancel:()=>({promise:()=>{++cancels;return new Promise(()=>{});}}),
+    client:{close:()=>{++releases;}},
+  };
+  const connection={
+    run:(promise,label,options)=>runOperation(promise,label,{...options,timeoutMs:label==='Stop list observation'?5:1000}),
+    shell:{watchGrains:fill=>{
+      const params={_initQuery:()=>({})};fill(params);
+      return {promise:async()=>{
+        await params.observer.update(p=>{const failure=p._initResult()._initFailure();failure.code=FailureCode.PERMISSION_DENIED;failure.message='Query denied.';}).promise();
+        return {subscription};
+      }};
+    }},
+  };
+  const stop=watchGrains(connection,{search:'',appId:'',sort:'recent',ownership:'all',page:0},()=>{assert.fail('denied query must not publish rows');},error=>failures.push(error.message));
+  await turn();await turn();
+  assert.deepEqual(failures,['Query denied.']);
+  stop();
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(cancels,1);
+  assert.equal(releases,1,'a stuck cancel must not keep the client capability alive');
+});
+
+test('list deltas preserve rows, ordering, and atomicity across removals and reconnects', () => {
+  const cache = new ListCache(row => row.id);
+  const a = {id:'a',title:'A'}, b = {id:'b',title:'B'};
+  assert.deepEqual(cache.apply({...emptyDelta(),order:['a','b']},[a,b]),[a,b]);
+  const changed = {id:'a',title:'Renamed'};
+  const delta = {revision:2n,reset:false,removed:[],order:['b','a']};
+  assert.throws(()=>cache.apply({...delta,revision:3n},[changed]));
+  assert.throws(()=>cache.apply({...delta,order:['a','a']},[changed]));
+  assert.throws(()=>cache.apply(delta,[changed,changed]));
+  const rows = cache.apply(delta,[changed]);
+  assert.equal(rows[0],b);
+  assert.equal(rows[1],changed);
+  assert.deepEqual(cache.apply({revision:3n,reset:false,removed:['a'],order:['b']},[]),[b]);
+  cache.clear();
+  assert.deepEqual(cache.apply(emptyDelta(),[]),[]);
+});
+
+test('action selectors release their handle and synchronous factory errors settle creation', async () => {
+  let released = 0;
+  const apps = new AppService({run:p=>p,shell:{action:fill=>{
+    const selected = {}; fill(selected);
+    assert.equal(selected.key,'owned-action');
+    return {getAction:()=>({client:{close(){++released;}},create:fill=>{
+      const input = {}; fill(input);
+      assert.deepEqual(input,{title:'Document'});
+      return {promise:async()=>valueResult({grainId:'created'})};
+    }})};
+  }}},()=>{});
+  apps.selectAccount('alice');
+  assert.equal(await apps.create('owned-action','Document'),'created');
+  assert.equal(released,1);
+  const disconnected = new AppService({shell:{action:()=>{throw new Error('Disconnected');}}},()=>{});
+  disconnected.selectAccount('alice');
+  await assert.rejects(disconnected.create('owned-action','Document'));
+  assert.equal(disconnected.state.status,'unknown');
+});
+
+test('gateway readiness updates only its own active grain and ignores a late result after close', async t => {
+  browserGlobals(t);
+  const ready=deferred();let state;
+  const session={whenReady:()=>({promise:()=>ready.promise}),whenClosed:()=>({promise:()=>new Promise(()=>{})}),close:()=>({promise:async()=>{}}),client:{close(){}}};
+  const service=new GrainService({run:p=>p,shell:viewFactory(()=>({promise:async()=>valueResult({session,view:{url:'https://grain.test/init',origin:'https://grain.test'}})}))},patch=>{state={...state,...patch};});
+  await service.open('grain','/',[]);
+  assert.equal(state.activeGrain.ready,false);
+  ready.resolve(valueResult({}));await turn();assert.equal(state.activeGrain.ready,true);
+  service.close();
+  const late=deferred();session.whenReady=()=>({promise:()=>late.promise});
+  await service.open('next','/',[]);service.close();late.resolve(valueResult({}));await turn();
+  assert.equal(state.activeGrain,null);
+});
+
+test('OAuth popup targets are restricted to the selected provider', () => {
+  assert.equal(authorizationUrl('google','https://accounts.google.com/o/oauth2/auth?state=test').hostname,'accounts.google.com');
+  assert.equal(authorizationUrl('github','https://github.com/login/oauth/authorize?state=test').hostname,'github.com');
+  for(const url of ['https://github.com/login/oauth/authorize','https://accounts.google.com.evil.test/o/oauth2/auth','https://accounts.google.com/other','https://user@accounts.google.com/o/oauth2/auth','http://accounts.google.com/o/oauth2/auth']) assert.throws(()=>authorizationUrl('google',url));
+});
+
+test('OIDC accepts server-configured web endpoints and rejects unsafe popup URLs', () => {
+  assert.equal(authorizationUrl('oidc','https://identity.example.test/custom/authorize?state=test').pathname,'/custom/authorize');
+  assert.equal(authorizationUrl('oidc','http://localhost:8080/authorize').protocol,'http:');
+  for (const url of ['javascript:alert(1)','data:text/html,test','https://user:secret@identity.example.test/authorize','https://identity.example.test/authorize#fragment']) assert.throws(()=>authorizationUrl('oidc',url));
+});
+
+
+test('authorization cancellation closes the popup and uses an independent cleanup signal', async t => {
+  browserGlobals(t);
+  const popup = {closed:false, location:{}, close(){ this.closed = true; }};
+  window.open = () => popup;
+  const lifetime = new AbortController();
+  const polling = deferred();
+  const cancellations = [];
+  const pending = authorizePopup(async () => ({request:'attempt',url:'https://github.com/login/oauth/authorize'}),
+    () => polling.promise, async (key, signal) => cancellations.push({key,aborted:signal.aborted}), lifetime.signal, 'github');
+  await turn();
+  lifetime.abort();
+  assert.equal(popup.closed, true);
+  await assert.rejects(pending);
+  assert.deepEqual(cancellations, [{key:'attempt',aborted:false}]);
+  polling.resolve(null);
+});
+
+test('authorization disposes a start result arriving after cancellation', async t => {
+  browserGlobals(t);
+  const popup = {location:{},close(){}};
+  window.open = () => popup;
+  const lifetime = new AbortController();
+  const starting = deferred();
+  const cancellations = [];
+  const pending = authorizePopup(() => starting.promise, async () => null,
+    async key => cancellations.push(key), lifetime.signal, 'github');
+  lifetime.abort();
+  await assert.rejects(pending);
+  starting.resolve({request:'late',url:'https://github.com/login/oauth/authorize'});
+  await turn();
+  assert.deepEqual(cancellations, ['late']);
+  assert.deepEqual(providerRequest('saml','Finish','key'), {operation:'samlFinish',data:{request:'key'}});
+  assert.deepEqual(providerRequest('github','Start'), {operation:'oauthStart',data:{provider:'github'}});
+});
+
+
+test('workspace reload restores account-scoped tabs with fresh sessions without selecting background tabs', async t => {
+  browserGlobals(t);
+  const storage=new Map();
+  globalThis.sessionStorage={getItem:key=>storage.get(key) ?? null,setItem:(key,value)=>storage.set(key,value)};
+  saveTabs('alice','grains',[{id:'a',path:'/draft?edit=1#part'},{id:'b',path:'/other'}]);
+  saveTabs('bob','grains',[{id:'private',path:'/'}]);
+  let state=initialShellState();const opened=[];
+  const connection={run:promise=>promise,shell:{...viewFactory(fill=>{
+    const params={};fill(params);opened.push(params.grainId);
+    return {promise:async()=>valueResult({view:{url:'https://app.test/init?sessionid=fresh',origin:'https://app.test',title:params.grainId},session:{
+      client:{close(){}},close:()=>({promise:async()=>{}}),
+      whenReady:()=>({promise:()=>new Promise(()=>{})}),whenClosed:()=>({promise:()=>new Promise(()=>{})}),
+    }})};
+  })}};
+  const workspace=new GrainWorkspace(connection,patch=>{state={...state,...patch};});
+  workspace.selectAccount('alice');workspace.restore([]);await turn();
+  assert.deepEqual(opened,['a','b']);assert.equal(state.activeGrain,null);
+  assert.deepEqual(state.openGrains.map(g=>[g.grainId,g.path]),[['a','/draft?edit=1#part'],['b','/other']]);
+  assert.equal(new URL(state.openGrains[0].url).searchParams.get('path'),'/draft?edit=1#part');
+  workspace.close('b');assert.deepEqual(readTabs('alice','grains'),[{id:'a',path:'/draft?edit=1#part'}]);
+  workspace.reset();workspace.restore([]);await turn();
+  assert.equal(opened.length,2,'transport recovery must not replay opens');
+  assert.equal(readTabs('alice','grains').length,1,'transport reset must preserve reload intent');
+  workspace.selectAccount('bob');workspace.restore([]);await turn();
+  assert.deepEqual(state.openGrains.map(g=>g.grainId),['private']);
+  workspace.selectAccount(null);assert.equal(state.openGrains.length,0);
+  storage.set('sandstorm.workspace.grains.bad','[{"id":"ok","path":"//evil.test"},{"id":"x","path":"/safe"}]');
+  assert.deepEqual(readTabs('bad','grains'),[{id:'x',path:'/safe'}]);
+  storage.set('sandstorm.workspace.grains.bad','invalid');assert.deepEqual(readTabs('bad','grains'),[]);
+});

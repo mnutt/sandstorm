@@ -80,6 +80,7 @@ fi
 
 # We'll use this env var from the tests.
 export SANDSTORM_TESTAPP_PATH
+export SANDSTORM_TEST_BUNDLE="$BUNDLE_PATH"
 
 cd "$THIS_DIR"
 

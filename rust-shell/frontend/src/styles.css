@@ -1,0 +1,51 @@
+/* Global contract: tokens, document reset, and explicit accessibility utility only.
+   Component/layout selectors belong in their owning .svelte file. Tokens live on
+   :root so Bits portals inherit the same theme as the shell. */
+:root {
+  color-scheme: light;
+  --ss-brand: #6e3c8e;
+  --ss-brand-hover: #542770;
+  --ss-brand-subtle: #f0e9f5;
+  --ss-chrome: #24212b;
+  --ss-chrome-header: #1e1b24;
+  --ss-chrome-text: #f4f0f8;
+  --ss-chrome-muted: #bcb4c8;
+  --ss-chrome-border: #3b3547;
+  --ss-chrome-hover: #302b39;
+  --ss-chrome-selected: #40384d;
+  --ss-chrome-focus: #d4b5f2;
+  --ss-header-height: 3rem;
+  --ss-layer-chrome: 20;
+  --ss-canvas: #f6f5f8;
+  --ss-surface: #fff;
+  --ss-text: #292330;
+  --ss-muted: #665e70;
+  --ss-border: #ddd7e3;
+  --ss-control-border: #a89caf;
+  --ss-danger: #9c3028;
+  --ss-danger-subtle: #fff1ee;
+  --ss-focus: #7943a0;
+  --ss-space-1: .25rem;
+  --ss-space-2: .5rem;
+  --ss-space-3: .75rem;
+  --ss-space-4: 1rem;
+  --ss-space-5: 1.5rem;
+  --ss-space-6: 2rem;
+  --ss-space-7: 3rem;
+  --ss-radius-control: .125rem;
+  --ss-radius-panel: .1875rem;
+  --ss-shadow-panel: 0 2px 8px #29233006;
+  --ss-shadow-dialog: 0 16px 64px #29233033;
+  --ss-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ss-text-small: .875rem;
+  --ss-text-title: 1.375rem;
+  --ss-control-height: 2.75rem;
+  --ss-layer-overlay: 100;
+  --ss-layer-dialog: 101;
+  font: 16px/1.5 var(--ss-font);
+  color: var(--ss-text);
+  background: var(--ss-canvas);
+}
+body { margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

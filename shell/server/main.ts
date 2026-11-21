@@ -98,6 +98,7 @@ import "../imports/server/identity";
 import "../imports/server/installer";
 import "../imports/server/install-server";
 import "../imports/server/notifications-server";
+import "../imports/server/rust-shell-bridge";
 import "../imports/server/pre-meteor";
 import "../imports/server/sandcats";
 import "../imports/server/scheduled-job";

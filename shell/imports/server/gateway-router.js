@@ -14,6 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { iconSrcForPackage } from "/imports/sandstorm-identicons/helpers";
 import { inMeteor } from "/imports/server/async-helpers";
 import Crypto from "crypto";
 import Dns from "dns";
@@ -134,7 +135,7 @@ function boolListToBuffer(bools) {
   return buf;
 }
 
-async function validateWebkey(apiToken, refreshedExpiration) {
+async function validateWebkey(apiToken, refreshedExpiration, markUsed = true) {
   // Validates that `apiToken` is a valid UiView webkey, throwing an exception if it is not. If
   // `refreshedExpiration` is set and if the token has an `expiresIfUnused` field, then the
   // `expiresIfUnused` field is reset to `refreshedExpiration`.
@@ -162,7 +163,7 @@ async function validateWebkey(apiToken, refreshedExpiration) {
     } else if (refreshedExpiration) {
       await globalDb.collections.apiTokens.updateAsync(
           apiToken._id, { $set: { expiresIfUnused: refreshedExpiration } });
-    } else {
+    } else if (markUsed) {
       // It's getting used now, so clear the expiresIfUnused field.
       await globalDb.collections.apiTokens.updateAsync(
           apiToken._id, { $set: { expiresIfUnused: null } });
@@ -876,6 +877,10 @@ async function createSession(db, userId, sessionId, options) {
     hasLoaded: false,
   };
 
+  if (options.rustShell) {
+    session.rustShellSession = true;
+    session.rustShellLeaseExpires = Date.now() + 45000;
+  }
   if (options.parentOrigin) {
     session.parentOrigin = options.parentOrigin;
   }
@@ -925,6 +930,105 @@ async function createSession(db, userId, sessionId, options) {
 
   await globalDb.collections.sessions.insertAsync(session);
   return session;
+}
+
+// Shared Rust views always authorize through the webkey vertex, even when the
+// visitor reveals an identity. Never substitute their broader account access.
+async function rustSharedContext(db, webkey) {
+  const hashed = Crypto.createHash("sha256").update(webkey).digest("base64");
+  const token = await db.collections.apiTokens.findOneAsync(hashed);
+  // Inspection and lease checks must not consume an unused link. The gateway
+  // marks it used only when the visitor actually opens the app.
+  await validateWebkey(token, undefined, false);
+  const grain = await db.collections.grains.findOneAsync(token.grainId);
+  if (!grain || grain.trashed || grain.suspended ||
+      !await SandstormPermissions.mayOpenGrainAsync(db, {token:{_id:hashed,grainId:token.grainId}})) {
+    throw new Meteor.Error(403,"This sharing link is no longer available.");
+  }
+  return {token, grain};
+}
+export async function inspectRustSharedGrain(db, webkey) {
+  const {token, grain} = await rustSharedContext(db,webkey);
+  return {title:await getSharersTitle(db,grain,token), guestsAllowed:!await db.getOrganizationDisallowGuestsAsync()};
+}
+export async function createRustSharedGrainSession(db, webkey, accountId, parentOrigin) {
+  const { grain } = await rustSharedContext(db,webkey);
+  if (!accountId && await db.getOrganizationDisallowGuestsAsync()) throw new Meteor.Error(403,"Guest access is disabled.");
+  const pkg = grain.packageId && await db.collections.packages.findOneAsync(grain.packageId);
+  const staticPrefix = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("static");
+  const iconSrc = pkg ? iconSrcForPackage(pkg, "grain", staticPrefix) : "";
+  const session = await createSession(db,accountId,Crypto.randomBytes(32).toString("hex"), {
+    token:webkey,revealIdentity:!!accountId,parentOrigin,rustShell:true,
+  });
+  return { ...session, iconSrc };
+}
+export async function closeRustSharedGrainSession(db, handle) {
+  await db.collections.sessions.removeAsync({ _id: handle.sessionId, rustShellSession: true });
+}
+export async function keepRustSharedGrainSession(db, handle) {
+  const row = await db.collections.sessions.findOneAsync({_id:handle.sessionId,rustShellSession:true});
+  if (!row || row.denied || row.hashedToken !== handle.hashedToken) throw new Meteor.Error(403,"Shared session ended.");
+  await bumpSession(handle.sessionId);
+  await db.collections.sessions.updateAsync({_id:handle.sessionId},{$set:{rustShellLeaseExpires:Date.now()+45000}});
+}
+
+// Narrow entry point for the experimental shell. The gateway still performs
+// the full permission check and attaches its existing revocation observer.
+export async function createRustGrainSession(db, accountId, grainId, parentOrigin, powerboxRequest) {
+  const savedShares = await db.collections.apiTokens.find({grainId,"owner.user.accountId":accountId,
+    objectId:{$exists:false}}, {fields:{trashed:1}}).fetchAsync();
+  if (savedShares.length && savedShares.every(token=>token.trashed)) {
+    const owned = await db.collections.grains.findOneAsync({_id:grainId,userId:accountId});
+    if (!owned) throw new Meteor.Error(403,"Restore this grain from Trash before opening it.");
+  }
+  const grain = await db.collections.grains.findOneAsync({ _id: grainId });
+  if (!grain || grain.trashed || grain.suspended ||
+      !await SandstormPermissions.mayOpenGrainAsync(db, { grain: { _id: grainId, accountId } })) {
+    throw new Meteor.Error(403, "You do not have access to this grain.");
+  }
+  return createSession(db, accountId, Crypto.randomBytes(32).toString("hex"), {
+    grainId, revealIdentity: true, parentOrigin, rustShell: true, powerboxRequest,
+  });
+}
+
+export async function rustGrainPowerboxContext(db, accountId, sessionId) {
+  const row = await db.collections.sessions.findOneAsync({ _id: sessionId, userId: accountId,
+    rustShellSession: true, rustShellLeaseExpires: { $gt: Date.now() } });
+  if (!accountId || !row) throw new Meteor.Error(403, "This grain session is no longer available to this account.");
+  const grain = await db.collections.grains.findOneAsync({ _id: row.grainId });
+  const account = await db.collections.users.findOneAsync({ _id: accountId });
+  if (!account || account.suspended || !grain || grain.trashed || grain.suspended || row.denied ||
+      !await SandstormPermissions.mayOpenGrainAsync(db, { grain: { _id: row.grainId, accountId } })) {
+    throw new Meteor.Error(403, "Grain access has ended.");
+  }
+  return { grainId: row.grainId };
+}
+
+export async function createRustTemplateToken(db, handle, options) {
+  await rustGrainPowerboxContext(db, handle.accountId, handle.sessionId);
+  check(options, { petname: String, roleAssignment: db.roleAssignmentPattern, forSharing: Boolean,
+    unauthenticated: Match.Optional(Object) });
+  const result = await SandstormPermissions.createNewApiToken(db, { accountId: handle.accountId },
+      handle.grainId, options.petname, options.roleAssignment,
+      { webkey: { forSharing: options.forSharing, expiresIfUnusedDuration: 5 * 60 * 1000 } }, options.unauthenticated);
+  return { ...result, host: db.makeApiHost(result.token) };
+}
+
+export async function keepRustGrainSession(db, handle) {
+  const row = await db.collections.sessions.findOneAsync({ _id: handle.sessionId, userId: handle.accountId });
+  const grain = await db.collections.grains.findOneAsync({ _id: handle.grainId });
+  if (!row || row.denied || !grain || grain.trashed || grain.suspended ||
+      !await SandstormPermissions.mayOpenGrainAsync(db,
+          { grain: { _id: handle.grainId, accountId: handle.accountId } })) {
+    throw new Meteor.Error(403, "Grain access has ended.");
+  }
+  await bumpSession(handle.sessionId);
+  await db.collections.sessions.updateAsync({ _id: handle.sessionId, userId: handle.accountId },
+      { $set: { rustShellLeaseExpires: Date.now() + 45000 } });
+}
+
+export async function closeRustGrainSession(db, handle) {
+  await db.collections.sessions.removeAsync({ _id: handle.sessionId, userId: handle.accountId });
 }
 
 // Kill off sessions idle for >~3 minutes.

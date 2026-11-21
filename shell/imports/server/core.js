@@ -335,37 +335,42 @@ async function dismissNotification(db, notificationId, callCancel) {
   }
 }
 
+export async function dismissNotificationForUser(db, userId, notificationId) {
+  // This will remove notifications from the database and from view of the user.
+  // For ongoing notifications, it will begin the process of cancelling and dropping them from
+  // the app.
+
+  check(notificationId, String);
+
+  const notification = await db.collections.notifications.findOneAsync({ _id: notificationId });
+  if (!notification) {
+    throw new Meteor.Error(404, "Notification id not found.");
+  } else if (!userId || notification.userId !== userId) {
+    throw new Meteor.Error(403, "Notification does not belong to current user.");
+  } else {
+    await dismissNotification(db, notificationId, true);
+  }
+}
+
+export async function readNotificationsForUser(db, userId, notificationId) {
+  // Omit the ID to mark all notifications; individual reads retain account scoping.
+  if (!userId) {
+    throw new Meteor.Error(403, "User not logged in.");
+  }
+
+  if (notificationId !== undefined) check(notificationId, String);
+  await db.collections.notifications.updateAsync(
+    notificationId === undefined ? { userId } : { userId, _id: notificationId },
+    { $set: { isUnread: false } },
+    { multi: true });
+}
+
 Meteor.methods({
   async dismissNotification(notificationId) {
-    // This will remove notifications from the database and from view of the user.
-    // For ongoing notifications, it will begin the process of cancelling and dropping them from
-    // the app.
-
-    check(notificationId, String);
-
-    const db = this.connection.sandstormDb;
-
-    const notification = await db.collections.notifications.findOneAsync({ _id: notificationId });
-    if (!notification) {
-      throw new Meteor.Error(404, "Notification id not found.");
-    } else if (notification.userId !== this.userId) {
-      throw new Meteor.Error(403, "Notification does not belong to current user.");
-    } else {
-      await dismissNotification(db, notificationId, true);
-    }
+    return dismissNotificationForUser(this.connection.sandstormDb, this.userId, notificationId);
   },
-
   async readAllNotifications() {
-    // Marks all notifications as read for the current user.
-    if (!this.userId) {
-      throw new Meteor.Error(403, "User not logged in.");
-    }
-
-    const db = this.connection.sandstormDb;
-    await db.collections.notifications.updateAsync(
-      { userId: this.userId },
-      { $set: { isUnread: false } },
-      { multi: true });
+    return readNotificationsForUser(this.connection.sandstormDb, this.userId);
   },
 
   async acceptPowerboxOffer(sessionId, sturdyRef, sessionToken) {

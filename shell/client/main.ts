@@ -155,6 +155,8 @@ import "../imports/client/dev-accounts-client";
 import "../imports/client/grain-client";
 import "../imports/client/install-client";
 import "../imports/client/notifications-client";
+import "../imports/client/rust-shell-login";
+import "../imports/client/rust-shell-powerbox";
 import "../imports/client/powerbox-builtins";
 import "../imports/client/shell/about-client";
 import "../imports/client/shell-client";

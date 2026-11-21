@@ -1,6 +1,7 @@
 @use "powerbox-card";
 
-.topbar-popup.request>.frame-container>.frame {
+.topbar-popup.request>.frame-container>.frame,
+.rust-shell-powerbox .chooser {
   >ul.candidate-cards {
     flex: 1 1 auto;
     overflow-y: auto;

@@ -1,4 +1,5 @@
-.topbar-popup.request>.frame-container>.frame {
+.topbar-popup.request>.frame-container>.frame,
+.rust-shell-powerbox .chooser {
   >.selected-card {
     flex: none;
     >div.powerbox-card {

@@ -196,6 +196,22 @@ Config readConfig(const char *path, bool parseUids) {
       } else {
         KJ_FAIL_REQUIRE("invalid config value HTTPS_PORT", value);
       }
+    } else if (key == "RUST_SHELL_DEV_PORT") {
+      KJ_IF_MAYBE(p, parseUInt(value, 10)) {
+        KJ_REQUIRE(*p > 0 && *p <= 65535, "invalid RUST_SHELL_DEV_PORT", value);
+        config.rustShellDevPort = *p;
+      } else {
+        KJ_FAIL_REQUIRE("invalid RUST_SHELL_DEV_PORT", value);
+      }
+    } else if (key == "RUST_SHELL_BIND_IP") {
+      config.rustShellBindIp = kj::mv(value);
+    } else if (key == "RUST_SHELL_PORT") {
+      KJ_IF_MAYBE(p, parseUInt(value, 10)) {
+        KJ_REQUIRE(*p > 0 && *p <= 65535, "invalid RUST_SHELL_PORT", value);
+        config.rustShellPort = *p;
+      } else {
+        KJ_FAIL_REQUIRE("invalid RUST_SHELL_PORT", value);
+      }
     } else if (key == "PORT") {
         maybePortValue = kj::mv(value);
     } else if (key == "MONGO_PORT") {
@@ -316,7 +332,38 @@ Config readConfig(const char *path, bool parseUids) {
         "SANDCATS_IP_ADDRESS requires SANDCATS_ADDRESS_MODE=explicit");
   }
 
+  KJ_IF_MAYBE(port, config.rustShellPort) {
+    KJ_REQUIRE(config.httpsPort != nullptr && config.rootUrl.startsWith("https://"),
+        "RUST_SHELL_PORT requires HTTPS_PORT and an https BASE_URL");
+    KJ_REQUIRE(*port != config.mongoPort && *port != config.smtpListenPort,
+        "RUST_SHELL_PORT conflicts with another service");
+    for (auto existing: config.ports) {
+      KJ_REQUIRE(*port != existing, "RUST_SHELL_PORT conflicts with PORT/HTTPS_PORT");
+    }
+  }
+  KJ_IF_MAYBE(port, config.rustShellDevPort) {
+    KJ_REQUIRE(config.rustShellPort != nullptr, "RUST_SHELL_DEV_PORT requires RUST_SHELL_PORT");
+    KJ_REQUIRE(*port != KJ_REQUIRE_NONNULL(config.rustShellPort) &&
+        *port != config.mongoPort && *port != config.smtpListenPort,
+        "RUST_SHELL_DEV_PORT conflicts with another service");
+    for (auto existing: config.ports) {
+      KJ_REQUIRE(*port != existing, "RUST_SHELL_DEV_PORT conflicts with PORT/HTTPS_PORT");
+    }
+  }
   return config;
+}
+
+kj::String rustShellOrigin(const Config& config) {
+  auto host = kj::str(config.rootUrl.asPtr().slice(8));
+  KJ_IF_MAYBE(slash, host.findFirst('/')) { host = kj::str(host.slice(0, *slash)); }
+  if (host.startsWith("[")) {
+    auto end = KJ_REQUIRE_NONNULL(host.findFirst(']'), "invalid IPv6 BASE_URL");
+    host = kj::str(host.slice(0, end + 1));
+  } else {
+    KJ_IF_MAYBE(colon, host.findFirst(':')) { host = kj::str(host.slice(0, *colon)); }
+  }
+  auto port = KJ_REQUIRE_NONNULL(config.rustShellPort);
+  return port == 443 ? kj::str("https://", host) : kj::str("https://", host, ":", port);
 }
 
 }; // namespace sandstorm

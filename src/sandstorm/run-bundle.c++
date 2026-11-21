@@ -1982,6 +1982,9 @@ private:
       for (auto& port: config.ports) {
         openPort(config, port, targetFd++, inherited);
       }
+      KJ_IF_MAYBE(port, config.rustShellPort) {
+        openPort(config, *port, targetFd++, inherited, config.rustShellBindIp);
+      }
 
       links.insert(std::make_pair(SHELL_HTTP, newLink()));
       links.insert(std::make_pair(SHELL_SMTP, newLink()));
@@ -2070,7 +2073,8 @@ private:
     std::map<LinkId, LinkPair> links;
 
     void openPort(const Config& config, uint port, int targetFd,
-                  std::map<uint, kj::AutoCloseFd>& inherited) {
+                  std::map<uint, kj::AutoCloseFd>& inherited, kj::StringPtr bindIp = nullptr) {
+      if (bindIp == nullptr) bindIp = config.bindIp;
       auto iter = inherited.find(port);
       if (iter != inherited.end()) {
         ports.insert(std::make_pair(port, FdInfo { ensureMinFd(kj::mv(iter->second)), targetFd }));
@@ -2089,14 +2093,14 @@ private:
       memset(&sa, 0, sizeof sa);
 
       sa.ss_family = AF_INET;
-      int rc = inet_pton(AF_INET, config.bindIp.cStr(), &(sa4->sin_addr));
+      int rc = inet_pton(AF_INET, bindIp.cStr(), &(sa4->sin_addr));
 
       if (rc == 0) {
         // If IPv4 address parsing fails, try IPv6
         useV6 = true;
         sa.ss_family = AF_INET6;
-        rc = inet_pton(AF_INET6, config.bindIp.cStr(), &(sa6->sin6_addr));
-        KJ_REQUIRE(rc == 1, "Bind IP is an invalid IP address:", config.bindIp);
+        rc = inet_pton(AF_INET6, bindIp.cStr(), &(sa6->sin6_addr));
+        KJ_REQUIRE(rc == 1, "Bind IP is an invalid IP address:", bindIp);
       }
 
       int sockFd_;
@@ -2351,6 +2355,13 @@ private:
     pid_t nodePid = startNode(config, fdBundle);
     int64_t nodeStartTime = getTime();
 
+    pid_t rustShellPid = 0;
+    int64_t rustShellStartTime = getTime();
+    if (config.rustShellPort != nullptr) {
+      context.warning("** Starting experimental Rust shell...");
+      rustShellPid = startRustShell(config, fdBundle);
+    }
+
     pid_t gatewayPid = 0;
     context.warning("** Starting Gateway...");
     gatewayPid = startGateway(config, fdBundle);
@@ -2371,6 +2382,7 @@ private:
         bool gatewayDied = false;
         bool mongoDied = false;
         bool nodeDied = false;
+        bool rustShellDied = false;
         for (;;) {
           int status;
           pid_t deadPid = waitpid(-1, &status, WNOHANG);
@@ -2385,6 +2397,8 @@ private:
             mongoDied = true;
           } else if (deadPid == nodePid) {
             nodeDied = true;
+          } else if (deadPid == rustShellPid) {
+            rustShellDied = true;
           } else if (deadPid == devDaemonPid) {
             // We don't restart the dev daemon since it should never crash in the first place.
             // Just record that we already reaped it.
@@ -2412,6 +2426,11 @@ private:
           maybeWaitAfterChildDeath("Front-end", nodeStartTime);
           nodePid = startNode(config, fdBundle);
           nodeStartTime = getTime();
+        }
+        if (rustShellDied) {
+          maybeWaitAfterChildDeath("Rust shell", rustShellStartTime);
+          rustShellPid = startRustShell(config, fdBundle);
+          rustShellStartTime = getTime();
         }
 
         if (mongoDied && !nodeDied) {
@@ -2444,6 +2463,7 @@ private:
         // SIGTERM or something.
         context.warning("** Shutting down due to signal");
         killChild("Gateway", gatewayPid);
+        killChild("Rust shell", rustShellPid);
         killChild("Front-end", nodePid);
         killChild("MongoDB", mongoPid);
         killChild("Back-end", backendPid);
@@ -2773,6 +2793,20 @@ private:
       auto shellSmptConn = fdBundle.consumeClient(FdBundle::SHELL_SMTP, *io.lowLevelProvider);
       kj::CapabilityStreamNetworkAddress shellSmtpAddr(*io.provider, *shellSmptConn);
 
+      // Keep the proxy and its upstream address alive longer than the TLS manager's tasks.
+      kj::Own<kj::NetworkAddress> rustAddress;
+      kj::Own<kj::HttpClient> rustClient;
+      kj::Own<kj::HttpService> rustService;
+      kj::Own<kj::HttpServer> rustServer;
+      if (config.rustShellPort != nullptr) {
+        rustAddress = io.provider->getNetwork().parseAddress(
+            "unix:/var/sandstorm/socket/rust-shell-http").wait(io.waitScope);
+        rustClient = kj::newHttpClient(io.provider->getTimer(), *headerTable,
+            *rustAddress, clientSettings);
+        rustService = kj::newHttpService(*rustClient);
+        rustServer = kj::heap<kj::HttpServer>(io.provider->getTimer(), *headerTable, *rustService);
+      }
+
       GatewayTlsManager tlsManager(server, shellSmtpAddr, config.privateKeyPassword
           .map([](const kj::String& str) -> kj::StringPtr { return str; }));
 
@@ -2783,6 +2817,12 @@ private:
             // server monitor will then restart the gateway).
             KJ_FAIL_REQUIRE("backend died; gateway aborting too");
           }));
+
+      KJ_IF_MAYBE(port, config.rustShellPort) {
+        auto listener = fdBundle.consume(*port, *io.lowLevelProvider);
+        auto promise = tlsManager.listenHttps(*listener, *rustServer);
+        promises = promises.exclusiveJoin(promise.attach(kj::mv(listener)));
+      }
 
       // Listen on main port.
       if (config.ports.size() > 0) {
@@ -2831,6 +2871,45 @@ private:
     return result;
   }
 
+  pid_t startRustShell(const Config& config, FdBundle& fdBundle) {
+    KJ_REQUIRE(access("/bin/sandstorm-rust-shell", X_OK) == 0,
+        "RUST_SHELL_PORT configured but this bundle has no Rust shell");
+    Subprocess process([&]() -> int {
+      fdBundle.closeAll();
+      dropPrivs(config.uids);
+      clearSignalMask();
+      const char* socket = "/var/sandstorm/socket/rust-shell-http";
+      if (unlink(socket) < 0) {
+        KJ_REQUIRE(errno == ENOENT, "cannot remove stale Rust shell socket");
+      }
+      KJ_SYSCALL(setenv("RUST_SHELL_SOCKET", socket, true));
+      auto origin = rustShellOrigin(config);
+      KJ_SYSCALL(setenv("RUST_SHELL_ORIGIN", origin.cStr(), true));
+      KJ_IF_MAYBE(port, config.rustShellDevPort) {
+        KJ_SYSCALL(setenv("RUST_SHELL_DEV_PORT", kj::str(*port).cStr(), true));
+      } else {
+        KJ_SYSCALL(unsetenv("RUST_SHELL_DEV_PORT"));
+      }
+      setupMongoEnvironment(config);
+      KJ_SYSCALL(setenv("RUST_SHELL_MONGO_URL", getenv("MONGO_URL"), true));
+      KJ_SYSCALL(setenv("RUST_SHELL_BACKUP_DIR", "/var/sandstorm/backups", true));
+      KJ_SYSCALL(setenv("RUST_SHELL_ASSETS", "/rust-shell/dist", true));
+      KJ_SYSCALL(setenv("RUST_SHELL_MAIN_URL", config.rootUrl.cStr(), true));
+      if (config.wildcardHost != nullptr) {
+        KJ_SYSCALL(setenv("RUST_SHELL_WILDCARD_HOST", config.wildcardHost.cStr(), true));
+      } else {
+        KJ_SYSCALL(unsetenv("RUST_SHELL_WILDCARD_HOST"));
+      }
+      KJ_SYSCALL(setenv("RUST_SHELL_BRIDGE_SOCKET", "/var/sandstorm/socket/rust-shell-bridge", true));
+      KJ_SYSCALL(unsetenv("RUST_SHELL_FIXTURE_SOCKET"));
+      KJ_SYSCALL(execl("/bin/sandstorm-rust-shell", "/bin/sandstorm-rust-shell", EXEC_END_ARGS));
+      KJ_UNREACHABLE;
+    });
+    auto pid = process.getPid();
+    process.detach();
+    return pid;
+  }
+
   pid_t startNode(const Config& config, FdBundle& fdBundle) {
     Subprocess process([&]() -> int {
       fdBundle.prepareInheritedFds();
@@ -2839,6 +2918,16 @@ private:
       clearSignalMask();
 
       setupShellEnvironment(config);
+
+      if (config.rustShellPort != nullptr) {
+        const char* bridgeSocket = "/var/sandstorm/socket/rust-shell-bridge";
+        if (unlink(bridgeSocket) < 0) {
+          KJ_REQUIRE(errno == ENOENT, "cannot remove stale Rust shell bridge socket");
+        }
+        KJ_SYSCALL(setenv("RUST_SHELL_BRIDGE_SOCKET", bridgeSocket, true));
+      } else {
+        KJ_SYSCALL(unsetenv("RUST_SHELL_BRIDGE_SOCKET"));
+      }
 
       kj::String buildstamp;
       if (SANDSTORM_BUILD == 0) {
@@ -2866,7 +2955,7 @@ private:
     return result;
   }
 
-  void setupShellEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
+  void setupMongoEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
     kj::String authPrefix;
     kj::String authSuffix;
     auto passwordFile = kj::str(sandstormHome, "/var/mongo/passwd");
@@ -2884,6 +2973,15 @@ private:
           true));
     }
 
+    KJ_SYSCALL(setenv("MONGO_URL",
+        kj::str("mongodb://", authPrefix, "127.0.0.1:", config.mongoPort,
+                "/meteor", authSuffix).cStr(),
+        true));
+  }
+
+  void setupShellEnvironment(const Config& config, kj::StringPtr sandstormHome = nullptr) {
+    setupMongoEnvironment(config, sandstormHome);
+
     KJ_SYSCALL(setenv("HTTP_GATEWAY", "local", true));
 
     KJ_SYSCALL(setenv("PORT", kj::str(config.ports[0]).cStr(), true));
@@ -2892,10 +2990,6 @@ private:
       KJ_SYSCALL(setenv("HTTPS_PORT", kj::str(*httpsPort).cStr(), true));
     }
 
-    KJ_SYSCALL(setenv("MONGO_URL",
-        kj::str("mongodb://", authPrefix, "127.0.0.1:", config.mongoPort,
-                "/meteor", authSuffix).cStr(),
-        true));
     KJ_SYSCALL(setenv("BIND_IP", config.bindIp.cStr(), true));
     KJ_SYSCALL(setenv("SANDCATS_ADDRESS_MODE", config.sandcatsAddressMode.cStr(), true));
     KJ_SYSCALL(setenv("SANDCATS_IP_ADDRESS", config.sandcatsIpAddress.cStr(), true));
@@ -2941,6 +3035,9 @@ private:
           ", \"hideTroubleshooting\":", config.hideTroubleshooting ? "true" : "false",
           ", \"wildcardHost\":\"", config.wildcardHost, "\"",
           ", \"sandcatsBackend\":\"", config.sandcatsBackend, "\"",
+          config.rustShellPort != nullptr
+              ? kj::str(", \"rustShellOrigin\":\"", rustShellOrigin(config), "\"")
+              : kj::String(nullptr),
           config.sandcatsHostname.size() > 0
               ? kj::str(", \"sandcatsHostname\":\"", config.sandcatsHostname, "\"")
               : kj::String(nullptr),

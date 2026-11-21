@@ -348,130 +348,147 @@ SandstormDb.periodicCleanup(86400000, () => {
       });
 });
 
-Meteor.methods({
-  async newGrain(packageId, command, title) {
-    // Create and start a new grain.
+export async function createGrainForUser(userId, packageId, command, title, beforeCreate = async () => {}) {
+  // Create and start a new grain.
 
-    check(packageId, String);
-    check(command, Object);  // Manifest.Command from package.capnp.
-    check(title, String);
+  check(packageId, String);
+  check(command, Object);  // Manifest.Command from package.capnp.
+  check(title, String);
 
-    if (!this.userId) {
-      throw new Meteor.Error(403, "Unauthorized", "Must be logged in to create grains.");
-    }
+  if (!userId) {
+    throw new Meteor.Error(403, "Unauthorized", "Must be logged in to create grains.");
+  }
 
-    const account = await Meteor.users.findOneAsync({ _id: this.userId });
-    if (!await globalDb.isAccountSignedUpOrDemoAsync(account)) {
-      throw new Meteor.Error(403, "Unauthorized",
-                             "Only invited users or demo users can create grains.");
-    }
+  const account = await Meteor.users.findOneAsync({ _id: userId });
+  if (!await globalDb.isAccountSignedUpOrDemoAsync(account)) {
+    throw new Meteor.Error(403, "Unauthorized",
+                           "Only invited users or demo users can create grains.");
+  }
 
-    if (await globalDb.isUserOverQuotaAsync(account)) {
-      throw new Meteor.Error(402,
-          "You are out of storage space. Please delete some things and try again.");
-    }
+  if (await globalDb.isUserOverQuotaAsync(account)) {
+    throw new Meteor.Error(402,
+        "You are out of storage space. Please delete some things and try again.");
+  }
 
-    let pkg = await globalDb.collections.packages.findOneAsync(packageId);
-    let isDev = false;
-    let mountProc = false;
-    if (!pkg) {
-      // Maybe they wanted a dev package.  Check there too.
-      pkg = await globalDb.collections.devPackages.findOneAsync(packageId);
-      isDev = true;
-      mountProc = pkg && pkg.mountProc;
-    }
+  let pkg = await globalDb.collections.packages.findOneAsync(packageId);
+  let isDev = false;
+  let mountProc = false;
+  if (!pkg) {
+    // Maybe they wanted a dev package.  Check there too.
+    pkg = await globalDb.collections.devPackages.findOneAsync(packageId);
+    isDev = true;
+    mountProc = pkg && pkg.mountProc;
+  }
 
-    if (!pkg) {
-      throw new Meteor.Error(404, "Not Found", "No such package is installed.");
-    }
+  if (!pkg) {
+    throw new Meteor.Error(404, "Not Found", "No such package is installed.");
+  }
 
-    const appId = pkg.appId;
-    const manifest = pkg.manifest;
-    const grainId = Random.id(22);  // 128 bits of entropy
-    await globalDb.collections.grains.insertAsync({
-      _id: grainId,
-      packageId: packageId,
-      appId: appId,
-      appVersion: manifest.appVersion,
-      userId: this.userId,
-      identityId: SandstormDb.generateIdentityId(),
-      title: title,
-      private: true,
-      size: 0,
-    });
+  const appId = pkg.appId;
+  const manifest = pkg.manifest;
+  const grainId = Random.id(22);  // 128 bits of entropy
+  await beforeCreate();
+  await globalDb.collections.grains.insertAsync({
+    _id: grainId,
+    packageId: packageId,
+    appId: appId,
+    appVersion: manifest.appVersion,
+    userId: userId,
+    identityId: SandstormDb.generateIdentityId(),
+    title: title,
+    private: true,
+    size: 0,
+  });
 
-    globalThis.globalBackend.startGrainInternal(packageId, grainId, this.userId, command, true,
-                                     isDev, mountProc);
+  globalThis.globalBackend.startGrainInternal(packageId, grainId, userId, command, true,
+                                   isDev, mountProc);
 
-    return grainId;
-  },
+  return grainId;
+}
 
-  async shutdownGrain(grainId) {
-    check(grainId, String);
+export async function renameGrainForUser(userId, grainId, newTitle, beforeWrite = async () => {}) {
+  check(grainId, String);
+  check(newTitle, String);
+  if (userId) {
     const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { oldUsers: 0 } });
-    if (!grain || !this.userId || grain.userId !== this.userId) {
-      throw new Meteor.Error(403, "Unauthorized", "User is not the owner of this grain");
-    }
+    if (grain) {
+      if (grain.userId === userId) {
+        await beforeWrite();
+        await globalDb.collections.grains.updateAsync(
+            { _id: grainId, userId: userId }, { $set: { title: newTitle } });
 
-    await globalThis.globalBackend.shutdownGrain(grainId, grain.userId, true);
-  },
+        // Denormalize new title out to all sharing tokens.
+        await globalDb.collections.apiTokens.updateAsync(
+            { grainId: grainId, "owner.user": { $exists: true } },
+            { $set: { "owner.user.upstreamTitle": newTitle } },
+            { multi: true });
+      } else {
+        const token = await globalDb.collections.apiTokens.findOneAsync({
+          grainId: grainId,
+          objectId: { $exists: false },
+          "owner.user.accountId": userId,
+        }, {
+          sort: { created: 1 }, // The oldest token is our source of truth for the name.
+        });
+        if (token && token.owner.user.title !== newTitle) {
+          await beforeWrite();
+          if (token.owner.user.upstreamTitle === newTitle) {
+            // User renamed grain to match upstream title. Act like they never renamed it at
+            // all.
+            await globalDb.collections.apiTokens.updateAsync({
+              grainId: grainId,
+              "owner.user.accountId": userId,
+            }, {
+              $set: { "owner.user.title": newTitle },
+              $unset: { "owner.user.upstreamTitle": 1, "owner.user.renamed": 1 },
+            }, {
+              multi: true,
+            });
+          } else {
+            const modification = {
+              "owner.user.title": newTitle,
+              "owner.user.renamed": true,
+            };
 
-  updateGrainTitle: async function (grainId, newTitle, obsolete) {
-    check(grainId, String);
-    check(newTitle, String);
-    if (this.userId) {
-      const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { oldUsers: 0 } });
-      if (grain) {
-        if (grain.userId === this.userId) {
-          await globalDb.collections.grains.updateAsync(
-              { _id: grainId, userId: this.userId }, { $set: { title: newTitle } });
-
-          // Denormalize new title out to all sharing tokens.
-          await globalDb.collections.apiTokens.updateAsync(
-              { grainId: grainId, "owner.user": { $exists: true } },
-              { $set: { "owner.user.upstreamTitle": newTitle } },
-              { multi: true });
-        } else {
-          const token = await globalDb.collections.apiTokens.findOneAsync({
-            grainId: grainId,
-            objectId: { $exists: false },
-            "owner.user.accountId": this.userId,
-          }, {
-            sort: { created: 1 }, // The oldest token is our source of truth for the name.
-          });
-          if (token && token.owner.user.title !== newTitle) {
-            if (token.owner.user.upstreamTitle === newTitle) {
-              // User renamed grain to match upstream title. Act like they never renamed it at
-              // all.
-              await globalDb.collections.apiTokens.updateAsync({
-                grainId: grainId,
-                "owner.user.accountId": this.userId,
-              }, {
-                $set: { "owner.user.title": newTitle },
-                $unset: { "owner.user.upstreamTitle": 1, "owner.user.renamed": 1 },
-              }, {
-                multi: true,
-              });
-            } else {
-              const modification = {
-                "owner.user.title": newTitle,
-                "owner.user.renamed": true,
-              };
-
-              if (!token.owner.user.upstreamTitle) {
-                // If `upstreamTitle` isn't present then it is equal to the old title.
-                modification["owner.user.upstreamTitle"] = token.owner.user.title;
-              }
-
-              await globalDb.collections.apiTokens.updateAsync(
-                  { grainId: grainId, "owner.user.accountId": this.userId },
-                  { $set: modification },
-                  { multi: true });
+            if (!token.owner.user.upstreamTitle) {
+              // If `upstreamTitle` isn't present then it is equal to the old title.
+              modification["owner.user.upstreamTitle"] = token.owner.user.title;
             }
+
+            await globalDb.collections.apiTokens.updateAsync(
+                { grainId: grainId, "owner.user.accountId": userId },
+                { $set: modification },
+                { multi: true });
           }
         }
       }
     }
+  }
+}
+
+// Keep existing gateway sessions so clients can reload after the app stops.
+export async function restartGrainForUser(accountId, grainId, beforeWrite = async () => {}) {
+  check(grainId, String);
+  const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { userId: 1 } });
+  if (!grain || !accountId || grain.userId !== accountId) {
+    throw new Meteor.Error(403, "Only the owner can restart this grain.");
+  }
+  await beforeWrite();
+  await globalThis.globalBackend.shutdownGrain(grainId, grain.userId, true);
+  return {};
+}
+
+Meteor.methods({
+  async newGrain(packageId, command, title) {
+    return createGrainForUser(this.userId, packageId, command, title);
+  },
+
+  async shutdownGrain(grainId) {
+    return restartGrainForUser(this.userId, grainId);
+  },
+
+  updateGrainTitle: async function (grainId, newTitle, obsolete) {
+    return renameGrainForUser(this.userId, grainId, newTitle);
   },
 
   privatizeGrain: async function (grainId) {

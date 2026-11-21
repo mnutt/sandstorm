@@ -1,5 +1,7 @@
+import { AuthorizationAttempts } from "/imports/server/rust-shell-auth-attempts.mjs";
 import Url from "url";
 import zlib from "zlib";
+import Crypto from "node:crypto";
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
@@ -100,7 +102,65 @@ const generateService = async function () {
   return service;
 };
 
-const middleware = async function (req, res, next) {
+// Native flows keep the browser request key, AuthnRequest ID, and DDP
+// login credential separate. Knowing the ID sent to the IdP cannot redeem login.
+const nativeIds = new Map();
+const nativeRequests = new AuthorizationAttempts({onRemove: (_key, request) => nativeIds.delete(request.id)});
+const nativePrefix = "_rust_";
+export const samlEnabled = () => !!Accounts.loginServices.saml?.isEnabled();
+export async function startNativeSaml(binding) {
+  if (!samlEnabled()) throw new Meteor.Error(403, "SAML service is disabled.");
+  const origin = Meteor.settings.public.rustShellOrigin;
+  if (!origin || new URL(origin).protocol !== "https:") throw new Meteor.Error(503, "Rust shell is unavailable.");
+  const key = Crypto.randomBytes(32).toString("hex");
+  const id = nativePrefix + Crypto.randomBytes(32).toString("hex");
+  const service = await generateService();
+  service.callbackUrl = Meteor.absoluteUrl("_saml/validate/default");
+  service.id = id;
+  const url = new URL(await new Promise((resolve, reject) => {
+    new SAML(service).getAuthorizeUrl({}, (error, value) => error ? reject(error) : resolve(value));
+  }));
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new Meteor.Error(400, "Invalid SAML authorization endpoint.");
+  }
+  nativeRequests.set(key, {id, binding, origin});
+  nativeIds.set(id, key);
+  return {request:key, url:url.href};
+}
+export function cancelNativeSaml(binding, key) {
+  if (nativeRequests.get(key)?.binding === binding) void nativeRequests.discard(key);
+}
+export function finishNativeSaml(binding, key) {
+  const request = nativeRequests.get(key);
+  if (!request || request.binding !== binding) throw new Meteor.Error(403, "Authorization does not belong to this session.");
+  if (request.expires <= Date.now() || !samlEnabled()) {
+    void nativeRequests.discard(key);
+    throw new Meteor.Error(403, "SAML authorization expired.");
+  }
+  if (!request.profile) return null;
+  const credentialToken = Crypto.randomBytes(32).toString("hex");
+  _loginResultForCredentialToken[credentialToken] = {profile:request.profile};
+  nativeRequests.take(key);
+  return {credentialToken};
+}
+export function discardNativeSamlCredential(credentialToken) {
+  retrieveCredential(credentialToken);
+}
+function completeNativeSaml(profile, res) {
+  const id = profile.inResponseToId || profile.InResponseTo;
+  if (typeof id !== "string" || !id.startsWith(nativePrefix)) return false;
+  const request = nativeRequests.get(nativeIds.get(id));
+  if (!request || request.expires <= Date.now() || !samlEnabled()) {
+    throw new Meteor.Error(403, "SAML authorization expired.");
+  }
+  if (request.profile) throw new Meteor.Error(403, "SAML response was already received.");
+  request.profile = profile;
+  res.writeHead(303, {Location:request.origin + "/oauth-complete", "Cache-Control":"no-store", "Referrer-Policy":"no-referrer"});
+  res.end();
+  return true;
+}
+
+export const handleSamlRequest = async function (req, res, next) {
   // Make sure to catch any exceptions because otherwise we'd crash
   // the runner
   try {
@@ -170,6 +230,8 @@ const middleware = async function (req, res, next) {
             "from the user choosing SAML login in the Sandstorm UI.");
       }
 
+      if (completeNativeSaml(profile, res)) return;
+
       _loginResultForCredentialToken[credentialToken] = {
         profile: profile,
       };
@@ -186,51 +248,58 @@ const middleware = async function (req, res, next) {
 
 // Listen to incoming OAuth http requests
 WebApp.connectHandlers.use(BodyParser.urlencoded({ extended: false })).use(function (req, res, next) {
-  middleware(req, res, next);
+  handleSamlRequest(req, res, next);
 });
+
+export async function samlLogoutUrl(accountId, {optional = false} = {}) {
+  const user = await Meteor.users.findOneAsync({ _id: accountId });
+  if (!user) {
+    throw new Meteor.Error(403, "Not logged in.");
+  }
+
+  let credential;
+  const credentials = await Meteor.users.find({
+    _id: { $in: (user.loginCredentials || []).map((_credential) => _credential.id) },
+  }).fetchAsync();
+  credentials.forEach((currCredential) => {
+    if (currCredential.services.saml) {
+      credential = currCredential;
+    }
+  });
+  if (!credential && optional) return null;
+  if (!credential) {
+    throw new Meteor.Error(400, "No SAML credential found for current user.");
+  }
+  // TODO(someday): handle user having more than one SAML credential
+
+  const service = await generateService();
+  if (!service.logoutUrl) throw new Meteor.Error(500, "No SAML logout url specified");
+  const _saml = new SAML(service);
+  const url = await new Promise((resolve, reject) => {
+    _saml.getLogoutUrl({
+      user: {
+        nameID: credential.services.saml.id,
+        nameIDFormat: credential.services.saml.nameIDFormat ||
+          "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+      },
+    }, (err, url) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(url);
+      }
+    });
+  });
+  const parsed = new URL(url);
+  if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
+    throw new Meteor.Error(400, "Invalid SAML logout URL.");
+  }
+  return parsed.href;
+}
 
 Meteor.methods({
   async generateSamlLogout() {
-    const service = await generateService();
-    if (!service.logoutUrl) {
-      throw new Meteor.Error(500, "No SAML logout url specified");
-    }
-
-    const _saml = new SAML(service);
-    const user = await Meteor.users.findOneAsync({ _id: this.userId });
-    if (!user) {
-      throw new Meteor.Error(403, "Not logged in.");
-    }
-
-    let credential;
-    const credentials = await Meteor.users.find({
-      _id: { $in: user.loginCredentials.map((_credential) => _credential.id) },
-    }).fetchAsync();
-    credentials.forEach((currCredential) => {
-      if (currCredential.services.saml) {
-        credential = currCredential;
-      }
-    });
-    if (!credential) {
-      throw new Meteor.Error(400, "No SAML credential found for current user.");
-    }
-    // TODO(someday): handle user having more than one SAML credential
-
-    return await new Promise((resolve, reject) => {
-      _saml.getLogoutUrl({
-        user: {
-          nameID: credential.services.saml.id,
-          nameIDFormat: credential.services.saml.nameIDFormat ||
-            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
-        },
-      }, (err, url) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(url);
-        }
-      });
-    });
+    return samlLogoutUrl(this.userId);
   },
 
   validateSamlLogout: async function (samlRequest) {

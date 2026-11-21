@@ -179,6 +179,33 @@ function(sandstorm_add_packaging_targets)
 
   set(_bundle_dir "${CMAKE_BINARY_DIR}/bundle")
   set(_bundle_stamp "${CMAKE_BINARY_DIR}/bundle.stamp")
+  set(_rust_shell_dependencies)
+  set(_rust_shell_dir "")
+  if(SANDSTORM_BUILD_RUST_SHELL)
+    find_program(SANDSTORM_CARGO_EXECUTABLE cargo REQUIRED)
+    find_program(SANDSTORM_NPM_EXECUTABLE npm REQUIRED)
+    set(_rust_shell_dir "${PROJECT_SOURCE_DIR}/rust-shell")
+    set(_rust_stamp "${CMAKE_BINARY_DIR}/rust-shell.stamp")
+    file(GLOB_RECURSE _rust_sources CONFIGURE_DEPENDS
+      "${_rust_shell_dir}/server/*" "${_rust_shell_dir}/schema/*"
+      "${_rust_shell_dir}/frontend/src/*.ts" "${_rust_shell_dir}/frontend/src/*.svelte"
+      "${_rust_shell_dir}/frontend/src/*.css" "${_rust_shell_dir}/frontend/public/*")
+    list(FILTER _rust_sources EXCLUDE REGEX "/generated/")
+    add_custom_command(OUTPUT "${_rust_stamp}"
+      COMMAND "${SANDSTORM_NPM_EXECUTABLE}" ci --ignore-scripts
+      COMMAND "${SANDSTORM_NPM_EXECUTABLE}" run build
+      COMMAND "${SANDSTORM_CARGO_EXECUTABLE}" build --locked --release
+        --manifest-path "${_rust_shell_dir}/Cargo.toml"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${_rust_stamp}"
+      WORKING_DIRECTORY "${_rust_shell_dir}/frontend"
+      DEPENDS ${_rust_sources}
+        "${_rust_shell_dir}/Cargo.toml" "${_rust_shell_dir}/Cargo.lock"
+        "${_rust_shell_dir}/frontend/package.json" "${_rust_shell_dir}/frontend/package-lock.json"
+        "${_rust_shell_dir}/frontend/index.html" "${_rust_shell_dir}/frontend/vite.config.ts"
+        "${_rust_shell_dir}/frontend/tsconfig.json"
+      COMMENT "Building the experimental Rust shell" VERBATIM)
+    set(_rust_shell_dependencies "${_rust_stamp}")
+  endif()
   file(GLOB _bundle_capnp_schemas CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/capnp/*.capnp"
     "${PROJECT_SOURCE_DIR}/src/sandstorm/*.capnp")
@@ -191,6 +218,7 @@ function(sandstorm_add_packaging_targets)
       "SANDSTORM_SHELL_BUILD_DIR=${CMAKE_BINARY_DIR}/shell-build"
       "SANDSTORM_BUNDLE_DIR=${_bundle_dir}"
       "SANDSTORM_WORK_DIR=${CMAKE_BINARY_DIR}/bundle-work"
+      "SANDSTORM_RUST_SHELL_DIR=${_rust_shell_dir}"
       "${PROJECT_SOURCE_DIR}/make-bundle.sh"
     COMMAND "${CMAKE_COMMAND}" -E touch "${_bundle_stamp}"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
@@ -209,6 +237,7 @@ function(sandstorm_add_packaging_targets)
       "${PROJECT_SOURCE_DIR}/localedata-C"
       "${PROJECT_SOURCE_DIR}/meteor-bundle-main.js"
       ${_bundle_capnp_schemas}
+      ${_rust_shell_dependencies}
     COMMENT "Assembling the Sandstorm bundle"
     VERBATIM)
   add_custom_target(bundle DEPENDS "${_bundle_stamp}")

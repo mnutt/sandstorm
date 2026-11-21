@@ -3053,19 +3053,21 @@ if (Meteor.isServer) {
     // obsolete
   };
 
-  SandstormDb.prototype.upgradeGrains = async function (appId, version, packageId, backend) {
+  SandstormDb.prototype.upgradeGrains = async function (appId, version, packageId, backend, accountId = Meteor.userId(), beforeWrite = async () => {}) {
     check(appId, String);
     check(version, Match.Integer);
     check(packageId, String);
 
+    check(accountId, String);
     const selector = {
-      userId: Meteor.userId(),
+      userId: accountId,
       appId: appId,
       appVersion: { $lte: version },
       packageId: { $ne: packageId },
     };
 
     const grains = await this.collections.grains.find(selector, {fields: {oldUsers: 0}}).fetchAsync();
+    await beforeWrite();
     grains.forEach((grain) => {
       backend.shutdownGrain(grain._id, grain.userId);
     });

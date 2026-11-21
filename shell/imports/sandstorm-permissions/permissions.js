@@ -2013,27 +2013,22 @@ Meteor.methods({
   async updateApiToken(token, newFields) {
     const db = this.connection.sandstormDb;
 
-    check(token, String);
-    check(newFields, { petname: Match.Optional(String),
-                      roleAssignment: Match.Optional(db.roleAssignmentPattern),
-                      revoked: Match.Optional(Boolean),
-                      suspended: Match.Optional(Boolean), });
-
-    if (!this.userId) {
-      throw new Meteor.Error(403, "Must be logged in to modify a token");
-    }
+    if (!this.userId) throw new Meteor.Error(403, "Must be logged in to modify a token");
     const accountId = await resolveAccountIdForTokenOps(this.userId);
-
-    const apiToken = await db.collections.apiTokens.findOneAsync(token);
-    if (!apiToken) {
-      throw new Meteor.Error(404, "No such token found.");
-    }
-
-    if (apiToken.accountId === accountId) {
-      const modifier = { $set: newFields };
-      await db.collections.apiTokens.updateAsync(token, modifier);
-    } else {
-      throw new Meteor.Error(403, "User not authorized to modify this token.");
-    }
+    return updateApiTokenForAccount(db, accountId, token, newFields);
   },
 });
+
+// Shared by the Meteor method and grain-scoped Rust shell adapter.
+export async function updateApiTokenForAccount(db, accountId, token, newFields, beforeWrite = async () => {}) {
+  check(token, String);
+  check(newFields, { petname: Match.Optional(String),
+    roleAssignment: Match.Optional(db.roleAssignmentPattern),
+    revoked: Match.Optional(Boolean), suspended: Match.Optional(Boolean) });
+  if (!accountId) throw new Meteor.Error(403, "Must be logged in to modify a token");
+  const apiToken = await db.collections.apiTokens.findOneAsync(token);
+  if (!apiToken) throw new Meteor.Error(404, "No such token found.");
+  if (apiToken.accountId !== accountId) throw new Meteor.Error(403, "User not authorized to modify this token.");
+  await beforeWrite();
+  await db.collections.apiTokens.updateAsync({ _id: token, accountId }, { $set: newFields });
+}

@@ -1,7 +1,8 @@
 @use "grainlist/styles/primitives/colors" as grainlist-colors;
 @use "mixins/media" as media;
 
-.topbar-popup.request>.frame-container>.frame {
+.topbar-popup.request>.frame-container>.frame,
+.rust-shell-powerbox .chooser {
   >.search-row {
     flex: none;
     display: inline-block;
