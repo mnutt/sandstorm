@@ -565,3 +565,22 @@ test('grain management binds the account and rechecks cancellation before writin
   await assert.rejects(bridge.handle('manageGrain',{token,grainId:'grain',operation:'restore'}),{status:401});
   assert.equal(writes.length,1);
 });
+
+test('a restart completed during login revocation is reported as uncertain and is not replayed', async () => {
+  let allowed = true;
+  let restarts = 0;
+  const bridge = createRustShellBridge({
+    authorize: async () => allowed ? {name:'Alice',expires:Date.now()+60000} : null,
+    manageGrain: async (account, id, operation, beforeWrite) => {
+      assert.deepEqual([account,id,operation], ['alice','grain','restart']);
+      await beforeWrite();
+      restarts++;
+      allowed = false;
+      return {};
+    },
+  });
+  const state = 'b'.repeat(64), code = await bridge.issue('alice','hash',state);
+  const {token} = await bridge.handle('exchange',{code,state});
+  await assert.rejects(bridge.handle('manageGrain',{token,grainId:'grain',operation:'restart'}), {status:500});
+  assert.equal(restarts,1);
+});

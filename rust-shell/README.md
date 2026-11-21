@@ -844,6 +844,15 @@ build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk` pass
 
 ## Grain management
 
+Owned grains have a native **Restart app** toolbar control that acts immediately,
+matching the legacy shell.
+`GrainHandle.restart()` uses the same owner check and session-preserving shutdown
+as the legacy `shutdownGrain` method. The bridge checks login authority immediately
+before shutdown and confirms it afterward. Only a confirmed success reloads the
+caller's iframe, preserving its current path, query, fragment, and session. Failed
+or uncertain operations are displayed beside the app and are never replayed.
+The `GrainView.owned` field is an advisory UI hint, not authorization.
+
 The Grains and Trash pages support page-local selection, bulk trash/restore, and
 confirmed permanent deletion. Deleting an owned grain removes its data; deleting
 a shared grain only forgets that account's saved access. Batches stop on the first

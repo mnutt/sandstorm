@@ -8,7 +8,7 @@ export async function rustGrainTitles(db, accountId, grainId) {
   const staticPrefix = new URL(process.env.ROOT_URL).protocol + "//" + db.makeWildcardHost("static");
   if (grain) {
     const pkg = grain.packageId && await db.collections.packages.findOneAsync(grain.packageId);
-    return { title: grain.title, ownerTitle: grain.title,
+    return { owned: true, title: grain.title, ownerTitle: grain.title,
       iconSrc: pkg ? iconSrcForPackage(pkg, "grain", staticPrefix) : "" };
   }
   const token = await db.collections.apiTokens.findOneAsync({ grainId,
@@ -16,7 +16,7 @@ export async function rustGrainTitles(db, accountId, grainId) {
     { sort: { created: 1, _id: 1 }, fields: { "owner.user": 1 } });
   const fullTitle = token ? computeTitleFromTokenOwnerUser(token.owner.user) : { title: "shared grain" };
   const metadata = token?.owner.user.denormalizedGrainMetadata;
-  return { title: fullTitle.title, ownerTitle: fullTitle.renamedFrom ?? fullTitle.title,
+  return { owned: false, title: fullTitle.title, ownerTitle: fullTitle.renamedFrom ?? fullTitle.title,
     iconSrc: metadata ? iconSrcForDenormalizedGrainMetadata(metadata, "grain", staticPrefix) : "" };
 }
 

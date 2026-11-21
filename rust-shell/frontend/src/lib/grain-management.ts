@@ -1,6 +1,6 @@
 import type { ShellConnection } from './connection';
 import { unwrap } from './results';
-export type GrainOperation = 'trash' | 'restore' | 'remove';
+export type GrainOperation = 'trash' | 'restore' | 'remove' | 'restart';
 export async function changeGrain(connection:ShellConnection,id:string,operation:GrainOperation) {
   const handle=connection.shell.grain(p=>{p.grainId=id;}).getHandle();
   try { unwrap((await connection.run(handle[operation]().promise(),'Update grain')).result); }

@@ -33,6 +33,12 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   // The test app deliberately serves only the literal root path, without a query.
   browser.execute(function () { location.replace('/'); })
     .waitForElementPresent('#do-test-system-api', utils.medium_wait);
+  operation(browser, 'restart');
+  browser.execute(function () {
+    const frame = document.getElementById('rust-session-test');
+    const target = new URL(frame.src); target.searchParams.set('path', '/');
+    frame.src = target.href;
+  }).frameSelector('#rust-session-test').waitForElementPresent('#do-test-system-api', utils.medium_wait).frame(null);
   // Exercise the actual Meteor chooser against the leased session. This isolated
   // server uses the main origin as the simulated Rust opener; the HTTPS browser
   // suite separately verifies the cross-origin handoff.

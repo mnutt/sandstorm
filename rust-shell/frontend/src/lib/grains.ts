@@ -84,6 +84,7 @@ export class GrainService {
       this.session = result.session;
       this.active = {
         ready: false,
+        owned: result.view.owned,
         iconSrc: result.view.iconSrc || known?.iconSrc || '',
         grainId, path, origin: result.view.origin, url: url.href,
         title: result.view.title || known?.title || 'Grain',

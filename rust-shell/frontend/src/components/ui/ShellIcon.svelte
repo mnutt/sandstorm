@@ -1,11 +1,13 @@
 <script lang="ts">
-  let { name, toolbar = false }: { toolbar?: boolean; name: 'trash' | 'apps' | 'grains' | 'external' | 'sidebar' | 'pencil' | 'close' | 'share' | 'users' | 'bell' } = $props();
+  let { name, toolbar = false }: { toolbar?: boolean; name: 'restart' | 'trash' | 'apps' | 'grains' | 'external' | 'sidebar' | 'pencil' | 'close' | 'share' | 'users' | 'bell' } = $props();
 </script>
 <svg aria-hidden="true" width={toolbar ? 18 : 20} height={toolbar ? 18 : 20} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={toolbar ? 1.8 : 1.6} stroke-linecap={toolbar ? 'round' : 'square'} stroke-linejoin={toolbar ? 'round' : 'miter'}>
   {#if name === 'apps'}
     <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
   {:else if name === 'grains'}
     <path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8M8 16h6" />
+  {:else if name === 'restart'}
+    <path d="M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7M20 12l-4-4" />
   {:else if name === 'trash'}
     <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />
   {:else if name === 'external'}

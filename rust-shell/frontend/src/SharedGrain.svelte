@@ -82,7 +82,7 @@
       if (url.origin !== result.view.origin || url.protocol !== 'https:' || url.username || url.password || url.origin === location.origin) throw new Error('Invalid shared grain origin.');
       url.searchParams.set('path',path);
       grain = {ready:false,grainId:result.view.grainId,path,url:url.href,origin:result.view.origin,title:result.view.title || info.title,
-        ownerTitle:result.view.ownerTitle,iconSrc:result.view.iconSrc,mainHref:result.view.mainHref};
+        owned:false,ownerTitle:result.view.ownerTitle,iconSrc:result.view.iconSrc,mainHref:result.view.mainHref};
       metadataChanged(grain.title, grain.iconSrc);
       phase = 'open';
       void session.whenReady().promise().then(response => {

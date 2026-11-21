@@ -65,6 +65,7 @@ impl api::view_reference::Server for ViewReference {
         out.set_owner_title(&view.owner_title);
         out.set_icon_src(&view.icon_src);
         out.set_main_href(&view.main_href);
+        out.set_owned(view.owned);
         Ok(())
     }
 }
@@ -144,6 +145,21 @@ impl api::grain_handle::Server for GrainHandle {
         mut results: api::grain_handle::RemoveResults,
     ) -> capnp::Result<()> {
         match self.change("remove").await {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+    async fn restart(
+        self: Rc<Self>,
+        _: api::grain_handle::RestartParams,
+        mut results: api::grain_handle::RestartResults,
+    ) -> capnp::Result<()> {
+        match self.change("restart").await {
             Ok(_) => {
                 results.get().init_result().init_value();
                 Ok(())

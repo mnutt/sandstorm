@@ -24,6 +24,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
   let vitePort;
   const liveGrains = new Set();
   const grainStates=new Map(), grainSessions=new Map();
+  let restarts=0;
   let managementFailure=false;
   const responseReady = new Set(), responseEvents = new EventEmitter(), heldAssets = new Set();
   let stallAssets = false;
@@ -168,7 +169,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
         if (![`${id}-grain`, `${id}-hidden`, `${id}-created`, `${id}-extra`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
         const handle = ++serial; liveGrains.add(handle); grainSessions.set(handle,grainId);
-        return { handle, view: { grainId, iconSrc: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect width="24" height="24" fill="orange"/%3E%3C/svg%3E', title: grainId.endsWith('-hidden') ? 'Hidden grain' : grainId.endsWith('-extra') ? 'Zebra shared' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
+        return { handle, view: { grainId, owned: !grainId.endsWith('-extra'), iconSrc: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect width="24" height="24" fill="orange"/%3E%3C/svg%3E', title: grainId.endsWith('-hidden') ? 'Hidden grain' : grainId.endsWith('-extra') ? 'Zebra shared' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
       close: async (handle) => { liveGrains.delete(handle); },
@@ -202,6 +203,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       await beforeWrite();
       if(managementFailure && id==='alice-extra') throw Object.assign(new Error('You cannot change this grain.'),{status:403});
       assert.ok(id.startsWith(account+'-'));
+      if(operation==='restart') { assert.ok(!id.endsWith('-extra')); restarts++; return {}; }
       if(operation==='remove') assert.equal(state,'trashed');
       grainStates.set(id,operation==='trash'?'trashed':operation==='restore'?'active':'unavailable');
       if(operation!=='restore') for(const [handle,key] of grainSessions) if(key===id)liveGrains.delete(handle);
@@ -745,6 +747,17 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await management.goto(proxy.origin+'/grains');
     await management.getByRole('link',{name:'Alice grain',exact:true}).click();
     await management.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    const beforeRestart = await management.locator('iframe').getAttribute('src');
+    await management.frameLocator('iframe').getByLabel('App state').fill('unsaved');
+    await management.frameLocator('iframe').locator('body').evaluate(()=>parent.postMessage({setPath:'/current?edit=1#section'},'*'));
+    await management.waitForURL('**/grain/alice-grain/current?edit=1#section');
+    await management.getByRole('button',{name:'Restart app',exact:true}).click();
+    await expect.poll(()=>restarts).toBe(1);
+    await expect(management.frameLocator('iframe').getByLabel('App state')).toHaveValue('');
+    const afterRestart = new URL(await management.locator('iframe').getAttribute('src'));
+    assert.equal(afterRestart.searchParams.get('sessionid'),new URL(beforeRestart).searchParams.get('sessionid'));
+    assert.equal(afterRestart.searchParams.get('path'),'/current?edit=1#section');
+
     await management.getByRole('link',{name:'Grains',exact:true}).click();
     await management.getByLabel('Sort by',{exact:true}).selectOption('title');
     await management.getByRole('checkbox',{name:'Select all shown grains'}).check();

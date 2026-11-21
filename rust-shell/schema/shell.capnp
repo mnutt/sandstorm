@@ -74,6 +74,7 @@ struct GrainView {
   mainHref @4 :Text;
   ownerTitle @5 :Text;
   iconSrc @6 :Text;
+  owned @7 :Bool; # Advisory UI hint; management operations recheck ownership.
 }
 interface GrainSession {
   sharing @0 () -> (sharing :Sharing);
@@ -528,4 +529,6 @@ interface GrainHandle {
   restore @2 () -> (result :Result(Empty));
   remove @3 () -> (result :Result(Empty));
   # Permanently deletes owned trashed grains; forgets the caller's trashed shares.
+  restart @4 () -> (result :Result(Empty));
+  # Owner-only shutdown preserving sessions; caller reloads its iframe on success.
 }

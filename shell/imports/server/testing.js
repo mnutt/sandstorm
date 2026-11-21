@@ -64,7 +64,7 @@ import {
 import { closeRustSharedGrainSession, keepRustSharedGrainSession, inspectRustSharedGrain, createRustSharedGrainSession, createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { SandstormPermissions } from "/imports/sandstorm-permissions/permissions";
 import { rustShellBridge, rustShellSessionStore, authorizeRustShellAccount } from "/imports/server/rust-shell-bridge";
-import { renameGrainForUser } from "/imports/server/grain-server";
+import { renameGrainForUser, restartGrainForUser } from "/imports/server/grain-server";
 import { runDueJobs } from "/imports/server/scheduled-job";
 import {
   Downloader,
@@ -2636,6 +2636,22 @@ if(isTesting) {
         return { url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" };
       }
       if (!record) throw new Meteor.Error(404, "No test session");
+      if (operation === "restart") {
+        for (const accountId of [null, "other-account"]) {
+          let denied = false;
+          try { await restartGrainForUser(accountId, grainId); }
+          catch (error) { denied = error.error === 403; }
+          if (!denied) throw new Error("Non-owner restart accepted");
+        }
+        let guarded = false;
+        try { await restartGrainForUser(this.userId, grainId, async () => { throw new Error("Canceled restart"); }); }
+        catch (error) { guarded = error.message === "Canceled restart"; }
+        if (!guarded) throw new Error("Restart bypassed authority guard");
+        await restartGrainForUser(this.userId, grainId);
+        await keepRustGrainSession(globalDb, record);
+        return true;
+      }
+
       if (operation === "template") {
         const discovery = { resources: { "/status.php": { type: "text/json", language: "en",
           body: JSON.stringify({ installed: true, maintenance: false, version: "9.1.0.14", versionstring: "9.1.0 RC4", edition: "" }) } },

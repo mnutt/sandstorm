@@ -240,7 +240,7 @@ export function createRustShellBridge({ authorize, nativeAuth, logoutDestination
       }
       if (action === "manageGrain") {
         if (!manageGrain || typeof input.grainId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(input.grainId) ||
-            !['read','trash','restore','remove'].includes(input.operation)) throw Object.assign(new Error('Invalid grain action.'),{status:400});
+            !['read','trash','restore','remove','restart'].includes(input.operation)) throw Object.assign(new Error('Invalid grain action.'),{status:400});
         const beforeWrite = async () => {
           await session(input.token);
           if (signal.aborted) throw Object.assign(new Error('Grain action disconnected.'),{status:409});

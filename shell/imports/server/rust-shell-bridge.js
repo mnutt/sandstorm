@@ -21,7 +21,7 @@ import { computeTitleFromTokenOwnerUser } from "/imports/shared/grain-title";
 import { inspectRustSharedGrain, createRustSharedGrainSession, keepRustSharedGrainSession, closeRustSharedGrainSession, createRustTemplateToken, rustGrainPowerboxContext, createRustGrainSession, keepRustGrainSession, closeRustGrainSession } from "/imports/server/gateway-router";
 import { grainMenu, rustGrainTitles } from "/imports/server/rust-shell-grains";
 import { rustAppActions, createRustGrain } from "/imports/server/rust-shell-apps";
-import { renameGrainForUser } from "/imports/server/grain-server";
+import { renameGrainForUser, restartGrainForUser } from "/imports/server/grain-server";
 import { globalDb } from "/imports/db-deprecated";
 import { dismissNotificationForUser, readNotificationsForUser } from "/imports/server/core";
 import { createRustShellBridge, bridgeHandler } from "./rust-shell-bridge-core.mjs";
@@ -76,7 +76,9 @@ export const rustShellBridge = createRustShellBridge({
   listApps: rustAppActions,
   install: rustInstall,
   createGrain: createRustGrain,
-  manageGrain: manageGrainForUser,
+  manageGrain: (accountId, grainId, operation, beforeWrite) => operation === "restart"
+    ? restartGrainForUser(accountId, grainId, beforeWrite)
+    : manageGrainForUser(accountId, grainId, operation, beforeWrite),
   sessionStore: rustShellSessionStore,
   shared: {
     inspect: webkey => inspectRustSharedGrain(globalDb,webkey),
@@ -105,7 +107,7 @@ export const rustShellBridge = createRustShellBridge({
       const session = await createRustGrainSession(globalDb, accountId, grainId, parentOrigin);
       const origin = new URL(process.env.ROOT_URL).protocol + "//" + globalDb.makeWildcardHost("ui-" + session.hostId);
       return { handle: { sessionId: session._id, accountId, grainId },
-        view: { grainId, origin, title, ownerTitle, iconSrc: titles.iconSrc, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
+        view: { grainId, origin, title, ownerTitle, owned: titles.owned, iconSrc: titles.iconSrc, mainHref: new URL("/grain/" + encodeURIComponent(grainId), process.env.ROOT_URL).href, url: origin + "/_sandstorm-init?sessionid=" + session._id + "&path=%2F" } };
     },
     waitForResponse: (handle, signal) => waitForGrainResponse(globalDb, handle, signal),
     keep: (handle) => keepRustGrainSession(globalDb, handle),

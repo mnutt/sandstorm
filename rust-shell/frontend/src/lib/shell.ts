@@ -92,7 +92,7 @@ export class ShellService {
   async manageGrain(id:string,operation:GrainOperation) {
     const account=this.accountKey;
     await changeGrain(this.connection,id,operation);
-    if (account === this.accountKey && operation !== 'restore') this.grains.close(id);
+    if (account === this.accountKey && (operation === 'trash' || operation === 'remove')) this.grains.close(id);
   }
   restoreWorkspace(current?:string) { this.grains.restore(this.state.grains,current); }
   selectGrain(id: string | null) { this.grains.select(id); }

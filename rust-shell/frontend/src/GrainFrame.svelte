@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { applicationErrorMessage } from './lib/results';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import { portal } from './lib/portal';
   import GrainIcon from './components/ui/GrainIcon.svelte';
@@ -16,18 +17,45 @@
   import { sharingRequest, type SharingRequest, type SharingActions } from './lib/sharing';
   import { record, GrainTitleSubscriptions } from './lib/protocol';
   import type { ActiveGrain } from './lib/shell';
-  let { grain, active, toolbarTarget, canManage = true, sharingActions, powerboxActions, renderTemplate, pathChanged, rename }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; sharingActions?: SharingActions; powerboxActions?: PowerboxActions; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
+  let { grain, active, toolbarTarget, canManage = true, sharingActions, powerboxActions, renderTemplate, pathChanged, rename, restart }: { grain: ActiveGrain; active: boolean; toolbarTarget: HTMLElement; canManage?:boolean; restart?: () => Promise<void>; sharingActions?: SharingActions; powerboxActions?: PowerboxActions; renderTemplate: (input: unknown) => Promise<string>; pathChanged: (path: string) => void; rename: (title: string) => Promise<void> } = $props();
   let frame: HTMLIFrameElement;
+  let restarting = $state(false);
+  let restartError = $state('');
+  let reloadPending = $state(false);
+  async function restartApp() {
+    if (!restart || restarting) return;
+    restarting = true;
+    restartError = '';
+    try {
+      await restart();
+      if (frame?.isConnected) {
+        const url = new URL(grain.url);
+        url.searchParams.set('path', path);
+        showFrame = false;
+        reloadPending = true;
+        frame.src = url.href;
+      }
+    } catch (error) {
+      restartError = applicationErrorMessage(error, 'Could not confirm restart. Check the app before trying again.');
+    } finally {
+      restarting = false;
+    }
+  }
+
   let frameTitle = $state('');
   const frameUrl = $derived(grain.url);
   let frameLoaded = $state(false);
   let slow = $state(false);
   let showFrame = $state(false);
+  const loading = $derived(reloadPending || (!grain.ready && !frameLoaded));
   $effect(() => {
     frameUrl;
     frameLoaded = false;
-    slow = false;
     showFrame = false;
+  });
+  $effect(() => {
+    slow = false;
+    if (!loading) return;
     const timer = setTimeout(() => { slow = true; }, 15000);
     return () => clearTimeout(timer);
   });
@@ -128,6 +156,10 @@
       </div>{/if}
     </div>
     {#if canManage}<div class="grain-actions">
+      {#if grain.owned && restart}
+        <Button variant="chrome" aria-label="Restart app" title={restarting ? 'Restarting…' : 'Restart app'}
+          disabled={restarting || reloadPending} onclick={restartApp}><ShellIcon name="restart" toolbar /></Button>
+      {/if}
       <Button variant="chrome" aria-label="Share" title="Share" onclick={() => { showSharing('share'); }}><ShellIcon name="share" toolbar /></Button>
       <Button variant="chrome" aria-label="Who has access" title="Who has access" onclick={() => { showSharing('access'); }}><ShellIcon name="users" toolbar /></Button>
     </div>{/if}
@@ -138,9 +170,10 @@
   {#if choosing}<div role="status"><p>This app wants you to choose a capability.</p>
     <Button onclick={() => chooser.open()}>Choose in Sandstorm</Button>
     <Button onclick={() => chooser.cancel()}>Cancel request</Button></div>{/if}
+  {#if restartError}<p role="alert">{restartError}</p>{/if}
   <div class="frame-stage">
-    <iframe bind:this={frame} title={grain.title} src={frameUrl} referrerpolicy="no-referrer" aria-busy={!grain.ready && !frameLoaded} onload={() => { frameLoaded = true; }}></iframe>
-    {#if !grain.ready && !frameLoaded && !showFrame}
+    <iframe bind:this={frame} title={grain.title} src={frameUrl} referrerpolicy="no-referrer" aria-busy={loading} onload={() => { frameLoaded = true; reloadPending = false; }}></iframe>
+    {#if loading && !showFrame}
       <div class="frame-loading">
         <LoadingStatus label={slow ? 'Still loading this app…' : 'Loading app…'} detail={slow ? 'The app is taking longer than usual. You can show its content while it finishes loading.' : grain.title} />
         {#if slow}<Button variant="secondary" onclick={() => { showFrame = true; }}>Show app</Button>{/if}

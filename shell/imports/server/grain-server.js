@@ -466,19 +466,25 @@ export async function renameGrainForUser(userId, grainId, newTitle, beforeWrite 
   }
 }
 
+// Keep existing gateway sessions so clients can reload after the app stops.
+export async function restartGrainForUser(accountId, grainId, beforeWrite = async () => {}) {
+  check(grainId, String);
+  const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { userId: 1 } });
+  if (!grain || !accountId || grain.userId !== accountId) {
+    throw new Meteor.Error(403, "Only the owner can restart this grain.");
+  }
+  await beforeWrite();
+  await globalThis.globalBackend.shutdownGrain(grainId, grain.userId, true);
+  return {};
+}
+
 Meteor.methods({
   async newGrain(packageId, command, title) {
     return createGrainForUser(this.userId, packageId, command, title);
   },
 
   async shutdownGrain(grainId) {
-    check(grainId, String);
-    const grain = await globalDb.collections.grains.findOneAsync(grainId, { fields: { oldUsers: 0 } });
-    if (!grain || !this.userId || grain.userId !== this.userId) {
-      throw new Meteor.Error(403, "Unauthorized", "User is not the owner of this grain");
-    }
-
-    await globalThis.globalBackend.shutdownGrain(grainId, grain.userId, true);
+    return restartGrainForUser(this.userId, grainId);
   },
 
   updateGrainTitle: async function (grainId, newTitle, obsolete) {
