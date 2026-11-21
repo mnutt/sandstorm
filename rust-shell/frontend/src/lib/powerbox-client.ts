@@ -6,8 +6,8 @@ import type { PowerboxActions, PowerboxState } from './powerbox-native';
 
 function state(value: WireState): PowerboxState {
   if (value._isChoices) return {status:'choices',limited:value.choices.limited,legacy:value.choices.legacy,
-    candidates:[...value.choices.candidates].map(c=>({key:c.key,title:c.title,detail:c.detail,iconSrc:c.iconSrc,
-      uiView:c.uiView,hostedObject:c.hostedObject,urlInput:c.urlInput,emailInput:c.emailInput,oauthProvider:c.oauthProvider === HttpOAuthProvider.GITHUB ? 'github' as const : c.oauthProvider === HttpOAuthProvider.GOOGLE ? 'google' as const : undefined,
+    candidates:[...value.choices.candidates].map(c=>({key:c.key,title:c.title,disabledReason:c.disabledReason,detail:c.detail,iconSrc:c.iconSrc,
+      identity:c.identity,uiView:c.uiView,hostedObject:c.hostedObject,urlInput:c.urlInput,emailInput:c.emailInput,oauthProvider:c.oauthProvider === HttpOAuthProvider.GITHUB ? 'github' as const : c.oauthProvider === HttpOAuthProvider.GOOGLE ? 'google' as const : undefined,
       roles:[...c.roles].map(r=>({key:r.key,title:r.title}))}))};
   if (value._isProvider) return {status:'provider',title:value.provider.title,origin:value.provider.origin,url:value.provider.url};
   if (value._isOauth) return {status:'oauth',request:value.oauth.request,url:value.oauth.url};
@@ -57,6 +57,7 @@ export class PowerboxRequests {
     const request=operation==='poll' ? client.poll() : client.select(p=>{
       const selection=p._initSelection();selection.key=String(input.key || '');
       switch(input.mode) {
+        case 'identity':selection.identity=String(input.role || '');break;
         case 'view':selection.view=String(input.role || '');break;
         case 'hosted':selection.hosted=true;break;
         case 'webkey':selection.webkey=String(input.url || '');break;

@@ -290,6 +290,8 @@ struct PowerboxCandidate {
   emailInput @7 :Bool;
   oauthProvider @8 :HttpOAuthProvider;
   roles @9 :List(PowerboxRole);
+  identity @10 :Bool;
+  disabledReason @11 :Text;
 }
 struct PowerboxChoices { candidates @0 :List(PowerboxCandidate); limited @1 :Bool; legacy @2 :Bool; }
 struct PowerboxProvider { title @0 :Text; origin @1 :Text; url @2 :Text; }
@@ -318,6 +320,7 @@ struct PowerboxSelection {
     verifyEmail @7 :Text;
     startOAuth @8 :Void;
     finishOAuth @9 :Void;
+    identity @10 :Text; # Permission role for sharing the requesting grain with a person.
   }
 }
 interface PowerboxRequest {

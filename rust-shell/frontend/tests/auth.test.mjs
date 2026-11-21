@@ -138,8 +138,10 @@ test('authenticated notifications: handoff, shared writes, account switching and
     grains: {
       waitForResponse,
       powerbox: {
-        open: async () => ({handle:{},view:{status:'choices',candidates:[{key:'google',title:'Connect to Google',oauthProvider:'google',detail:'Read your Drive files'},{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:true}}),
+        open: async (_parent,input) => ({handle:{},view:{status:'choices',candidates:[{key:'disabled',title:'Disabled Google',oauthProvider:'google',disabledReason:'An administrator must enable Google.'},{key:'person',title:'Pat Example',identity:true,roles:[{key:'2',title:'Contributor'}]},{key:'url',title:'Connect to a URL',urlInput:true},{key:'google',title:'Connect to Google',oauthProvider:'google',detail:'Read your Drive files'},{key:'provider',title:'Test provider',hostedObject:true},{key:'view',title:'Whole grain',uiView:true,roles:[]}],limited:false,legacy:!input.query.includes('supported')}}),
         select: async (request, input) => {
+          if (input.key === 'person') { assert.equal(input.mode,'identity'); assert.equal(input.role,'2'); return {status:'complete',token:'native-identity-token'}; }
+          if (input.key === 'url') { assert.equal(input.mode,'url'); assert.equal(input.url,'https://example.com/#bearer-secret'); return {status:'complete',token:'native-url-token'}; }
           if (input.key === 'google') {
             if(input.mode === 'oauthStart') {oauthReady.google=false;return {status:'oauth',request:'a'.repeat(64),url:oauthUrl('google')};}
             assert.equal(input.mode,'oauthFinish');
@@ -1032,6 +1034,22 @@ test('authenticated notifications: handoff, shared writes, account switching and
 
     // Native selection and embedded provider completion do not open a popup.
     const nativeDialog = page.getByRole('dialog',{name:'Connect an app',exact:true});
+    for (const kind of ['identity','url']) {
+      await app.evaluate(kind => parent.postMessage({powerboxRequest:{rpcId:'native-'+kind,query:['supported']}},'*'),kind);
+      await expect(nativeDialog.getByRole('button',{name:'More options in main shell'})).toHaveCount(0);
+      if (kind === 'identity') {
+        await nativeDialog.getByRole('button',{name:'Disabled Google',exact:true}).click();
+        await expect(nativeDialog.getByRole('status')).toContainText('An administrator must enable Google.');
+        await expect(nativeDialog.getByRole('button',{name:'Authorize Google'})).toBeDisabled();
+        await nativeDialog.getByRole('button',{name:'Back',exact:true}).click();
+      }
+      await nativeDialog.getByRole('button',{name:kind === 'identity' ? 'Pat Example' : 'Connect to a URL',exact:true}).click();
+      if (kind === 'identity') await expect(nativeDialog.getByLabel('Connection permissions')).toHaveValue('2');
+      else await nativeDialog.getByLabel('URL',{exact:true}).fill('https://example.com/#bearer-secret');
+      await nativeDialog.getByRole('button',{name:kind === 'identity' ? 'Share with person' : 'Allow connection',exact:true}).click();
+      await expect.poll(() => app.evaluate(() => window.reply?.token)).toBe('native-'+kind+'-token');
+      await expect(nativeDialog).toHaveCount(0);
+    }
     for (const mode of ['view','provider','cancel-provider']) {
       await app.evaluate(mode => parent.postMessage({powerboxRequest:{rpcId:'native-'+mode,query:[]}},'*'), mode);
       await nativeDialog.getByRole('button',{name:mode === 'view' ? 'Whole grain' : 'Test provider',exact:true}).click();

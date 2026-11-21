@@ -1,6 +1,6 @@
 export interface PowerboxCandidate {
-  key: string; title: string; detail?: string; iconSrc?: string;
-  uiView?: boolean; hostedObject?: boolean; urlInput?: boolean; emailInput?: boolean; oauthProvider?: 'github' | 'google';
+  key: string; title: string; disabledReason?: string; detail?: string; iconSrc?: string;
+  identity?: boolean; uiView?: boolean; hostedObject?: boolean; urlInput?: boolean; emailInput?: boolean; oauthProvider?: 'github' | 'google';
   roles?: {key: string; title: string}[];
 }
 export type PowerboxState =

@@ -13,6 +13,14 @@ import { rustGrainTitles } from "/imports/server/rust-shell-grains";
 
 const text = value => (typeof value === "string" ? value : value?.defaultText || "");
 const fail = message => { throw new Meteor.Error(400, message); };
+const includesPermissions = (roles, requested) => roles.filter(role =>
+  requested.every((needed, index) => !needed || role.permissions?.[index]));
+const displayRoles = roles => roles.map((role, index) => ({key:String(index),title:text(role.title),permissions:role.permissions,obsolete:role.obsolete})).filter(role => !role.obsolete);
+function roleAssignment(key, roles) {
+  if (key === "all") return {allAccess:null};
+  if (!roles.some(role => role.key === key)) fail("Choose a valid permission role.");
+  return {roleId:Number(key)};
+}
 const simpleTitles = {
   ipInterfacePowerboxCard: "Accept incoming network connections",
   ipNetworkPowerboxCard: "Connect to the network",
@@ -40,6 +48,8 @@ export function rustPowerbox(db) {
       const options = await queryPowerboxOptions(db, globalFrontendRefRegistry, parent.accountId, input.query);
       const request = {parent, query:input.query, options:new Map(), provider:null, result:null, delivered:false,oauthBinding:'powerbox:'+parent.sessionId+':'+Crypto.randomBytes(32).toString('hex')};
       const candidates = [];
+      const session = await db.collections.sessions.findOneAsync(parent.sessionId);
+      const requesterRoles = displayRoles(session?.viewInfo?.roles || []);
       let legacy = false;
       for (const option of options) {
         let candidate;
@@ -48,13 +58,17 @@ export function rustPowerbox(db) {
             const titles = await rustGrainTitles(db, parent.accountId, option.grainId);
             const grain = await db.collections.grains.findOneAsync(option.grainId);
             if (!grain || grain.trashed || grain.suspended) continue;
-            const roles = (grain.cachedViewInfo?.roles || []).map((role, index) => ({key:String(index),title:text(role.title)}));
+            const roles = displayRoles(grain.cachedViewInfo?.roles || []);
             candidate = {title:text(titles.title),iconSrc:titles.iconSrc,uiView:!!option.uiView,hostedObject:!!option.hostedObject,roles};
           } catch { continue; }
-        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && ['github','google'].includes(option.oauthServiceInfo.service) && oauthEnabled(option.oauthServiceInfo.service)) {
-          candidate = {title:'Connect to '+oauthProvider(option.oauthServiceInfo.service).label,oauthProvider:option.oauthServiceInfo.service,detail:text(option.oauthScopes.map(scope=>scope.name).join(', '))};
-        } else if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard" && Accounts.loginServices.email.isEnabled()) {
-          candidate = {title:"Verify a new email address",emailInput:true};
+        } else if (option.cardTemplate === 'identityPowerboxCard') {
+          const roles = includesPermissions(requesterRoles, option.requestedPermissions || []);
+          candidate = {title:text(option.profile.name),detail:option.profile.handle || '',iconSrc:option.profile.pictureUrl,
+            identity:true,roles};
+        } else if (option.cardTemplate === 'httpOAuthPowerboxCard' && ['github','google'].includes(option.oauthServiceInfo.service)) {
+          candidate = {disabledReason:oauthEnabled(option.oauthServiceInfo.service) ? '' : 'An administrator must enable this sign-in provider before it can be used.',title:'Connect to '+oauthProvider(option.oauthServiceInfo.service).label,oauthProvider:option.oauthServiceInfo.service,detail:text(option.oauthScopes.map(scope=>scope.name).join(', '))};
+        } else if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
+          candidate = {title:"Verify a new email address",emailInput:true,disabledReason:Accounts.loginServices.email.isEnabled() ? "" : "An administrator must enable email sign-in before email verification can be used."};
         } else if (option.cardTemplate === "httpArbitraryPowerboxCard") {
           candidate = {title:"Connect to a URL",urlInput:true};
         } else if (option.frontendRef && !option.configureTemplate) {
@@ -124,10 +138,7 @@ export function rustPowerbox(db) {
           }
           if (input.mode !== "view" || !option.uiView) fail("This grain cannot fulfill that request type.");
           const grain = await db.collections.grains.findOneAsync(option.grainId);
-          let role;
-          if (input.role === "all") role = {allAccess:null};
-          else if (typeof input.role === "string" && /^(0|[1-9][0-9]?)$/.test(input.role) && Number(input.role) < Math.min(32, grain.cachedViewInfo?.roles?.length || 0)) role = {roleId:Number(input.role)};
-          else fail("Choose a valid permission role.");
+          const role = roleAssignment(input.role, displayRoles(grain.cachedViewInfo?.roles || []));
           await keepRustGrainSession(db, request.provider);
           await beforeWrite();
           const result = await fulfillPowerboxUiView(db, request.parent.accountId, request.parent.sessionId,
@@ -135,13 +146,19 @@ export function rustPowerbox(db) {
           request.result = {token:result.sturdyRef,descriptor:result.descriptor};
         } else {
           let ref = oauthCredential ? {http:{url:option.httpUrl,auth:{oauth:oauthCredential}}} : option.frontendRef;
+          if (option.cardTemplate === 'identityPowerboxCard') {
+            if (input.mode !== 'identity') fail('Choose permissions for this person first.');
+            const session = await db.collections.sessions.findOneAsync(request.parent.sessionId);
+            const roles = includesPermissions(displayRoles(session?.viewInfo?.roles || []), option.requestedPermissions || []);
+            ref = {identity:{id:option.frontendRef.identity,roleAssignment:roleAssignment(input.role,roles)}};
+          }
           if (option.cardTemplate === "addNewVerifiedEmailPowerboxCard") {
             ref = {verifiedEmail:{...option.frontendRef.verifiedEmail,address:request.email.address}};
           }
           if (option.cardTemplate === "httpArbitraryPowerboxCard") {
-            if (typeof input.url !== "string") fail("Invalid URL.");
+            if (input.mode !== "url" || typeof input.url !== "string") fail("Invalid URL.");
             const url = new URL(input.url);
-            if (!["http:","https:"].includes(url.protocol) || url.username || url.password) fail("Use an HTTP or HTTPS URL without embedded credentials.");
+            if (!["http:","https:"].includes(url.protocol)) fail("Use an HTTP or HTTPS URL.");
             ref = {http:{url:url.href,auth:{none:null}}};
           }
           await beforeWrite();

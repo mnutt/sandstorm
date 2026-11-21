@@ -1976,22 +1976,64 @@ if(isTesting) {
         const call = (operation, extra = {}) => rustShellBridge.handle("powerbox", {...extra,token:record.token,
           scope:record.scope,lease:record.lease,request:record.request,operation});
         const query = type => [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:type.typeId}]}).toString("base64")];
-        for (const kind of ["view","url"]) {
+        for (const kind of ["view","url","basic","bearer"]) {
           let id;
           try {
             const state = await call("begin", {query:query(kind === "view" ? UiView : ApiSession)});
             const candidate = state.candidates.find(row => kind === "view" ? row.uiView : row.urlInput);
             if (!candidate) throw new Error("Missing native " + kind + " option");
-            const result = await call("select",{key:candidate.key,mode:kind === "view" ? "view" : "ref",role:"all",url:"https://example.com/"});
+            const result = await call("select",{key:candidate.key,mode:kind === "view" ? "view" : "url",role:"all",url:kind === "basic" ? "https://user:password@example.com/" : kind === "bearer" ? "https://example.com/#bearer-secret" : "https://example.com/"});
             id = Crypto.createHash("sha256").update(result.token).digest("base64");
             const token = await globalDb.collections.apiTokens.findOneAsync(id);
             if (!token || token.owner?.clientPowerboxRequest?.sessionId !== record.requesterId ||
                 token.owner.clientPowerboxRequest.grainId !== grainId) throw new Error("Powerbox result has incorrect receiving authority");
-            if (kind === "url" && token.frontendRef?.http?.url !== "https://example.com/") throw new Error("URL capability differs from selected URL");
+            if (kind !== "view" && token.frontendRef?.http?.url !== "https://example.com/") throw new Error("URL capability differs from selected URL");
+            const decrypted = await fetchApiToken(globalDb,result.token);
+            if (kind === "basic" && decrypted.frontendRef.http.auth.basic.password !== "password") throw new Error("URL basic credentials were lost");
+            if (kind === "bearer" && decrypted.frontendRef.http.auth.bearer !== "bearer-secret") throw new Error("URL bearer credentials were lost");
             let replayed = false;
             try { await call("select",{key:candidate.key,mode:"view",role:"all"}); replayed = true; } catch (_) {}
             if (replayed) throw new Error("Completed Powerbox request replayed");
           } finally { await call("cancel"); if (id) await globalDb.removeApiTokens({_id:id}); }
+        }
+        // Identity choices use the requester's contacts and grant only the
+        // selected role on the requesting grain, never a client-supplied user.
+        const Identity = Capnp.importSystem("sandstorm/identity.capnp").Identity;
+        const person = "rust-powerbox-person-" + Random.id();
+        const session = await globalDb.collections.sessions.findOneAsync(record.requesterId);
+        let contact, identityToken;
+        try {
+          await Meteor.users.insertAsync({_id:person,type:"account",profile:{name:"Powerbox person",handle:"powerbox-person",pronoun:"neutral"},loginCredentials:[],nonloginCredentials:[]});
+          contact = await globalDb.collections.contacts.insertAsync({ownerId:this.userId,accountId:person});
+          await globalDb.collections.sessions.updateAsync(record.requesterId,{$set:{viewInfo:{...session.viewInfo,roles:[
+            {title:{defaultText:"Obsolete"},permissions:[true],obsolete:true},
+            {title:{defaultText:"Insufficient"},permissions:[false]},
+            {title:{defaultText:"Contributor"},permissions:[true]},
+          ]}}});
+          const identityQuery = [Capnp.serializePacked(Powerbox.PowerboxDescriptor,{tags:[{id:Identity.typeId,
+            value:Capnp.serialize(Identity.PowerboxTag,{permissions:[true]})}]}).toString("base64")];
+          let choices = await call("begin",{query:identityQuery});
+          let candidate = choices.candidates.find(row => row.identity && row.title === "Powerbox person");
+          if (!candidate || choices.legacy || JSON.stringify(candidate.roles.map(role=>role.key)) !== '["2"]') throw new Error("Identity roles were not filtered without reindexing");
+          for (const role of ['0','1','99']) {
+            let accepted = false;
+            try { await call("select",{key:candidate.key,mode:"identity",role}); accepted = true; } catch (_) {}
+            if (accepted) throw new Error("Invalid identity role accepted");
+            choices = await call("begin",{query:identityQuery});
+            candidate = choices.candidates.find(row => row.identity && row.title === "Powerbox person");
+          }
+          const result = await call("select",{key:candidate.key,mode:"identity",role:"all",id:this.userId});
+          identityToken = Crypto.createHash("sha256").update(result.token).digest("base64");
+          const token = await globalDb.collections.apiTokens.findOneAsync(identityToken);
+          if (token?.frontendRef?.identity !== person || token.owner?.clientPowerboxRequest?.sessionId !== record.requesterId) throw new Error("Identity token has the wrong recipient or receiving session");
+          if (!await globalDb.collections.apiTokens.findOneAsync({grainId,'owner.user.accountId':person})) throw new Error("Identity selection did not grant access");
+        } finally {
+          await call("cancel");
+          await globalDb.collections.sessions.updateAsync(record.requesterId,{$set:{viewInfo:session.viewInfo}});
+          if (identityToken) await globalDb.removeApiTokens({_id:identityToken});
+          await globalDb.removeApiTokens({grainId,'owner.user.accountId':person});
+          if (contact) await globalDb.collections.contacts.removeAsync(contact);
+          await Meteor.users.removeAsync(person);
         }
         await call("begin",{query:query(UiView)});
         let forged = false;

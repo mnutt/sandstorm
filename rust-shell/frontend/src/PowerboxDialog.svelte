@@ -8,6 +8,7 @@
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import NativeSelect from './components/ui/NativeSelect.svelte';
+  import Avatar from './components/ui/Avatar.svelte';
   import GrainIcon from './components/ui/GrainIcon.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
   import type { PowerboxRequest } from './lib/protocol';
@@ -119,7 +120,7 @@
     finally { if (alive) busy = false; }
   }
   async function authorize() {
-    if (!selected?.oauthProvider || busy) return;
+    if (!selected?.oauthProvider || busy || selected.disabledReason) return;
     const key = selected.key;
     const provider = selected.oauthProvider;
     busy=true;
@@ -136,11 +137,12 @@
     } catch (failure) { if (alive) error=applicationErrorMessage(failure, 'Could not complete authorization. Cancel and try again.'); }
     finally { if (alive) busy=false; }
   }
-  async function connect(mode = 'ref') {
-    if (!selected || busy || error) return;
+  async function connect(mode = selected?.urlInput ? 'url' : 'ref') {
+    if (!selected || busy || error || selected.disabledReason) return;
     busy = true;
     const submittedCode = code; code = '';
-    try { await accept(await actions.call(id,'select',{key:selected.key,mode,role,url,email,code:submittedCode})); }
+    const submittedUrl = url; url = '';
+    try { await accept(await actions.call(id,'select',{key:selected.key,mode,role,url:submittedUrl,email,code:submittedCode})); }
     catch (e) { if (alive) error = applicationErrorMessage(e, 'Could not confirm the connection. Cancel and check the current status before trying again.'); }
     finally { if (alive) busy = false; }
   }
@@ -165,27 +167,29 @@
         <div class="actions"><Button type="submit" disabled={!!error || !webkey.trim()}>Connect using link</Button><Button variant="secondary" disabled={!!error} onclick={() => { pasting = false; webkey = ''; }}>Back</Button></div>
       </form>
     {:else if selected}
-      <div class="selected"><GrainIcon src={selected.iconSrc || ''} /><strong>{selected.title}</strong></div>
-      {#if selected.uiView}
+      <div class="selected">{#if selected.identity}<Avatar src={selected.iconSrc || ''} name={selected.title} size={32} />{:else}<GrainIcon src={selected.iconSrc || ''} />{/if}<strong>{selected.title}</strong></div>
+      {#if selected.uiView || selected.identity}
         <label>Permissions<NativeSelect aria-label="Connection permissions" bind:value={role}>
           {#each selected.roles || [] as item}<option value={item.key}>{item.title}</option>{/each}
           <option value="all">All my permissions</option>
         </NativeSelect></label>
-        <p class="hint">This app will receive access to the selected grain. It cannot receive permissions you do not have.</p>
+        <p class="hint">{selected.identity ? "This person will receive access to this grain, and the app will receive their identity." : "This app will receive access to the selected grain."} You can only grant permissions you have.</p>
       {/if}
+      {#if selected.disabledReason}<p role="status">{selected.disabledReason}</p>{/if}
       {#if selected.emailInput}
         {#if verifyingEmail}<label>Verification code for {email}<TextInput bind:value={code} autocomplete="one-time-code" /></label>
         {:else}<label>Email address<TextInput type="email" bind:value={email} /></label>{/if}
         <p class="hint">Verify an email address to share it with this app. This does not enable email login.</p>
       {/if}
       {#if selected.urlInput}<label>URL<TextInput type="url" bind:value={url} placeholder="https://example.com/" /></label>{/if}
-      {#if !selected.uiView && !selected.hostedObject}<p class="hint">Allow this app to use {selected.title}?</p>{/if}
+      {#if !selected.identity && !selected.uiView && !selected.hostedObject}<p class="hint">Allow this app to use {selected.title}?</p>{/if}
       <div class="actions">
+        {#if selected.identity}<Button disabled={!!error} onclick={() => connect('identity')}>Share with person</Button>{/if}
         {#if selected.uiView}<Button disabled={!!error} onclick={() => connect('view')}>Connect grain</Button>{/if}
         {#if selected.hostedObject}<Button disabled={!!error} onclick={() => connect('hosted')}>Choose from app</Button>{/if}
-        {#if selected.oauthProvider}<Button disabled={!!error} onclick={authorize}>Authorize {signInProviders.find(provider => provider.key === selected?.oauthProvider)?.label}</Button>{/if}
-        {#if selected.emailInput}<Button disabled={!!error || (verifyingEmail ? !code.trim() : !email.includes('@'))} onclick={() => connect(verifyingEmail ? 'verifyEmail' : 'sendEmail')}>{verifyingEmail ? 'Verify and connect' : 'Send verification code'}</Button>{/if}
-        {#if !selected.uiView && !selected.hostedObject && !selected.emailInput && !selected.oauthProvider}<Button disabled={!!error || (selected.urlInput && !url.trim())} onclick={() => connect()}>Allow connection</Button>{/if}
+        {#if selected.oauthProvider}<Button disabled={!!error || !!selected.disabledReason} onclick={authorize}>Authorize {signInProviders.find(provider => provider.key === selected?.oauthProvider)?.label}</Button>{/if}
+        {#if selected.emailInput}<Button disabled={!!error || !!selected.disabledReason || (verifyingEmail ? !code.trim() : !email.includes('@'))} onclick={() => connect(verifyingEmail ? 'verifyEmail' : 'sendEmail')}>{verifyingEmail ? 'Verify and connect' : 'Send verification code'}</Button>{/if}
+        {#if !selected.identity && !selected.uiView && !selected.hostedObject && !selected.emailInput && !selected.oauthProvider}<Button disabled={!!error || (selected.urlInput && !url.trim())} onclick={() => connect()}>Allow connection</Button>{/if}
         <Button variant="secondary" disabled={!!error || verifyingEmail} onclick={() => { selected = undefined; }}>Back</Button>
       </div>
     {:else if !error}
@@ -193,7 +197,7 @@
       <ul class="candidates">
         {#each choices.filter(item => (item.title + ' ' + (item.detail || '')).toLowerCase().includes(search.toLowerCase())) as item (item.key)}
           <li><button class="candidate" onclick={() => { selected = item; role = item.roles?.[0]?.key || 'all'; url = ''; }}>
-            <GrainIcon src={item.iconSrc || ''} /><span><strong>{item.title}</strong>{#if item.detail}<small>{item.detail}</small>{/if}</span>
+            {#if item.identity}<Avatar src={item.iconSrc || ''} name={item.title} size={32} />{:else}<GrainIcon src={item.iconSrc || ''} />{/if}<span><strong>{item.title}</strong>{#if item.detail}<small>{item.detail}</small>{/if}</span>
           </button></li>
         {:else}<li class="empty">No matching options.</li>{/each}
       </ul>
@@ -202,7 +206,7 @@
       {#if hasLegacy}<p class="hint">Some account authorization options are available in the main shell.</p>{/if}
     {/if}
     <div class="footer">
-      {#if legacy}<Button variant="secondary" onclick={() => { completed = true; legacy?.(); }}>More options in main shell</Button>{/if}
+      {#if legacy && hasLegacy}<Button variant="secondary" onclick={() => { completed = true; legacy?.(); }}>More options in main shell</Button>{/if}
       <Button variant="secondary" onclick={() => done({canceled:true})}>Cancel request</Button>
     </div>
   </div>

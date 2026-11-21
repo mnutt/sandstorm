@@ -81,6 +81,8 @@ pub(crate) fn write(v: &Value, mut out: api::powerbox_state::Builder<'_>) -> cap
                 item.set_title(text(row, "title"));
                 item.set_detail(text(row, "detail"));
                 item.set_icon_src(text(row, "iconSrc"));
+                item.set_disabled_reason(text(row, "disabledReason"));
+                item.set_identity(row["identity"].as_bool().unwrap_or(false));
                 item.set_ui_view(row["uiView"].as_bool().unwrap_or(false));
                 item.set_hosted_object(row["hostedObject"].as_bool().unwrap_or(false));
                 item.set_url_input(row["urlInput"].as_bool().unwrap_or(false));
@@ -134,6 +136,7 @@ impl powerbox_request::Server for Request {
         use powerbox_selection::Which;
         let (mode, field, value) = match selection.which()? {
             Which::Direct(()) => ("direct", "key", key),
+            Which::Identity(v) => ("identity", "role", v?.to_str()?),
             Which::View(v) => ("view", "role", v?.to_str()?),
             Which::Hosted(()) => ("hosted", "key", key),
             Which::Webkey(v) => ("webkey", "url", v?.to_str()?),

@@ -560,7 +560,18 @@ capability link. New email verification and GitHub/Google OAuth authorization ar
 iframes can request nested native Powerbox choosers.
 Each child is bound to its provider session, not the outer requesting grain;
 closing a parent closes its children. Unsupported shell
-interactions retain **More options in main shell** as an explicit fallback.
+options (notably the optional Blackrock payment-provider cards) retain **More options
+in main shell** only when the returned choices actually need it. Disabled OAuth
+and email providers explain the required administrator configuration natively.
+
+Identity requests show contact avatars and grant access to the requesting grain
+before returning the selected person's identity capability. Role choices omit
+obsolete roles and roles that cannot satisfy the requested permissions, preserving
+the original role indices. The server selects the account from its private candidate
+set and revalidates the role and requesting session before invoking the existing
+identity driver. Arbitrary HTTP(S) URLs use the typed URL selection, including the
+existing driver's basic/bearer credentials encoded in the URL; the input is cleared
+on submission.
 
 OAuth candidates carry a typed provider; selection supplies only the candidate key.
 The server owns the target API URL and requested scopes. Google uses the same
