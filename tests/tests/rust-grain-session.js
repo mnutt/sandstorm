@@ -240,6 +240,7 @@ module.exports['Real grain iframe session, close/reopen, shared access and revoc
   utils.callMeteorTestMethod(browser, "testRustOAuth");
   utils.callMeteorTestMethod(browser, "testRustSaml");
   utils.callMeteorTestMethod(browser, "testRustProfile");
+  utils.callMeteorTestMethod(browser, "testRustGrainManagement");
   utils.callMeteorTestMethod(browser, "testRegressionEmailCredentialLinkAwaitsFailure");
   browser.frame(null).executeAsync(function (done) {
     Meteor.call('testRustRenameGrain', location.pathname.split('/')[2], (error, ok) => done({error:error?.message,ok}));

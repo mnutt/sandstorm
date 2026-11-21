@@ -163,8 +163,7 @@ impl shell::Server for Shell {
             crate::shell_capnp::GrainOwnership::Owned => "owned",
             crate::shell_capnp::GrainOwnership::Shared => "shared",
         };
-        let filter =
-            serde_json::json!({"search":search,"appId":app_id,"sort":sort,"ownership":ownership});
+        let filter = serde_json::json!({"search":search,"appId":app_id,"sort":sort,"ownership":ownership,"trash":query.get_trash()});
         let observer = input.get_observer()?;
         let session = self
             .session
@@ -414,6 +413,24 @@ impl shell::Server for Shell {
             .set_action(capnp_rpc::new_client(crate::resources::Action {
                 session,
                 key,
+            }));
+        Ok(())
+    }
+    async fn grain(
+        self: Rc<Self>,
+        params: shell::GrainParams,
+        mut results: shell::GrainResults,
+    ) -> capnp::Result<()> {
+        let session = self
+            .session
+            .clone()
+            .ok_or_else(|| capnp::Error::failed("Sign in to manage grains".into()))?;
+        let grain_id = params.get()?.get_grain_id()?.to_str()?.to_owned();
+        results
+            .get()
+            .set_handle(capnp_rpc::new_client(crate::resources::GrainHandle {
+                session,
+                grain_id,
             }));
         Ok(())
     }

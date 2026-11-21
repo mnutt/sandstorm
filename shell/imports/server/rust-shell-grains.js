@@ -88,7 +88,7 @@ export async function grainMenu(db, accountId, mainUrl, page = 0, query) {
 async function queryGrains(db,accountId,mainUrl,page,query) {
   const shared = [
     {$match:{'owner.user.accountId':accountId,grainId:{$type:'string'},'owner.user.denormalizedGrainMetadata':{$exists:true},
-      revoked:{$ne:true},trashed:{$exists:false},suspended:{$exists:false}}},
+      revoked:{$ne:true},trashed:{$exists:!!query.trash},suspended:{$exists:false}}},
     {$sort:{created:1,_id:1}},
     {$group:{_id:'$grainId',owner:{$first:'$owner.user'},lastUsed:{$max:{$ifNull:['$lastUsed','$created']}}}},
     {$lookup:{from:'grains',localField:'_id',foreignField:'_id',as:'grain'}},
@@ -98,7 +98,7 @@ async function queryGrains(db,accountId,mainUrl,page,query) {
       appTitle:'$owner.denormalizedGrainMetadata.appTitle.defaultText'}},
   ];
   const pipeline=[
-    {$match:{userId:accountId,trashed:{$exists:false},suspended:{$exists:false}}},
+    {$match:{userId:accountId,trashed:{$exists:!!query.trash},suspended:{$exists:false}}},
     {$project:{title:1,packageId:1,appId:1,lastUsed:{$ifNull:['$lastUsed','$created']},owned:{$literal:true}}},
     {$lookup:{from:'packages',localField:'packageId',foreignField:'_id',as:'package'}},
     {$set:{appTitle:{$arrayElemAt:['$package.manifest.appTitle.defaultText',0]}}},

@@ -18,7 +18,7 @@ import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { globalDb } from "/imports/db-deprecated";
 
-Meteor.methods({
+const grainMethods = {
   // Methods defined in this file have meaningful latency compensation (client-side prediction)
   // potential.
   //
@@ -59,14 +59,16 @@ Meteor.methods({
 
     if (this.userId) {
       if (Meteor.isServer) {
+        await this.beforeWrite?.();
         await globalDb.collections.grains.updateAsync({ userId: { $eq: this.userId },
                           _id: { $in: grainIds },
                           trashed: { $exists: false }, },
                         { $set: { trashed: new Date() } },
                         { multi: true });
 
+        await this.beforeWrite?.();
         await globalDb.collections.apiTokens.updateAsync({ grainId: { $in: grainIds },
-                          "owner.user.accountId": Meteor.userId(),
+                          "owner.user.accountId": this.userId,
                           trashed: { $exists: false }, },
                          { $set: { "trashed": new Date() } },
                          { multi: true });
@@ -78,13 +80,19 @@ Meteor.methods({
                       { multi: true });
 
         globalDb.collections.apiTokens.update({ grainId: { $in: grainIds },
-                          "owner.user.accountId": Meteor.userId(),
+                          "owner.user.accountId": this.userId,
                           trashed: { $exists: false }, },
                          { $set: { "trashed": new Date() } },
                          { multi: true });
       }
 
       if (!this.isSimulation) {
+        // Recipient trashing is local to that account, but must also close its
+        // native sessions (owner trashing below closes all sessions).
+        await this.beforeWrite?.();
+        await globalDb.collections.sessions.removeAsync({
+          grainId: { $in: grainIds }, userId: this.userId, rustShellSession: true,
+        });
         const grainsOwned = await globalDb.collections.grains.find({
           userId: { $eq: this.userId },
           _id: { $in: grainIds },
@@ -107,14 +115,16 @@ Meteor.methods({
 
     if (this.userId) {
       if (Meteor.isServer) {
+        await this.beforeWrite?.();
         await globalDb.collections.grains.updateAsync({ userId: { $eq: this.userId },
                           _id: { $in: grainIds },
                           trashed: { $exists: true }, },
                         { $unset: { trashed: 1 } },
                         { multi: true });
 
+        await this.beforeWrite?.();
         await globalDb.collections.apiTokens.updateAsync({ grainId: { $in: grainIds },
-                          "owner.user.accountId": Meteor.userId(),
+                          "owner.user.accountId": this.userId,
                           "trashed": { $exists: true }, },
                          { $unset: { "trashed": 1 } },
                          { multi: true });
@@ -126,7 +136,7 @@ Meteor.methods({
                       { multi: true });
 
         globalDb.collections.apiTokens.update({ grainId: { $in: grainIds },
-                          "owner.user.accountId": Meteor.userId(),
+                          "owner.user.accountId": this.userId,
                           "trashed": { $exists: true }, },
                          { $unset: { "trashed": 1 } },
                          { multi: true });
@@ -151,6 +161,7 @@ Meteor.methods({
             : globalDb.collections.grains.remove(grainsQuery);
       } else {
         const account = await Meteor.users.findOneAsync({ _id: this.userId });
+        await this.beforeWrite?.();
         numDeleted = await globalDb.deleteGrains(grainsQuery, globalThis.globalBackend,
             (account && account.expires) ? "demoGrain" : "grain");
       }
@@ -163,7 +174,7 @@ Meteor.methods({
       // grain after the owner clicks "delete permanently".
       const apiTokensQuery = {
         grainId: grainId,
-        "owner.user.accountId": Meteor.userId(),
+        "owner.user.accountId": this.userId,
         "trashed": { $exists: true },
       };
 
@@ -175,6 +186,7 @@ Meteor.methods({
             globalDb.collections.apiTokens.remove(apiTokensQuery);
           }
         } else {
+          await this.beforeWrite?.();
           await globalDb.removeApiTokens(apiTokensQuery);
         }
       }
@@ -197,7 +209,46 @@ Meteor.methods({
     if (this.isSimulation) {
       globalDb.collections.apiTokens.remove(query);
     } else {
+      await this.beforeWrite?.();
       await globalDb.removeApiTokens(query, true);
     }
   },
-});
+};
+
+Meteor.methods(grainMethods);
+
+// Account authority is supplied by the private Rust bridge, never the browser.
+// Reuse the same operations as Meteor, including recipient-only forgetting.
+export async function manageGrainForUser(accountId, grainId, operation, beforeWrite) {
+  check(accountId, String);
+  check(grainId, String);
+  const owned = await globalDb.collections.grains.findOneAsync({ _id: grainId, userId: accountId });
+  const shared = !owned && await globalDb.collections.apiTokens.findOneAsync({
+    grainId, "owner.user.accountId": accountId, objectId: { $exists: false },
+  }, { sort: { trashed: 1 } });
+  const item = owned || shared;
+  const state = !item ? "unavailable" : item.trashed ? "trashed" : "active";
+  if (operation === "read") return { state };
+  if (!item) throw new Meteor.Error(404, "This grain is no longer in your list.");
+  if (!["trash", "restore", "remove"].includes(operation)) {
+    throw new Meteor.Error(400, "Invalid grain action.");
+  }
+  if (operation === "remove" && state !== "trashed") {
+    throw new Meteor.Error(409, "Move the grain to Trash before deleting it.");
+  }
+
+  await beforeWrite();
+  const context = {
+    userId: accountId, isSimulation: false, beforeWrite,
+    connection: { sandstormBackend: globalThis.globalBackend },
+  };
+  if (operation === "trash") {
+    await grainMethods.moveGrainsToTrash.call(context, [grainId]);
+  } else if (operation === "restore") {
+    await grainMethods.moveGrainsOutOfTrash.call(context, [grainId]);
+  } else {
+    await grainMethods[owned ? "deleteGrain" : "forgetGrain"].call(context, grainId);
+  }
+
+  return {};
+}

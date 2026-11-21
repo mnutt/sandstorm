@@ -80,7 +80,7 @@
   let route = $state(navigation.route);
   const connecting = $derived(!model.activeGrain && !['shared', 'missing'].includes(route.page) && ['connecting', 'reconnecting', 'waiting'].includes(model.status));
   const view = $derived(route.page === 'grain' ? 'grains' : route.page);
-  const pageTitle = $derived(model.activeGrain?.title || ({'oauth-complete':'Authorization',login:'Sign in', install:'Install app', notifications:'Notifications', grains:'Grains', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
+  const pageTitle = $derived(model.activeGrain?.title || ({'oauth-complete':'Authorization',login:'Sign in', install:'Install app', notifications:'Notifications', grains:'Grains', trash:'Trash', apps:'Apps', account:'Account', grain:'Grain', shared:'Shared grain', missing:'Page not found'}[route.page]));
   $effect(() => { route; navigation.sync(model); });
   const navigate = (path: string) => navigation.navigate(path);
   onMount(() => {
@@ -107,7 +107,7 @@
   <div class="brand-group">
     <a class="brand" href="/grains" onclick={event => navigation.link(event, '/grains')}><img src="/sandstorm-logo.svg" width="28" height="30" alt="" /><span>Sandstorm</span></a>
   </div>
-  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'apps' || route.page === 'grains' || route.page === 'install'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
+  <div class="grain-toolbar" bind:this={toolbarTarget}>{#if route.page === 'apps' || route.page === 'grains' || route.page === 'trash' || route.page === 'install'}<h1 class="page-title">{pageTitle}</h1>{/if}</div>
   <div class="topbar-actions">
     <a class="notifications" href="/notifications" aria-label="Notifications" title="Notifications" aria-current={view === 'notifications' ? 'page' : undefined}
       onclick={event => navigation.link(event, '/notifications')}>
@@ -139,6 +139,7 @@
           </li>
         {/each}
       </ul>
+      <a href="/trash" aria-label="Trash" title={sidebarCollapsed ? 'Trash' : undefined} aria-current={route.page === 'trash' ? 'page' : undefined} onclick={event => navigation.link(event, '/trash')}><ShellIcon name="trash" /><span>Trash</span></a>
     </nav>
     <div class="shell-links"><a href="/main-shell" aria-label="Main shell" title="Main shell"><ShellIcon name="external" /><span>Main shell</span></a><div class="sidebar-toggle"><Button variant="chrome" onclick={toggleSidebar} aria-controls="shell-sidebar" aria-expanded={!sidebarCollapsed}
       aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}><ShellIcon name="sidebar" /></Button></div></div>
@@ -196,8 +197,8 @@
   {:else if view === 'apps'}
     <Apps {service} {model} {navigate} appId={route.page === 'apps' ? route.appId : undefined}
       created={id => navigate(grainRoute(id))} checkGrains={() => navigate('/grains')} />
-  {:else if view === 'grains'}
-    <Grains {model} {service} {navigate} />
+  {:else if view === 'grains' || view === 'trash'}
+    <Grains {model} {service} {navigate} trash={route.page === 'trash'} />
   {:else}
     <Notifications {model} {service} {navigate} />
   {/if}

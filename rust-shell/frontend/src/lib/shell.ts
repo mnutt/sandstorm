@@ -1,3 +1,4 @@
+import { changeGrain, type GrainOperation } from './grain-management';
 import { ListCache } from './list-delta';
 import { grainRow, notificationRow, watchGrains, watchNotifications, type GrainQuery } from './queries';
 import { AccountService } from './account';
@@ -88,6 +89,11 @@ export class ShellService {
   start() { this.connection.start(); }
   stop() { this.connection.stop(); }
   reconnect() { this.connection.reconnect(); }
+  async manageGrain(id:string,operation:GrainOperation) {
+    const account=this.accountKey;
+    await changeGrain(this.connection,id,operation);
+    if (account === this.accountKey && operation !== 'restore') this.grains.close(id);
+  }
   restoreWorkspace(current?:string) { this.grains.restore(this.state.grains,current); }
   selectGrain(id: string | null) { this.grains.select(id); }
   grainPathChanged(id: string, path: string) { this.grains.pathChanged(id, path); }

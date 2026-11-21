@@ -68,3 +68,89 @@ impl api::view_reference::Server for ViewReference {
         Ok(())
     }
 }
+
+pub struct GrainHandle {
+    pub session: Session,
+    pub grain_id: String,
+}
+impl GrainHandle {
+    async fn change(&self, operation: &str) -> Result<serde_json::Value, crate::bridge::Error> {
+        self.session
+            .call(
+                "manageGrain",
+                serde_json::json!({"grainId":self.grain_id,"operation":operation}),
+            )
+            .await
+    }
+}
+impl api::grain_handle::Server for GrainHandle {
+    async fn read(
+        self: Rc<Self>,
+        _: api::grain_handle::ReadParams,
+        mut results: api::grain_handle::ReadResults,
+    ) -> capnp::Result<()> {
+        match self.change("read").await {
+            Ok(value) => {
+                let state = match value["state"].as_str() {
+                    Some("active") => api::GrainDisposition::Active,
+                    Some("trashed") => api::GrainDisposition::Trashed,
+                    _ => api::GrainDisposition::Unavailable,
+                };
+                results
+                    .get()
+                    .init_result()
+                    .init_value()
+                    .set_disposition(state);
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+    async fn trash(
+        self: Rc<Self>,
+        _: api::grain_handle::TrashParams,
+        mut results: api::grain_handle::TrashResults,
+    ) -> capnp::Result<()> {
+        match self.change("trash").await {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+    async fn restore(
+        self: Rc<Self>,
+        _: api::grain_handle::RestoreParams,
+        mut results: api::grain_handle::RestoreResults,
+    ) -> capnp::Result<()> {
+        match self.change("restore").await {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+    async fn remove(
+        self: Rc<Self>,
+        _: api::grain_handle::RemoveParams,
+        mut results: api::grain_handle::RemoveResults,
+    ) -> capnp::Result<()> {
+        match self.change("remove").await {
+            Ok(_) => {
+                results.get().init_result().init_value();
+                Ok(())
+            }
+            Err(error) => {
+                crate::workflow::failure(error, results.get().init_result().init_failure())
+            }
+        }
+    }
+}

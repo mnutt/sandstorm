@@ -51,6 +51,7 @@ pub async fn frontend(State(dev): State<Frontend>, method: Method, uri: Uri) -> 
         "/" | "/index.html"
             | "/notifications"
             | "/grains"
+            | "/trash"
             | "/apps"
             | "/account"
             | "/login"

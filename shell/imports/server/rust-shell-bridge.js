@@ -1,3 +1,4 @@
+import { manageGrainForUser } from "/imports/shared/grain-shared";
 import { samlLogoutUrl } from "/imports/server/accounts/saml/saml-server";
 import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { rustNativeAuth } from "/imports/server/rust-shell-auth";
@@ -75,6 +76,7 @@ export const rustShellBridge = createRustShellBridge({
   listApps: rustAppActions,
   install: rustInstall,
   createGrain: createRustGrain,
+  manageGrain: manageGrainForUser,
   sessionStore: rustShellSessionStore,
   shared: {
     inspect: webkey => inspectRustSharedGrain(globalDb,webkey),
@@ -197,7 +199,7 @@ export const rustShellBridge = createRustShellBridge({
           { fields: { grainId: 1, "owner.user": 1, created: 1, lastUsed: 1, revoked: 1, trashed: 1, suspended: 1 } })
           .observeChangesAsync(callbacks));
       const owned = await globalDb.collections.grains.find({ userId: accountId,
-        trashed: { $exists: false }, suspended: { $exists: false } }, {
+        trashed: { $exists: !!grainQuery?.trash }, suspended: { $exists: false } }, {
         // A query can match any installed package title, including grains outside the current page.
         ...(grainQuery ? {} : {sort: { lastUsed: -1, _id: 1 }, skip: (pages.grains || 0) * 50, limit: 50}),
         fields: { packageId: 1 },

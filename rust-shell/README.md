@@ -842,6 +842,21 @@ passed 100 assertions; `TESTCASE=tests/rust-auth.js tests/run-local.sh
 build/dev/packages/sandstorm-0-fast.tar.xz build/dev/packages/test-app.spk` passed
 18 account/profile/list assertions. Both packaged suites use isolated servers.
 
+## Grain management
+
+The Grains and Trash pages support page-local selection, bulk trash/restore, and
+confirmed permanent deletion. Deleting an owned grain removes its data; deleting
+a shared grain only forgets that account's saved access. Batches stop on the first
+failure, report confirmed successes, and never automatically retry mutations.
+
+`Shell.grain()` returns an account-scoped `GrainHandle` without opening an app.
+Its typed read/trash/restore/remove operations reuse the canonical Meteor grain
+methods through the private bridge. The bridge rechecks login authority before
+writes. Grain-list subscriptions include Trash, and legacy trash operations close
+affected native sessions. Closed workspaces query authoritative management state
+before removing saved reload entries; absence from a paginated list is not proof
+that a grain was deleted.
+
 ## Browser-tab workspace restoration
 
 Open grain IDs and app paths are saved in `sessionStorage`, separately for each
@@ -1006,7 +1021,7 @@ change's validation. This is separate from the main Meteor dependency tree.
 `Apps.svelte`, and `GrainFrame.svelte` own their presentation and local form state.
 `workspace.ts` owns the mounted tabs and their independent `GrainService` instances;
 app callbacks address their own grain ID, never the currently selected tab.
-Tabs last for the current browser page; reload reopens only the routed grain.
+Reload restores the browser tab's saved workspace, as described above.
 `styles.css` holds semantic `--ss-*` tokens and a minimal document reset.
 Shared controls live in `components/ui`; their styles are scoped to the component.
 Bits UI supplies button and dialog behavior, while simple input/select controls

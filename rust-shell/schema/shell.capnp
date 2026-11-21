@@ -134,6 +134,7 @@ interface Shell {
   grainView @10 (grainId :Text) -> (view :ViewReference);
   listApps @11 (page :UInt32, appId :Text) -> (result :Result(AppPage));
   action @12 (key :Text) -> (action :AppActionHandle);
+  grain @13 (grainId :Text) -> (handle :GrainHandle);
   # Never replay creation after a transport failure. The outcome may be unknown.
 }
 
@@ -360,6 +361,7 @@ struct GrainQuery {
   sort @2 :GrainSort;
   ownership @3 :GrainOwnership;
   page @4 :UInt32;
+  trash @5 :Bool;
   # Live offset pages of 100 rows. Membership may shift as data changes.
 }
 struct GrainPage { upserts @0 :List(Grain); hasMore @1 :Bool; page @2 :UInt32; delta @3 :ListDelta; }
@@ -515,4 +517,15 @@ interface ViewReference {
   # Each open creates a separately owned session. Closing it keeps this
   # reference usable, subject to current authorization. The grainView factory
   # currently resolves root views; future view sources can implement this API.
+}
+
+# Account-owned management selector; never requires opening a grain session.
+enum GrainDisposition { active @0; trashed @1; unavailable @2; }
+struct GrainManagementState { disposition @0 :GrainDisposition; }
+interface GrainHandle {
+  read @0 () -> (result :Result(GrainManagementState));
+  trash @1 () -> (result :Result(Empty));
+  restore @2 () -> (result :Result(Empty));
+  remove @3 () -> (result :Result(Empty));
+  # Permanently deletes owned trashed grains; forgets the caller's trashed shares.
 }

@@ -13,6 +13,7 @@ export interface GrainQuery {
   sort: 'recent' | 'title';
   ownership: 'all' | 'owned' | 'shared';
   page: number;
+  trash?: boolean;
 }
 
 function observation<T extends {subscription: Subscription$Client}>(
@@ -72,6 +73,7 @@ export function watchGrains(
     value.search = query.search;
     value.appId = query.appId;
     value.page = query.page;
+    value.trash = !!query.trash;
     value.sort = query.sort === 'title' ? GrainSort.TITLE : GrainSort.RECENT;
     value.ownership = {owned: GrainOwnership.OWNED, shared: GrainOwnership.SHARED, all: GrainOwnership.ALL}[query.ownership];
     params.observer = observer;

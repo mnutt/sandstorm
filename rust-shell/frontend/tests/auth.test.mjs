@@ -16,13 +16,15 @@ import { createRustShellBridge, bridgeHandler } from '../../../shell/imports/ser
 
 // Uses the production bridge authority/HTTP implementation with an in-memory DB
 // adapter. No test writes or login tokens touch the installed Meteor/Mongo server.
-test('authenticated notifications: handoff, shared writes, account switching and revocation', { timeout: 120000 }, async () => {
+test('authenticated notifications: handoff, shared writes, account switching and revocation', { timeout: 180000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'rust-shell-auth-'));
   const socket = join(directory, 'rust.sock');
   const bridgeSocket = join(directory, 'meteor.sock');
   let proxy, main, grainServer, bridgeServer, browser, rust, vite;
   let vitePort;
   const liveGrains = new Set();
+  const grainStates=new Map(), grainSessions=new Map();
+  let managementFailure=false;
   const responseReady = new Set(), responseEvents = new EventEmitter(), heldAssets = new Set();
   let stallAssets = false;
   const waitForResponse = async (handle, signal) => {
@@ -165,7 +167,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
       open: async (id, grainId) => {
         if (![`${id}-grain`, `${id}-hidden`, `${id}-created`, `${id}-extra`].includes(grainId)) throw Object.assign(new Error('Denied'), { status: 403 });
         if (holdOpen) await new Promise(resolve => { releaseOpen = resolve; });
-        const handle = ++serial; liveGrains.add(handle);
+        const handle = ++serial; liveGrains.add(handle); grainSessions.set(handle,grainId);
         return { handle, view: { grainId, iconSrc: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24"%3E%3Crect width="24" height="24" fill="orange"/%3E%3C/svg%3E', title: grainId.endsWith('-hidden') ? 'Hidden grain' : grainId.endsWith('-extra') ? 'Zebra shared' : '', ownerTitle: grainTitles[id] || 'Owner title', mainHref: mainOrigin + '/grain/' + grainId, origin: grainOrigin, url: grainOrigin + '/_sandstorm-init?sessionid=' + handle } };
       },
       keep: async (handle) => { ++renewals; if (!liveGrains.has(handle)) throw new Error('Session revoked'); },
@@ -194,6 +196,17 @@ test('authenticated notifications: handoff, shared writes, account switching and
       },
       revokeTemplate: async () => { --templates; },
     },
+    manageGrain: async (account,id,operation,beforeWrite) => {
+      const state=grainStates.get(id) || 'active';
+      if(operation==='read') return {state};
+      await beforeWrite();
+      if(managementFailure && id==='alice-extra') throw Object.assign(new Error('You cannot change this grain.'),{status:403});
+      assert.ok(id.startsWith(account+'-'));
+      if(operation==='remove') assert.equal(state,'trashed');
+      grainStates.set(id,operation==='trash'?'trashed':operation==='restore'?'active':'unavailable');
+      if(operation!=='restore') for(const [handle,key] of grainSessions) if(key===id)liveGrains.delete(handle);
+      changed();return {};
+    },
     authorize: async (id, hash) => {
       if (bridgeOffline) throw Object.assign(new Error('Main shell starting'), { status: 503 });
       return users[id]?.hash === hash ? users[id] : null;
@@ -218,6 +231,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
         href: `${mainOrigin}/grain/${id}-grain`, appTitle: 'Text Editor', appId: 'test-app', owned: id === 'alice', lastUsed: new Date(0).toISOString() },
         ...(id === 'alice' ? [{ key: 'alice-extra', title: 'Zebra shared', href: `${mainOrigin}/grain/alice-extra`,
           owned: false, appTitle: 'Spreadsheet', lastUsed: new Date(1000).toISOString() }] : [])], grainsLimited: false };
+      snapshot.grains=snapshot.grains.filter(grain=>(grainStates.get(grain.key)||'active')===(query?.trash?'trashed':'active'));
       if (query) {
         snapshot.grains = snapshot.grains.filter(grain =>
           (!query.appId || grain.appId === query.appId) &&
@@ -703,7 +717,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await page.getByLabel('Sort by').selectOption('title');
     assert.equal(await page.locator('.grain-item .grain-name').first().innerText(), 'Alice grain');
     await page.getByLabel('Filter shown grains').fill('editor');
-    assert.equal(await page.locator('.grain-item').count(), 1);
+    await expect(page.locator('.grain-item')).toHaveCount(1);
     await page.getByLabel('Filter shown grains').fill('');
     await page.getByLabel('Show', { exact: true }).selectOption('shared');
     assert.equal(await page.locator('.grain-item .grain-name').innerText(), 'Zebra shared');
@@ -724,6 +738,61 @@ test('authenticated notifications: handoff, shared writes, account switching and
     assert.equal(await page.evaluate(() => import('/grain-session-probe.js').then(probe => probe.closedSharing())), true,
       'retained sharing capabilities lose authority when their grain closes');
     await expect.poll(() => liveGrains.size).toBe(0);
+
+    // Bulk management, explicit permanent deletion, partial failure, and a
+    // legacy-side change arriving through the existing list subscription.
+    const management=await context.newPage();
+    await management.goto(proxy.origin+'/grains');
+    await management.getByRole('link',{name:'Alice grain',exact:true}).click();
+    await management.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await management.getByRole('link',{name:'Grains',exact:true}).click();
+    await management.getByLabel('Sort by',{exact:true}).selectOption('title');
+    await management.getByRole('checkbox',{name:'Select all shown grains'}).check();
+    managementFailure=true;
+    await management.getByRole('button',{name:'Move to Trash',exact:true}).click();
+    await expect(management.getByRole('alert')).toContainText('You cannot change this grain');
+    await expect(management.getByText('1 grain moved to Trash.',{exact:true})).toBeVisible();
+    managementFailure=false;
+    await management.getByRole('checkbox',{name:'Select Zebra shared',exact:true}).check();
+    await management.getByRole('button',{name:'Move to Trash',exact:true}).click();
+    await expect(management.locator('iframe')).toHaveCount(0);
+    await expect(management.getByRole('checkbox',{name:'Select Zebra shared',exact:true})).toHaveCount(0);
+    await management.getByRole('link',{name:'Trash',exact:true}).click();
+    await management.getByRole('checkbox',{name:'Select all shown grains'}).check();
+    await management.getByRole('button',{name:'Restore',exact:true}).click();
+    await expect(management.getByText('2 grains restored.',{exact:true})).toBeVisible();
+    await management.getByRole('link',{name:'Grains',exact:true}).click();
+    await management.getByRole('checkbox',{name:'Select all shown grains'}).check();
+    await management.getByRole('button',{name:'Move to Trash',exact:true}).click();
+    await expect(management.getByText('2 grains moved to Trash.',{exact:true})).toBeVisible();
+    await management.getByRole('link',{name:'Trash',exact:true}).click();
+    await management.reload();
+    await management.getByRole('checkbox',{name:'Select all shown grains'}).check();
+    await management.getByRole('button',{name:'Delete permanently',exact:true}).click();
+    const removeDialog=management.getByRole('dialog',{name:'Delete permanently?',exact:true});
+    await expect(removeDialog).toContainText('Forget access');
+    await removeDialog.getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal(grainStates.get('alice-grain'),'trashed');
+    await management.getByRole('button',{name:'Delete permanently',exact:true}).click();
+    await removeDialog.getByRole('button',{name:'Confirm permanent deletion',exact:true}).click();
+    await expect(management.getByText('Trash is empty.',{exact:true})).toBeVisible();
+    assert.equal(grainStates.get('alice-extra'),'unavailable');
+    grainStates.clear();changed();
+    await management.getByRole('link',{name:'Grains',exact:true}).click();
+    await management.getByRole('link',{name:'Alice grain',exact:true}).click();
+    await management.frameLocator('iframe').getByRole('heading',{name:'Embedded test grain'}).waitFor();
+    await management.getByRole('link',{name:'Grains',exact:true}).click();
+    grainStates.set('alice-grain','trashed');
+    for(const [handle,id] of grainSessions)if(id==='alice-grain')liveGrains.delete(handle);
+    changed();
+    await expect(management.getByRole('link',{name:'Alice grain',exact:true})).toHaveCount(0);
+    await expect(management.locator('iframe')).toHaveCount(0,{timeout:20000});
+    await expect.poll(()=>management.evaluate(()=>Object.keys(sessionStorage).filter(key=>key.startsWith('sandstorm.workspace.grains.')).flatMap(key=>JSON.parse(sessionStorage.getItem(key))).some(tab=>tab.id==='alice-grain'))).toBe(false);
+    grainStates.clear();changed();
+    await management.reload();
+    await management.getByRole('link',{name:'Alice grain',exact:true}).waitFor();
+    await expect(management.locator('iframe')).toHaveCount(0);
+    await management.close();
 
     // Each browser tab owns its reload workspace; shared authentication does
     // not share the open-grain list.

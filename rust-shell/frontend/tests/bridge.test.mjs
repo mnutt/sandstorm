@@ -549,3 +549,19 @@ test('native login transfers its account token only after successful session cre
     assert.equal(committed,failure==='none');assert.equal(disposed,true);
   }
 });
+
+
+test('grain management binds the account and rechecks cancellation before writing', async () => {
+  let allowed=true;const writes=[];
+  const bridge=createRustShellBridge({authorize:async()=>allowed?{name:'Alice',expires:Date.now()+60000}:null,
+    manageGrain:async(account,id,operation,beforeWrite)=>{await beforeWrite();writes.push([account,id,operation]);return {};}});
+  const state='a'.repeat(64),code=await bridge.issue('alice','hash',state);
+  const {token}=await bridge.handle('exchange',{code,state});
+  await bridge.handle('manageGrain',{token,grainId:'grain',operation:'trash',accountId:'bob'});
+  assert.deepEqual(writes,[['alice','grain','trash']]);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(bridge.handle('manageGrain',{token,grainId:'grain',operation:'remove'},controller.signal),{status:409});
+  allowed=false;
+  await assert.rejects(bridge.handle('manageGrain',{token,grainId:'grain',operation:'restore'}),{status:401});
+  assert.equal(writes.length,1);
+});

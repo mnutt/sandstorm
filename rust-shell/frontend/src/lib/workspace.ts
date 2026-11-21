@@ -1,3 +1,5 @@
+import { GrainDisposition } from '../generated/shell';
+import { grainDisposition } from './grain-management';
 import { readTabs, saveTabs } from './workspace-storage';
 import type { PowerboxActions } from './powerbox-native';
 import type { SharingActions } from './sharing';
@@ -65,11 +67,19 @@ export class GrainWorkspace {
     const tab: Tab = { grain: null, opening: true, background, service: undefined! };
     tab.service = new GrainService(this.connection, patch => {
       if (this.tabs.get(id) !== tab) return;
+      const wasLive = !!tab.grain;
       if ('activeGrain' in patch) tab.grain = patch.activeGrain ?? null;
       if ('openingGrain' in patch) tab.opening = !!patch.openingGrain;
       if (patch.grainError !== undefined) this.changed({grainError:patch.grainError});
       if (tab.grain && this.saved.get(id) !== tab.grain.path) { this.saved.set(id,tab.grain.path); this.persist(); }
-      if (!tab.grain && !tab.opening) this.tabs.delete(id);
+      if (!tab.grain && !tab.opening) {
+        this.tabs.delete(id);
+        if (wasLive && !this.connection.signal?.aborted) void grainDisposition(this.connection,id).then(state=>{
+          if (generation === this.generation && !this.tabs.has(id) && state !== GrainDisposition.ACTIVE) {
+            this.saved.delete(id); this.persist();
+          }
+        }).catch(()=>{});
+      }
       this.publish();
     });
     this.tabs.set(id, tab);

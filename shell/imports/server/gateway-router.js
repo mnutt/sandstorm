@@ -975,6 +975,12 @@ export async function keepRustSharedGrainSession(db, handle) {
 // Narrow entry point for the experimental shell. The gateway still performs
 // the full permission check and attaches its existing revocation observer.
 export async function createRustGrainSession(db, accountId, grainId, parentOrigin, powerboxRequest) {
+  const savedShares = await db.collections.apiTokens.find({grainId,"owner.user.accountId":accountId,
+    objectId:{$exists:false}}, {fields:{trashed:1}}).fetchAsync();
+  if (savedShares.length && savedShares.every(token=>token.trashed)) {
+    const owned = await db.collections.grains.findOneAsync({_id:grainId,userId:accountId});
+    if (!owned) throw new Meteor.Error(403,"Restore this grain from Trash before opening it.");
+  }
   const grain = await db.collections.grains.findOneAsync({ _id: grainId });
   if (!grain || grain.trashed || grain.suspended ||
       !await SandstormPermissions.mayOpenGrainAsync(db, { grain: { _id: grainId, accountId } })) {

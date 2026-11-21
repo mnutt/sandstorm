@@ -1,3 +1,4 @@
+import { manageGrainForUser } from "/imports/shared/grain-shared";
 import { waitForGrainResponse } from "./rust-shell-grain-ready.mjs";
 import { appInstallPermissions } from "/imports/server/install-server";
 import { grainMenu } from "/imports/server/rust-shell-grains";
@@ -2405,6 +2406,52 @@ if(isTesting) {
         require((await removed)?.status === 410, "Incorrect removed-session result");
         return true;
       } finally { await sessions.removeAsync(sessionId); }
+    },
+
+    async testRustGrainManagement() {
+      if (!this.userId) throw new Meteor.Error(403,"Sign in first");
+      const prefix='rust-management-'+Random.id();
+      const owned=prefix+'-owned', shared=prefix+'-shared';
+      const mine=prefix+'-mine', other=prefix+'-other', ui=prefix+'-session';
+      const require=(ok,message)=>{if(!ok)throw new Error(message);};
+      const call=(id,operation)=>manageGrainForUser(this.userId,id,operation,async()=>{});
+      const query=trash=>grainMenu(globalDb,this.userId,process.env.ROOT_URL,0,{search:prefix,appId:'',ownership:'all',sort:'title',trash});
+      try {
+        await globalDb.collections.grains.insertAsync({_id:owned,userId:this.userId,title:owned,appId:'test',packageId:prefix+'-package'});
+        await globalDb.collections.grains.insertAsync({_id:shared,userId:'other-account',title:shared});
+        for(const [id,accountId] of [[mine,this.userId],[other,'other-account']]) {
+          await globalDb.collections.apiTokens.insertAsync({_id:id,grainId:shared,created:new Date(),owner:{user:{accountId,title:shared,
+            denormalizedGrainMetadata:{appId:'test',appTitle:{defaultText:'Test'}}}}});
+        }
+        await globalDb.collections.sessions.insertAsync({_id:ui,grainId:shared,userId:this.userId,rustShellSession:true});
+        let denied=false;
+        try {await call(owned,'remove');} catch(_){denied=true;}
+        require(denied,'Active grain was permanently deleted');
+        require((await query(false)).grains.length===2,'Active management list is incomplete');
+        for(const id of [owned,shared])await call(id,'trash');
+        require((await query(true)).grains.length===2 && (await query(false)).grains.length===0,'Trash query did not move both owned and shared grains');
+        require(!await globalDb.collections.sessions.findOneAsync(ui),'Trashed recipient session remained open');
+        require(!(await globalDb.collections.apiTokens.findOneAsync(other)).trashed,'Trashing affected another recipient');
+        require((await call(shared,'read')).state==='trashed','Shared trash state missing');
+        for(const id of [owned,shared])await call(id,'restore');
+        require((await query(false)).grains.length===2 && !(await query(true)).grains.length,'Restore did not update canonical lists');
+        // Use the real legacy method too: both shells share the same operations.
+        await getMethodHandler('moveGrainsToTrash').call({userId:this.userId,isSimulation:false,
+          connection:{sandstormBackend:globalThis.globalBackend}},[owned,shared]);
+        await call(shared,'remove');
+        require(!!await globalDb.collections.grains.findOneAsync(shared),'Forgetting a share deleted its owner data');
+        require(!!await globalDb.collections.apiTokens.findOneAsync(other) && !await globalDb.collections.apiTokens.findOneAsync(mine),'Forgetting escaped recipient scope');
+        await call(owned,'remove');
+        require(!await globalDb.collections.grains.findOneAsync(owned),'Owned trashed grain was not deleted');
+        denied=false;
+        try {await call(shared,'trash');} catch(_){denied=true;}
+        require(denied,'Foreign unsaved grain was manageable');
+        return true;
+      } finally {
+        await globalDb.collections.sessions.removeAsync(ui);
+        await globalDb.removeApiTokens({_id:{$in:[mine,other]}});
+        await globalDb.collections.grains.removeAsync({_id:{$in:[owned,shared]}});
+      }
     },
 
     async testRustGrainQueries() {

@@ -11,7 +11,7 @@ const unauthorized = () => Object.assign(new Error("Sign in again through the ma
 
 // A deliberately narrow adapter. Grants and grain leases remain ephemeral. No browser account IDs, Mongo query
 // selectors, Meteor resume tokens or privileged backend capabilities cross it.
-export function createRustShellBridge({ authorize, nativeAuth, logoutDestination, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
+export function createRustShellBridge({ authorize, nativeAuth, logoutDestination, snapshot, dismiss, markRead, observe, notification, accountSettings, install, listApps, createGrain, manageGrain, getProfile, updateProfile, uploadPicture, grains = {}, shared = {}, sessionStore = memorySessionStore(), now = Date.now }) {
   const creating = new Set();
   const installing = new Set();
   const notificationWrites = new Set();
@@ -238,6 +238,18 @@ export function createRustShellBridge({ authorize, nativeAuth, logoutDestination
         };
         return action === "updateProfile" ? confirmMutation(read) : read();
       }
+      if (action === "manageGrain") {
+        if (!manageGrain || typeof input.grainId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(input.grainId) ||
+            !['read','trash','restore','remove'].includes(input.operation)) throw Object.assign(new Error('Invalid grain action.'),{status:400});
+        const beforeWrite = async () => {
+          await session(input.token);
+          if (signal.aborted) throw Object.assign(new Error('Grain action disconnected.'),{status:409});
+        };
+        const result = await manageGrain(record.accountId,input.grainId,input.operation,beforeWrite);
+        if (input.operation === 'read') await session(input.token);
+        else await confirmMutation(beforeWrite);
+        return result;
+      }
       if (action === "listApps") {
         if (!listApps) throw Object.assign(new Error("Apps unavailable."), { status: 503 });
         const page = input.page ?? 0;
@@ -276,8 +288,8 @@ export function createRustShellBridge({ authorize, nativeAuth, logoutDestination
       if (action === "session") return { account: { name: account.name, pictureUrl: account.pictureUrl || "", key: hash(record.accountId) }, expires: record.expires };
       const query = input.query;
       if (query !== undefined && (!query || typeof query !== 'object' || Array.isArray(query) ||
-          Object.keys(query).some(key=>!['search','appId','sort','ownership'].includes(key)) ||
-          typeof query.search !== 'string' || typeof query.appId !== 'string' ||
+          Object.keys(query).some(key=>!['search','appId','sort','ownership','trash'].includes(key)) ||
+          (query.trash !== undefined && typeof query.trash !== 'boolean') || typeof query.search !== 'string' || typeof query.appId !== 'string' ||
           !['recent','title'].includes(query.sort) || !['all','owned','shared'].includes(query.ownership))) {
         throw Object.assign(new Error('Invalid grain query.'),{status:400});
       }
@@ -366,7 +378,7 @@ export function bridgeHandler(bridge) {
     const disconnected = () => controller.abort();
     res.once("close", disconnected);
     try {
-      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|waitSharedGrainResponse|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|waitGrainResponse|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
+      if (req.method !== "POST" || !/^\/(inspectSharedGrain|openSharedGrain|keepSharedGrain|waitSharedGrainResponse|closeSharedGrain|exchange|session|snapshot|watch|dismiss|read|logout|openGrain|keepGrain|waitGrainResponse|closeGrain|renderTemplate|powerbox|renameGrain|getSharing|createShare|updateShare|listApps|createGrain|manageGrain|getProfile|updateProfile|uploadPicture|install|notification|accountSettings|nativeAuth)$/.test(req.url)) {
         throw Object.assign(new Error("Not found."), { status: 404 });
       }
       const parts = [];

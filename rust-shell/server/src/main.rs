@@ -215,6 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Router::new()
             .route_service("/notifications", index.clone())
             .route_service("/grains", index.clone())
+            .route_service("/trash", index.clone())
             .route_service("/install", index.clone())
             .route_service("/install/{id}", index.clone())
             .route_service("/install/{id}/", index.clone())
