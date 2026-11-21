@@ -307,6 +307,7 @@ async fn native_reads_and_session_revocation_without_meteor() {
     .await
     .unwrap();
     assert_eq!(session.info().await.unwrap().account.name, "Alice");
+    exercise_profiles(&repo, &session).await;
     assert!(session.logout().await.is_ok());
     assert_eq!(
         repo.session(&cookie).await.unwrap_err(),
@@ -334,4 +335,172 @@ fn dates_match_javascript_and_hashes_match_existing_tokens() {
         hash("abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
+}
+
+async fn exercise_profiles(repo: &Repository, session: &crate::session::Session) {
+    use crate::read_model::ProfileEdit;
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let edit = || ProfileEdit {
+        name: "Native Alice".into(),
+        handle: "native_alice".into(),
+        pronoun: "robot".into(),
+    };
+    let before = session.profile().await.unwrap();
+    for invalid in [
+        ProfileEdit {
+            name: " ".into(),
+            ..edit()
+        },
+        ProfileEdit {
+            handle: "Upper Case".into(),
+            ..edit()
+        },
+        ProfileEdit {
+            pronoun: "invalid".into(),
+            ..edit()
+        },
+    ] {
+        assert!(matches!(
+            repo.update_profile(&session.token, invalid).await,
+            Err(Error::Invalid(_))
+        ));
+    }
+    let users = repo.db.collection::<Document>("users");
+    users
+        .update_one(
+            doc! {"_id":"alice"},
+            doc! {"$set":{"profile.extra":"keep","unverifiedEmail":"keep@example.test"}},
+        )
+        .await
+        .unwrap();
+    let updated = session.update_profile(edit()).await.unwrap();
+    assert_eq!(updated.name, "Native Alice");
+    assert_ne!(updated.version, before.version);
+    assert_eq!(
+        session.snapshot().await.unwrap().profile_version,
+        updated.version
+    );
+    let alice = users.find_one(doc! {"_id":"alice"}).await.unwrap().unwrap();
+    assert!(alice.get_bool("hasCompletedSignup").unwrap());
+    assert_eq!(super::presentation::string(&alice, "profile.extra"), "keep");
+    assert_eq!(
+        super::presentation::string(&alice, "unverifiedEmail"),
+        "keep@example.test"
+    );
+    let png=STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=").unwrap();
+    assert!(matches!(
+        repo.update_picture(&session.token, vec![0; 65537]).await,
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        repo.update_picture(&session.token, b"<svg/>".to_vec())
+            .await,
+        Err(Error::Invalid(_))
+    ));
+    repo.update_picture(&session.token, png.clone())
+        .await
+        .unwrap();
+    let profile = session.profile().await.unwrap();
+    let id = profile
+        .picture_url
+        .strip_prefix("/profile-picture/")
+        .unwrap();
+    let assets = repo.db.collection::<Document>("staticAssets");
+    let picture = repo.picture_asset(id).await.unwrap().unwrap();
+    assert_eq!(picture.content, png);
+    assert_eq!(picture.mime_type, "image/png");
+    assert!(!picture.gzip);
+    repo.update_picture(&session.token, png.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        assets
+            .find_one(doc! {"_id":id})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_i32("refcount")
+            .unwrap(),
+        1
+    );
+    assert_eq!(session.profile().await.unwrap().version, profile.version);
+    // The legacy shell hashes the static-host URL, even though native display
+    // uses our same-origin endpoint. Both shells must agree on profile versions.
+    assert_eq!(
+        profile.version,
+        hash(&format!(
+            r#"["Native Alice","native_alice","robot","https://static.example.test/{id}"]"#
+        ))
+    );
+    let bob_token = "b".repeat(64);
+    users.insert_one(doc!{"_id":"profile-bob","profile":{"name":"Bob"},"loginCredentials":[],"services":{"resume":{"loginTokens":[{"hashedToken":"bob-login","when":DateTime::now()}]}}}).await.unwrap();
+    repo.db.collection::<Document>("rustShellLinkedSessions").insert_one(doc!{"_id":hash(&bob_token),"accountId":"profile-bob","loginHash":"bob-login","expires":DateTime::now().timestamp_millis()+3600000}).await.unwrap();
+    repo.update_picture(&bob_token, png).await.unwrap();
+    assert_eq!(
+        assets
+            .find_one(doc! {"_id":id})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_i32("refcount")
+            .unwrap(),
+        2
+    );
+    assert_eq!(repo.profile(&bob_token).await.unwrap().name, "Bob");
+    let jpeg = b"\xff\xd8\xfftest".to_vec();
+    repo.update_picture(&session.token, jpeg.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        assets
+            .find_one(doc! {"_id":id})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_i32("refcount")
+            .unwrap(),
+        1
+    );
+    repo.update_picture(&bob_token, jpeg).await.unwrap();
+    assert!(assets.find_one(doc! {"_id":id}).await.unwrap().is_none());
+    assets.insert_one(doc!{"_id":"script","mimeType":"text/html","refcount":1,"content":mongodb::bson::Binary{subtype:mongodb::bson::spec::BinarySubtype::Generic,bytes:b"<script/>".to_vec()}}).await.unwrap();
+    assert!(repo.picture_asset("script").await.unwrap().is_none());
+    // A revoke after the transaction's authorization read must conflict with its
+    // user write. It cannot commit a stale-authority profile mutation.
+    let (mut transaction, _) = repo.begin_write(&session.token).await.unwrap();
+    users
+        .update_one(
+            doc! {"_id":"alice"},
+            doc! {"$set":{"services.resume.loginTokens":[]}},
+        )
+        .await
+        .unwrap();
+    assert!(users
+        .update_one(
+            doc! {"_id":"alice"},
+            doc! {"$set":{"profile.name":"Unauthorized"}}
+        )
+        .session(&mut transaction)
+        .await
+        .is_err());
+    let _ = transaction.abort_transaction().await;
+    assert_eq!(
+        super::presentation::string(
+            &users.find_one(doc! {"_id":"alice"}).await.unwrap().unwrap(),
+            "profile.name"
+        ),
+        "Native Alice"
+    );
+    assert!(matches!(
+        repo.update_profile(&session.token, edit()).await,
+        Err(Error::Unauthorized)
+    ));
+    assert!(matches!(
+        repo.update_picture(&session.token, b"\xff\xd8\xff".to_vec())
+            .await,
+        Err(Error::Unauthorized)
+    ));
+    // Restore the fixture for the caller's durable logout check.
+    users.update_one(doc!{"_id":"alice"},doc!{"$set":{"services.resume.loginTokens":[{"hashedToken":"login","when":DateTime::now()}]}}).await.unwrap();
+    repo.revoke(&bob_token).await.unwrap();
 }

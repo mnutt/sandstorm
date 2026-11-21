@@ -7,6 +7,7 @@ mod interop;
 mod list_delta;
 mod notification;
 mod observation;
+mod picture;
 mod powerbox;
 mod profile;
 mod read_model;
@@ -267,6 +268,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let url = main_url.clone();
             async move { Redirect::temporary(&url) }
         }))
+        .route("/profile-picture", post(picture::upload))
+        .route("/profile-picture/{id}", get(picture::download))
         .route("/download-backup/{id}", get(backup::download))
         .route("/rpc", get(upgrade))
         .route("/shared-rpc", get(upgrade_shared))
@@ -278,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .with_state(state)
         .layer(DefaultBodyLimit::max(transport::MAX_MESSAGE))
-        .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
+        .layer(SetResponseHeaderLayer::if_not_present(header::CACHE_CONTROL, HeaderValue::from_static("no-store")))
         .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
         .layer(axum::middleware::from_fn_with_state(shell_policy, |State(shell_policy): State<HeaderValue>, request: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| async move {
             let policy = if request.uri().path() == "/offer-template.html" {
@@ -298,7 +301,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if fixture {
             "fixture data only"
         } else {
-            "Meteor notification bridge"
+            "native Mongo repository"
         }
     );
     // Axum hands Send sockets to this LocalSet; all capability state stays local.

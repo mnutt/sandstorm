@@ -206,7 +206,7 @@ impl api::account::Server for Account {
         _: api::account::ReadProfileParams,
         mut results: api::account::ReadProfileResults,
     ) -> capnp::Result<()> {
-        match self.0.call("getProfile", json!({})).await {
+        match self.0.profile().await {
             Ok(value) => crate::profile::write(value, results.get().init_result().init_value()),
             Err(error) => failure(error, results.get().init_result().init_failure()),
         }
@@ -219,13 +219,11 @@ impl api::account::Server for Account {
         let profile = params.get()?.get_profile()?;
         let value = self
             .0
-            .call(
-                "updateProfile",
-                json!({"profile":{
-                    "name":profile.get_name()?.to_str()?, "handle":profile.get_handle()?.to_str()?,
-                    "pronoun":crate::profile::pronoun_name(profile.get_pronoun()?)
-                }}),
-            )
+            .update_profile(crate::read_model::ProfileEdit {
+                name: profile.get_name()?.to_str()?.into(),
+                handle: profile.get_handle()?.to_str()?.into(),
+                pronoun: crate::profile::pronoun_name(profile.get_pronoun()?).into(),
+            })
             .await;
         match value {
             Ok(value) => crate::profile::write(value, results.get().init_result().init_value()),
@@ -237,8 +235,13 @@ impl api::account::Server for Account {
         _: api::account::PreparePictureUploadParams,
         mut results: api::account::PreparePictureUploadResults,
     ) -> capnp::Result<()> {
-        let value = self.0.call("uploadPicture", json!({})).await;
-        complete!(value, results.get().init_result(), url)
+        match self.0.picture_upload().await {
+            Ok(url) => {
+                results.get().init_result().init_value().set_url(url);
+                Ok(())
+            }
+            Err(error) => failure(error, results.get().init_result().init_failure()),
+        }
     }
 
     async fn read(

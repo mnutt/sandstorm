@@ -1,12 +1,14 @@
 //! Mongo is a storage adapter, not part of the browser capability contract.
 //! During coexistence, reads and linked-session revocation live here; application
-//! mutations continue through their named Meteor owners.
+//! unported mutations continue through their named Meteor owners.
 mod lists;
 mod presentation;
+mod profile;
 mod sessions;
 mod snapshot;
 #[cfg(test)]
 mod tests;
+mod writes;
 
 use crate::read_model::{AccountInfo, AppList, GrainQuery, Pages, SessionInfo, Snapshot};
 use futures::TryStreamExt;
@@ -29,11 +31,13 @@ pub struct Repository {
 pub enum Error {
     Unavailable,
     Unauthorized,
+    Invalid(&'static str),
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Unavailable => "The database is temporarily unavailable.",
+            Self::Invalid(message) => message,
             Self::Unauthorized => "Sign in to Sandstorm again.",
         })
     }

@@ -77,9 +77,52 @@ async function withoutMeteor(directory, page, context, grainId, login) {
     await page.locator('.app-tile[href^="/apps/"]').first().waitFor();
     await mongo(directory, `const account=db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId; db.userActions.updateMany({userId:account},{$set:{appTitle:{defaultText:'Updated while Meteor stopped'}}})`);
     await page.locator('.app-tile').filter({hasText:'Updated while Meteor stopped'}).first().waitFor();
+    // Native profile reads and writes must remain usable with Meteor stopped.
+    await page.goto(origin + '/account');
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue(/Alice/);
+    await page.getByLabel('Display name', {exact:true}).fill('Alice Native');
+    await page.getByLabel('Handle', {exact:true}).fill('alice_native');
+    await page.getByLabel('Pronouns', {exact:true}).selectOption('robot');
+    await page.getByRole('button', {name:'Save profile', exact:true}).click();
+    await page.getByText('Profile saved.', {exact:true}).waitFor();
+    await mongo(directory, `const user=db.users.findOne({_id:db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId}); if(user.profile.name!=='Alice Native'||user.profile.handle!=='alice_native'||user.profile.pronoun!=='robot'||!user.hasCompletedSignup) throw new Error('Native profile not persisted'); db.users.updateOne({_id:user._id},{$set:{'profile.name':'Alice External'}})`);
+    await page.getByText('The profile was updated by someone else.', {exact:true}).waitFor();
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice Native');
+    await page.locator('.profile-update').getByRole('button', {name:'Refresh', exact:true}).click();
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice External');
+    const image = Buffer.from(await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width=canvas.height=32;
+      const ctx=canvas.getContext('2d'); ctx.fillStyle='#1286ab'; ctx.fillRect(0,0,32,32);
+      return canvas.toDataURL('image/png').split(',')[1];
+    }), 'base64');
+    await page.getByLabel('Choose an image', {exact:true}).setInputFiles({name:'native.png',mimeType:'image/png',buffer:image});
+    const uploadRequest = page.waitForRequest(request => new URL(request.url()).pathname==='/profile-picture' && request.method()==='POST');
+    await page.getByRole('button', {name:'Upload picture', exact:true}).click();
+    const uploadUrl = (await uploadRequest).url();
+    await page.getByText('Profile picture updated.', {exact:true}).waitFor();
+    const avatar = page.getByAltText('Current avatar', {exact:true});
+    const src = await avatar.getAttribute('src');
+    assert.ok(src.startsWith('/profile-picture/'));
+    await expect.poll(() => avatar.evaluate(img => img.naturalWidth)).toBe(512);
+    const fetched=await context.request.get(origin+src);
+    assert.equal(fetched.status(),200); assert.equal(fetched.headers()['content-type'],'image/jpeg');
+    assert.match(fetched.headers()['cache-control'],/immutable/);
+    assert.equal((await context.request.get(origin+src,{headers:{Cookie:''}})).status(),200);
+    assert.ok((await fetched.body()).length<=65536);
+    // A prepared upload cannot cross accounts or bypass same-origin admission.
+    const wrong = new URL(uploadUrl); wrong.searchParams.set('account','wrong');
+    assert.equal((await context.request.post(wrong.href,{headers:{Origin:origin},data:image})).status(),403);
+    assert.equal((await context.request.post(uploadUrl,{headers:{Origin:'https://other.invalid'},data:image})).status(),403);
+    assert.equal((await context.request.post(uploadUrl,{headers:{Origin:origin},data:Buffer.alloc(65537)})).status(),400);
+    assert.equal((await context.request.post(uploadUrl,{headers:{Origin:origin},data:Buffer.from('<svg/>')})).status(),400);
+    await page.reload();
+    await expect(page.getByLabel('Display name', {exact:true})).toHaveValue('Alice External');
+    await expect.poll(() => page.getByAltText('Current avatar',{exact:true}).evaluate(img => img.naturalWidth)).toBe(512);
+    console.log('Verified Meteor stopped: native profile edits, external-change banner, cropped avatar upload/serving, upload admission');
     // Invalidate an already-open root RPC, not just the next HTTP request.
     await mongo(directory, `db.users.updateOne({_id:db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId},{$set:{suspended:{reason:'isolated test'}}})`);
     await expect.poll(async () => (await context.request.get(origin + '/auth/session')).status()).toBe(401);
+    assert.equal((await context.request.post(uploadUrl,{headers:{Origin:origin},data:image})).status(),401);
     await expect(page.getByRole('link', {name:'Sign in with Sandstorm', exact:true})).toBeVisible({timeout:15000});
     await mongo(directory, `db.users.updateOne({_id:db.grains.findOne({_id:${JSON.stringify(grainId)}}).userId},{$unset:{suspended:''}})`);
     await page.reload();

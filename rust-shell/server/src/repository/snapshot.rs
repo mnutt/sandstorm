@@ -3,7 +3,6 @@ use super::sessions::Account;
 use super::*;
 use crate::read_model::Entry;
 use mongodb::bson::Bson;
-use serde_json::json;
 
 impl Repository {
     pub(super) async fn snapshot(
@@ -44,18 +43,12 @@ impl Repository {
             .await?
             .is_some();
         let (grains, grains_limited) = self.grains(&account.account_id, grain_page, query).await?;
-        let profile = json!([
-            at(&account.user, "profile.name").and_then(Bson::as_str),
-            at(&account.user, "profile.handle").and_then(Bson::as_str),
-            at(&account.user, "profile.pronoun").and_then(Bson::as_str),
-            account.picture
-        ]);
         // Hash the account's material app projection, never a global DB revision.
         // Other users' writes must not reveal their activity in our app version.
         let apps = self.apps(&account.account_id, None, "").await?;
         let mut result = Snapshot {
             account_picture_url: account.picture.clone(),
-            profile_version: hash(&profile.to_string()),
+            profile_version: self.profile_projection(&account.user).version,
             apps_version: hash(&serde_json::to_string(&apps).map_err(|_| unavailable())?),
             entries,
             total: total.try_into().unwrap_or(u32::MAX),

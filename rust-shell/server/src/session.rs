@@ -2,7 +2,7 @@
 //! retain their existing Meteor owners. A configured repository never falls back.
 use crate::{
     bridge::{Bridge, Error},
-    read_model::{AppList, GrainQuery, Pages, SessionInfo, Snapshot},
+    read_model::{AppList, GrainQuery, Pages, Profile, ProfileEdit, SessionInfo, Snapshot},
     repository::Repository,
 };
 use axum::http::StatusCode;
@@ -20,6 +20,7 @@ pub struct Session {
 impl From<crate::repository::Error> for Error {
     fn from(error: crate::repository::Error) -> Self {
         let status = match error {
+            crate::repository::Error::Invalid(_) => StatusCode::BAD_REQUEST,
             crate::repository::Error::Unauthorized => StatusCode::UNAUTHORIZED,
             crate::repository::Error::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
@@ -45,6 +46,29 @@ impl Session {
             Some(repo) => Ok(repo.session(&self.token).await?),
             None => self.read("session", json!({})).await,
         }
+    }
+    pub async fn profile(&self) -> Result<Profile, Error> {
+        match &self.repository {
+            Some(repo) => Ok(repo.profile(&self.token).await?),
+            None => self.read("getProfile", json!({})).await,
+        }
+    }
+    pub async fn update_profile(&self, edit: ProfileEdit) -> Result<Profile, Error> {
+        match &self.repository {
+            Some(repo) => Ok(repo.update_profile(&self.token, edit).await?),
+            None => self.read("updateProfile", json!({"profile":edit})).await,
+        }
+    }
+    pub async fn picture_upload(&self) -> Result<String, Error> {
+        if let Some(repo) = &self.repository {
+            let info = repo.session(&self.token).await?;
+            return Ok(format!("/profile-picture?account={}", info.account.key));
+        }
+        let value = self.call("uploadPicture", json!({})).await?;
+        value["uploadUrl"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or((StatusCode::BAD_GATEWAY, "Invalid upload URL".into()))
     }
     pub async fn apps(&self, page: u32, app_id: &str) -> Result<AppList, Error> {
         match &self.repository {

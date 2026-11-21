@@ -88,7 +88,7 @@ pub(super) fn regex_literal(value: &str) -> String {
 }
 
 impl Repository {
-    pub(super) fn picture(&self, user: &Document) -> String {
+    pub(super) fn canonical_picture(&self, user: &Document) -> String {
         let picture = string(user, "profile.picture");
         if !picture.is_empty() {
             return format!("{}/{}", self.static_prefix, encode(&picture));
@@ -103,6 +103,24 @@ impl Repository {
                 encode(&identicon.chars().take(32).collect::<String>())
             )
         }
+    }
+    pub(super) fn picture(&self, user: &Document) -> String {
+        let picture = string(user, "profile.picture");
+        if !picture.is_empty() {
+            return format!("/profile-picture/{}", encode(&picture));
+        }
+        let identicon = string(user, "profile.identicon");
+        if identicon.is_empty() {
+            return String::new();
+        }
+        let digits: Vec<usize> = identicon
+            .chars()
+            .take(32)
+            .map(|c| c.to_digit(16).unwrap_or(0) as usize)
+            .chain(std::iter::repeat(0))
+            .take(32)
+            .collect();
+        render_identicon(&digits, 256.0)
     }
     pub(super) fn icon(&self, app_id: &str, icon: Option<&Document>, grid: bool) -> String {
         if let Some(icon) = icon {
@@ -157,6 +175,10 @@ fn identicon(app_id: &str, size: f64) -> String {
                 % 16
         })
         .collect();
+    render_identicon(&digits, size)
+}
+
+fn render_identicon(digits: &[usize], size: f64) -> String {
     let hue = digits[25..].iter().fold(0, |v, d| v * 16 + d) as f64 / 0xfffffff as f64 * 6.0;
     let sat = [
         0.85,

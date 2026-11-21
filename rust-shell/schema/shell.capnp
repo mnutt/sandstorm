@@ -263,7 +263,7 @@ interface Account {
   readProfile @9 () -> (result :Result(AccountProfile));
   updateProfile @10 (profile :ProfileEdit) -> (result :Result(AccountProfile));
   preparePictureUpload @11 () -> (result :Result(Url));
-  # The one-use upload URL targets the existing streaming image validator.
+  # Returns an account-bound, same-origin image upload URL; POST with the session cookie.
   # Account authority is revalidated for every operation. Never replay mutations.
 
   read @0 () -> (result :Result(AccountState));

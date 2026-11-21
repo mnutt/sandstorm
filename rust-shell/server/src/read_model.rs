@@ -124,3 +124,20 @@ pub struct SessionInfo {
     pub account: AccountInfo,
     pub expires: i64,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub name: String,
+    pub handle: String,
+    pub pronoun: String,
+    #[serde(default)]
+    pub picture_url: String,
+    pub version: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProfileEdit {
+    pub name: String,
+    pub handle: String,
+    pub pronoun: String,
+}

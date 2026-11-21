@@ -1,15 +1,6 @@
+use crate::read_model::Profile;
 use crate::shell_capnp as api;
-use serde::Deserialize;
 
-#[derive(Deserialize)]
-struct Profile {
-    name: String,
-    handle: String,
-    pronoun: String,
-    #[serde(default, rename = "pictureUrl")]
-    picture_url: String,
-    version: String,
-}
 fn pronoun(value: &str) -> capnp::Result<api::ProfilePronoun> {
     Ok(match value {
         "neutral" => api::ProfilePronoun::Neutral,
@@ -27,12 +18,7 @@ pub fn pronoun_name(value: api::ProfilePronoun) -> &'static str {
         api::ProfilePronoun::Robot => "robot",
     }
 }
-pub fn write(
-    value: serde_json::Value,
-    mut out: api::account_profile::Builder<'_>,
-) -> capnp::Result<()> {
-    let profile: Profile = serde_json::from_value(value)
-        .map_err(|_| capnp::Error::failed("Invalid profile response".into()))?;
+pub fn write(profile: Profile, mut out: api::account_profile::Builder<'_>) -> capnp::Result<()> {
     out.set_name(profile.name);
     out.set_handle(profile.handle);
     out.set_pronoun(pronoun(&profile.pronoun)?);

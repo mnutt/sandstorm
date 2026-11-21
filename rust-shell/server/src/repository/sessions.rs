@@ -31,6 +31,18 @@ impl Repository {
         let login_hash = string(&linked, "loginHash");
         let user = self.find("users",doc!{"_id":&account_id,"suspended":{"$exists":false},
             "services.resume.loginTokens.hashedToken":&login_hash,"loginCredentials":{"$exists":true}}).await?.ok_or_else(denied)?;
+        self.account_from_documents(&linked, user)
+    }
+
+    pub(super) fn account_from_documents(
+        &self,
+        linked: &Document,
+        user: Document,
+    ) -> Result<Account, Error> {
+        let now = mongodb::bson::DateTime::now().timestamp_millis();
+        let account_id = string(linked, "accountId");
+        let login_hash = string(linked, "loginHash");
+        let expires = millis(at(linked, "expires")).ok_or_else(denied)?;
         if at(&user, "loginCredentials")
             .and_then(|v| v.as_array())
             .is_none()

@@ -109,7 +109,7 @@ export class ProfileService {
       const signal = AbortSignal.any([lifetime, AbortSignal.timeout(30000)]);
       signal.throwIfAborted();
       sent = true;
-      const response = await fetch(upload.url, {method:'POST',body:image,credentials:'omit',referrerPolicy:'no-referrer',redirect:'error',signal});
+      const response = await fetch(upload.url, {method:'POST',body:image,credentials:'same-origin',referrerPolicy:'no-referrer',redirect:'error',signal});
       if (!response.ok) {
         if (response.status >= 400 && response.status < 500) throw new ProfileInputError('The server rejected the image. Choose an image and try uploading again.');
         throw new Error('Picture upload failed.');

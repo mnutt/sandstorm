@@ -2,7 +2,7 @@
 
 A separate Rust/Axum process serving a static Svelte 5 / TypeScript frontend.
 This is an initial spike for `~/docs/sandstorm/new-architecture.md`, using
-native Mongo-backed session validation, notifications, and grain/app lists when installed.
+native Mongo-backed session validation, profile operations, notifications, and grain/app lists when installed.
 Standalone runs use fixtures, including a separate C++ capability fixture for
 browser → Rust → C++ RPC. Unported commands and sign-in providers still use a private Meteor bridge.
 
@@ -10,7 +10,7 @@ browser → Rust → C++ RPC. Unported commands and sign-in providers still use 
 
 `server/src/read_model.rs` defines typed application read models; RPC builders and
 Mongo documents stay on opposite sides of this boundary. `session.rs` coordinates
-authenticated reads and the remaining Meteor commands. `repository/` owns BSON
+authenticated reads/writes and the remaining Meteor commands. `repository/` owns BSON
 queries, existing login-token validation, list projections, and one shared database
 change stream. Database failures fail closed without deleting the login cookie or
 falling back to Meteor. The bridge read adapter is retained for isolated fixtures.
@@ -27,9 +27,9 @@ data, not global database activity. Change-stream interruption closes live
 subscriptions; reconnect reads fresh authorized snapshots.
 
 With Meteor unavailable an already authenticated browser can reload and read live
-grain/app lists. Opening grains, mutations, provider sign-in, profile operations,
-and static-host images still use existing Sandstorm services. This is the first
-storage migration slice, not a replacement for all of Meteor.
+grain/app lists, edit profiles, and upload/display avatars. Opening grains, other
+mutations, provider sign-in, credential settings, and app static-host images still
+use existing Sandstorm services.
 
 `make -C rust-shell test-mongo` starts a disposable single-node Mongo replica set
 using the bundled `mongod7`. It exercises reads, live updates, account isolation,
@@ -37,7 +37,8 @@ and session revocation without any Meteor process or bridge. It never accepts an
 installed database URI. It also checks idle expiry and Mongo restart recovery.
 The normal test suite covers the fixture bridge and RPC. `test-recovery` suspends
 only the isolated installation’s Meteor process and verifies authenticated reload,
-live grain/app writes, live suspension, and durable native logout.
+live grain/app writes, native profile edits and avatars, live suspension, and
+durable native logout.
 
 
 ## Run alongside Sandstorm
@@ -294,33 +295,39 @@ snapshot includes a version of the displayed profile fields; edits in another ta
 or the legacy shell show “The profile was updated by someone else.” with a
 **Refresh** button. Values and unsaved drafts remain untouched until Refresh is
 chosen. Own saves and picture uploads acknowledge their returned version.
-The page also displays and uploads profile pictures using the canonical static-asset
-endpoint. Choose a PNG or JPEG and explicitly upload it. The browser
-center-crops to 512×512, flattens transparency onto white, and encodes JPEG at 85%
-quality, reducing quality if necessary to meet the 64 KiB server limit. The original
-file is never uploaded. Selecting a file prepares a local thumbnail; Upload sends
-those exact preview bytes, and Cancel discards the selection. Preparation, upload errors, and success messages appear
-beside the image controls. The server checks image signatures and size, consumes the upload credential once,
-and manages asset references. Unused credentials expire after five minutes;
-issuing another Rust upload replaces that account’s previous unused Rust token.
-Upload bytes bypass RPC and omit cookies. The CSP permits the configured static
-host (`RUST_SHELL_WILDCARD_HOST`, supplied by the launcher), not arbitrary upload
-origins. Account changes/disconnect abort client uploads and discard late results;
-uncertain outcomes are never retried automatically. As in the legacy uploader,
-a credential already issued remains usable until consumed, replaced, or expired.
-Login methods and email use the native Account credential controls.
+The page displays and uploads avatars through Rust. Choose a PNG or JPEG and
+explicitly upload it. The browser center-crops to 512×512, flattens transparency
+onto white, and encodes JPEG at 85% quality, reducing quality if necessary to meet
+the existing 64 KiB server limit. The local thumbnail previews the exact upload
+bytes; Cancel discards the selection. Errors and success messages appear beside
+the image controls.
 
-`Account.readProfile`, `Account.updateProfile`, and `Account.preparePictureUpload`
-derive the account from the linked session, never
-a browser-supplied account ID. Updates use the same `updateProfileForUser` helper
-as Meteor's `updateProfile` method, preserving handle/pronoun validation and
-signup completion. Only these three profile fields are writable through `updateProfile`; picture
-uploads use their separate one-use credential. The bridge serializes updates per account and rechecks login/cancellation immediately before writes.
-Profile reads are reauthorized before returning. Credentials and other profile
-fields are preserved. All three operations return typed results; expected denials
-are shown directly, while transport failures leave mutation outcomes uncertain.
-Pronouns use an enum matching Meteor's existing neutral/male/female/robot choices.
-Superseded root-level profile RPC methods and the unused main-shell URL field are removed.
+`Account.readProfile` and `Account.updateProfile` use typed repository methods.
+Only name, handle, and pronoun are writable; handle/pronoun validation and signup
+completion match the existing shell. Other fields remain untouched. The shared
+profile-version calculation still uses the canonical static-host URL so both
+shells agree on changes, while native display uses Rust image URLs and inline
+identicons. Reads are reauthorized before returning.
+
+`Account.preparePictureUpload` returns an account-bound same-origin URL. POST
+sends the session cookie; Rust checks Origin, the selected account, and current
+authority before writing. Request bodies are drained for the gateway, with at
+most 64 KiB buffered even on rejection. Switching accounts
+cannot redirect an upload into the new account. There is no native upload token
+or credential surviving logout. Image signatures and the existing 64 KiB limit
+are checked server-side. `/profile-picture/:id` serves only PNG/JPEG static assets
+(including existing gzip-encoded images), with immutable caching and nosniff.
+Like the legacy static host, these image IDs are public, not account capabilities.
+
+`repository/writes.rs` defines the native transaction boundary. Touching the
+linked-session record serializes writes against logout; the user write detects
+concurrent token revocation, suspension, or profile changes. Native updates are
+not automatically replayed. Avatar reference increments, the profile pointer,
+and old-reference cleanup commit together, preserving the existing `staticAssets`
+format and hash algorithm. Rejected authorization explicitly aborts its
+transaction before returning. Known validation failures have safe messages;
+transport/commit failures leave the outcome uncertain. No schema migration or new
+dependency is needed. Credential settings and provider operations still use Meteor.
 
 The profile service owns request lifetimes and save outcomes across route changes.
 Disconnect clears account data; an unconfirmed save displays an explicit warning
