@@ -83,11 +83,20 @@ export function createRustShellBridge({ authorize, nativeAuth, logoutDestination
       }
       if (action === "nativeAuth") {
         if (!nativeAuth || !validSecret(input.flow) || !["options","sendEmail","email","dev","ldap","oauthStart","oauthFinish","oauthCancel","samlStart","samlFinish","samlCancel"].includes(input.operation)) throw Object.assign(new Error("Invalid sign-in request."), {status:400});
-        const result = await nativeAuth(input.operation,input.data,input.flow);
+        const result = await nativeAuth(input.operation,input.data,input.flow,signal);
         if (result.accountId && result.loginHash) {
-          if (signal.aborted) throw Object.assign(new Error("Sign-in disconnected."), {status:409});
-          const code = await this.issue(result.accountId,result.loginHash,input.flow);
-          return this.handle("exchange",{code,state:input.flow,previous:input.previous},signal);
+          try {
+            if (signal.aborted) throw Object.assign(new Error("Sign-in disconnected."), {status:409});
+            const code = await this.issue(result.accountId,result.loginHash,input.flow);
+            const linked = await this.handle("exchange",{code,state:input.flow,previous:input.previous},signal);
+            if (signal.aborted) {
+              await sessions.remove(hash(linked.token));
+              await leases.revoke(linked.token);
+              throw Object.assign(new Error("Sign-in disconnected."), {status:409});
+            }
+            result.commit?.();
+            return linked;
+          } finally { await result.dispose?.(); }
         }
         return result;
       }

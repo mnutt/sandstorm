@@ -1595,6 +1595,27 @@ if(isTesting) {
           const settingsResult = await settings('oauthFinish',{provider,request:linkPending.request});
           require(settingsResult.credentials.some(item=>item.id===identity+'-linked' && item.login),'OAuth credential was not linked for login');
           require(!JSON.stringify(settingsResult).includes(linkSecret),'Linking exposed an OAuth secret');
+          // A removed native request must never fall back to Meteor's browser
+          // credential-delivery handler, even when a callback arrives late.
+          for (const request of [pending,linkPending]) {
+            const lateSecret=Random.secret();
+            await OAuth._storePendingCredential(request.request,{serviceName:provider,serviceData:{}},lateSecret);
+            let status,body;
+            await OAuth._endOfLoginResponse({writeHead(code){status=code;},end(value){body=value;}},
+              {query:{state:new URL(request.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:request.request,secret:lateSecret}});
+            require(status===410 && !String(body).includes(lateSecret),'Consumed native callback exposed credentials');
+            require(!await OAuth.retrieveCredential(request.request,lateSecret),'Late native callback left credentials behind');
+          }
+          const canceled=await rustShellBridge.handle('nativeAuth',{operation:'oauthStart',data:{provider},flow});
+          await cancelOAuth(provider,'login:'+flow,canceled.request);
+          const canceledSecret=Random.secret();
+          await OAuth._storePendingCredential(canceled.request,{serviceName:provider,serviceData:{}},canceledSecret);
+          let canceledStatus;
+          await OAuth._endOfLoginResponse({writeHead(code){canceledStatus=code;},end(){}},
+            {query:{state:new URL(canceled.url).searchParams.get('state')},loginStyle:'popup',credentials:{token:canceled.request,secret:canceledSecret}});
+          require(canceledStatus===410,'Canceled native callback used legacy credential delivery');
+          require(!await OAuth.retrieveCredential(canceled.request,canceledSecret),'Canceled callback retained credentials');
+
           // A valid credential from another provider must not complete this flow.
           const otherEnabled = Accounts.loginServices[other].isEnabled;
           const otherRegistered = Accounts.oauth.serviceNames().includes(other);
@@ -1692,6 +1713,7 @@ if(isTesting) {
             await Meteor.users.insertAsync(account);
           }
           login = await rustNativeAuth('dev',{name},Crypto.randomBytes(32).toString('hex'));
+          login.commit();
           if (login.accountId !== account._id) throw new Error(name+' did not reopen the legacy account');
         } finally {
           if (login) await Meteor.users.updateAsync(login.accountId,{$pull:{'services.resume.loginTokens':{hashedToken:login.loginHash}}});

@@ -320,7 +320,15 @@ through a secret-protected loopback upgrade listener into Meteor’s existing DD
 handler. This avoids dependence on public DNS or gateway redirects. Existing login validators, organization checks,
 account creation, and login-token ownership remain in Meteor. Rust receives the
 linked session and sets its existing HttpOnly cookie; passwords and credential
-resume tokens are never persisted in frontend state or browser storage.
+resume tokens are never persisted in frontend state or browser storage. The login
+exchange tracks temporary tokens before checking cancellation, revokes late results,
+and transfers the account token only after the Rust session has been issued.
+Starting sign-in refreshes the flow cookie, including on an idle login page.
+OAuth and SAML share a five-minute attempt store with active expiry. Popup cleanup
+uses its own short-lived signal so leaving the page does not cancel cancellation.
+Native OAuth IDs remain recognizable after consumption, cancellation, or restart;
+late callbacks discard their credentials and return HTTP 410 instead of invoking
+Meteor's browser credential-delivery handler.
 
 GitHub, Google, and OIDC use their existing configured callback URLs. An expiring, server-side
 request map binds each flow to its provider and Rust sign-in cookie, linked account, or provider

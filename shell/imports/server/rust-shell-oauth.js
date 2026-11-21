@@ -1,3 +1,4 @@
+import { AuthorizationAttempts } from "./rust-shell-auth-attempts.mjs";
 import { Meteor } from "meteor/meteor";
 import { Accounts } from "meteor/accounts-base";
 import { OAuth } from "meteor/oauth";
@@ -5,8 +6,13 @@ import { ServiceConfiguration } from "meteor/service-configuration";
 import Crypto from "node:crypto";
 import { resolveOidcSigninUrl } from "/imports/oidc/oidc-server";
 
-const requests = new Map();
-const lifetime = 300000;
+// This namespace survives cancellation, consumption, expiry, and server restart.
+const nativePrefix = 'rust_oauth_';
+const requests = new AuthorizationAttempts({
+  onDiscard: async (key, request) => {
+    if (request.secret || request.error) await OAuth.retrieveCredential(key,request.secret || null);
+  },
+});
 const fail = message => { throw new Meteor.Error(400,message); };
 const providers = {
   oidc: {label:'OpenID Connect',scopes:[]},
@@ -21,11 +27,6 @@ export const oauthEnabled = provider => {
   oauthProvider(provider);
   return !!Accounts.loginServices[provider]?.isEnabled();
 };
-async function discard(key, request) {
-  requests.delete(key);
-  if (request.secret || request.error) await OAuth.retrieveCredential(key,request.secret || null);
-}
-
 export async function startOAuth(provider, binding, scopes = oauthProvider(provider).scopes, {offline = false} = {}) {
   const definition = oauthProvider(provider);
   if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string' || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) fail('Invalid OAuth scopes.');
@@ -34,16 +35,15 @@ export async function startOAuth(provider, binding, scopes = oauthProvider(provi
   if (!config?.clientId) throw new Meteor.Error(503,definition.label+' is not configured.');
   const origin = Meteor.settings.public.rustShellOrigin;
   if (!origin || new URL(origin).protocol !== 'https:') throw new Meteor.Error(503,'Rust shell is unavailable.');
-  for (const [key,request] of requests) if (request.expires <= Date.now() || request.binding === binding) await discard(key,request);
-  const key = Crypto.randomBytes(32).toString('hex');
+  const key = nativePrefix + Crypto.randomBytes(32).toString('hex');
   const state = OAuth._generateState('popup',key);
   if (provider === 'oidc') {
     const url = new URL(await resolveOidcSigninUrl(state));
     if (!['https:','http:'].includes(url.protocol) || url.username || url.password || url.hash) fail('Invalid OIDC authorization endpoint.');
-    requests.set(key,{provider,binding,expires:Date.now()+lifetime,origin});
+    requests.set(key,{provider,binding,origin});
     return {request:key,url:url.href};
   }
-  requests.set(key,{provider,binding,expires:Date.now()+lifetime,origin});
+  requests.set(key,{provider,binding,origin});
   const url = new URL(definition.url);
   const parameters = provider === 'google' ? {...config.loginUrlParameters} : {};
   if (provider === 'google') {
@@ -57,18 +57,18 @@ export async function startOAuth(provider, binding, scopes = oauthProvider(provi
   return {request:key,url:url.href};
 }
 export async function finishOAuth(provider,binding,key) {
-  if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key)) fail('Invalid authorization request.');
+  if (typeof key !== 'string' || !/^rust_oauth_[a-f0-9]{64}$/.test(key)) fail('Invalid authorization request.');
   const request = requests.get(key);
   if (!request || request.binding !== binding || request.provider !== provider) throw new Meteor.Error(403,'Authorization does not belong to this session.');
-  if (request.expires <= Date.now() || !oauthEnabled(provider)) { await discard(key,request); fail('Authorization expired.'); }
-  if (request.error) { await discard(key,request); fail(oauthProvider(provider).label+' authorization was not completed.'); }
+  if (!oauthEnabled(provider)) { await requests.discard(key); fail('Authorization expired.'); }
+  if (request.error) { await requests.discard(key); fail(oauthProvider(provider).label+' authorization was not completed.'); }
   if (!request.secret) return null;
-  requests.delete(key); // Transfer exactly once to the existing login/capability exchange.
+  requests.take(key); // Transfer exactly once to the existing login/capability exchange.
   return {credentialToken:key,credentialSecret:request.secret};
 }
 export async function cancelOAuth(provider,binding,key) {
   const request = requests.get(key);
-  if (request?.binding === binding && request.provider === provider) await discard(key,request);
+  if (request?.binding === binding && request.provider === provider) await requests.discard(key);
 }
 
 // Keep the registered provider callback URLs. Intercept only our server-issued,
@@ -78,11 +78,14 @@ OAuth._endOfLoginResponse = async (res,details) => {
   let key;
   try { key = OAuth._credentialTokenFromQuery(details.query); } catch { return originalEnd(res,details); }
   const request = requests.get(key);
-  if (!request) return originalEnd(res,details);
-  if (request.expires <= Date.now()) {
-    request.secret = details.credentials?.secret;
-    await discard(key,request);
-  } else if (!request.secret && !request.error) {
+  if (!request) {
+    if (typeof key !== 'string' || !key.startsWith(nativePrefix)) return originalEnd(res,details);
+    await OAuth.retrieveCredential(key,details.credentials?.secret || null);
+    res.writeHead(410,{'Content-Type':'text/plain','Cache-Control':'no-store','Referrer-Policy':'no-referrer'});
+    res.end('Authorization ended. Close this window and start again.');
+    return;
+  }
+  if (!request.secret && !request.error) {
     request.secret = details.credentials?.secret;
     request.error = !!details.error || !request.secret;
   }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { authorizePopup, signInProviders, type SignInProviderName } from './lib/oauth';
+  import { authorizePopup, providerRequest, signInProviders, type SignInProviderName } from './lib/oauth';
   import type { AccountService, AccountState } from './lib/account';
   import Avatar from './components/ui/Avatar.svelte';
   import Button from './components/ui/Button.svelte';
@@ -20,18 +20,22 @@
   async function oauth(provider:SignInProviderName) {
     if (oauthPending) return;
     oauthPending=provider; oauthError='';
+    const call = (stage:'Start' | 'Finish' | 'Cancel', signal:AbortSignal, request?:string) => {
+      const {operation,data} = providerRequest(provider,stage,request);
+      return settings.call(operation,data,signal);
+    };
     try {
-      await authorizePopup(async () => {
-        const result = await settings.call(provider === 'saml' ? 'samlStart' : 'oauthStart',{provider});
+      await authorizePopup(async signal => {
+        const result = await call('Start',signal);
         if (!result) throw new Error('Could not start authorization.');
         const oauth = result.authorization;
         if (!oauth?.url) throw new Error('No authorization URL returned.');
         return {request:oauth.request,url:oauth.url};
-      }, async request => {
-        const result = await settings.call(provider === 'saml' ? 'samlFinish' : 'oauthFinish',{provider,request});
+      }, async (request,signal) => {
+        const result = await call('Finish',signal,request);
         if (!result) throw new Error('Could not finish authorization.');
         return result.authorization?.pending ? null : true;
-      }, request => settings.call(provider === 'saml' ? 'samlCancel' : 'oauthCancel',{provider,request}), lifetime.signal, provider);
+      }, (request,signal) => call('Cancel',signal,request), lifetime.signal, provider);
     } catch (failure) { if (!lifetime.signal.aborted) oauthError=String(failure); }
     finally { if (!lifetime.signal.aborted) oauthPending=null; }
   }

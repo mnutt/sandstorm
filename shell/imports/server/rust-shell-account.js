@@ -25,8 +25,9 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   } else if (operation === 'samlFinish') {
     const credential = finishNativeSaml(binding,input.request);
     if (!credential) authorization = {pending:true,request:input.request};
-    else await loginWithSaml(credential,async id => {
+    else await loginWithSaml(credential,async (id,check) => {
       await beforeWrite();
+      check();
       await Accounts.linkCredentialToAccount(globalDb,globalThis.globalBackend,id,accountId,true);
     });
   } else if (operation === 'oauthStart') {
@@ -36,8 +37,9 @@ export async function rustAccount(accountId, operation, input, beforeWrite) {
   } else if (operation === 'oauthFinish') {
     const credential = await finishOAuth(input.provider,binding,input.request);
     if (!credential) authorization = {pending:true,request:input.request};
-    else await loginWithOAuth(input.provider,credential,async id => {
+    else await loginWithOAuth(input.provider,credential,async (id,check) => {
       await beforeWrite();
+      check();
       await Accounts.linkCredentialToAccount(globalDb,globalThis.globalBackend,id,accountId,true);
     });
   } else if (operation === "primary") {

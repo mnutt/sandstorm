@@ -531,3 +531,21 @@ test('logout revokes locally before provider work and never uses caller-supplied
   assert.ok(!JSON.stringify(result).includes('private provider detail'));
   await assert.rejects(bridge.handle('session',{token}),{status:401});
 });
+
+test('native login transfers its account token only after successful session creation', async () => {
+  for(const failure of ['none','authorize','aborted']) {
+    let committed=false,disposed=false;
+    const controller=new AbortController();
+    const bridge=createRustShellBridge({
+      authorize:async()=>failure==='authorize'?null:{name:'Alice',expires:Date.now()+60000},
+      nativeAuth:async()=>{
+        if(failure==='aborted') controller.abort();
+        return {accountId:'alice',loginHash:'hash',commit(){committed=true;},dispose(){disposed=true;}};
+      },
+    });
+    const pending=bridge.handle('nativeAuth',{operation:'dev',data:{name:'Alice'},flow:'a'.repeat(64)},controller.signal);
+    if(failure==='none') assert.ok((await pending).token);
+    else await assert.rejects(pending);
+    assert.equal(committed,failure==='none');assert.equal(disposed,true);
+  }
+});

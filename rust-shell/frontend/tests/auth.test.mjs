@@ -397,6 +397,7 @@ test('authenticated notifications: handoff, shared writes, account switching and
     await oidcPage.close();
     const googlePage=await context.newPage();
     await googlePage.goto(proxy.origin+'/login');
+    await context.clearCookies({name:'__Host-sandstorm-rust-flow'}); // An idle page outlived its flow cookie.
     await googlePage.getByRole('button',{name:'Sign in with Google',exact:true}).click();
     await googlePage.getByRole('heading',{name:/Alice notification/}).waitFor();
     await googlePage.evaluate(()=>fetch('/auth/logout',{method:'POST'}));

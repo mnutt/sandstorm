@@ -154,7 +154,11 @@ pub async fn native_login(
                 set_cookie(&mut response,SESSION,token,12*60*60);
                 set_cookie(&mut response,FLOW,"",0);
                 response
-            } else { Json(value).into_response() }
+            } else {
+                let mut response = Json(value).into_response();
+                set_cookie(&mut response,FLOW,&flow,600);
+                response
+            }
         }, Err(err) => error(err),
     }
 }

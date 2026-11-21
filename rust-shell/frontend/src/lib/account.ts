@@ -22,7 +22,7 @@ export class AccountService {
   constructor(private connection: ShellConnection, private changed: (state: AccountState) => void) {}
   private update(patch: Partial<AccountState>) { this.state = {...this.state, ...patch}; this.changed(this.state); }
   reset() { ++this.generation; this.state = emptyAccount(); this.changed(this.state); }
-  async call(operation: AccountOperation = 'state', input: Record<string, string | boolean> = {}) {
+  async call(operation: AccountOperation = 'state', input: Record<string, string | boolean> = {}, signal?:AbortSignal) {
     if (this.state.pending) return false;
     const generation = this.generation;
     this.update({pending:true, error:'', notice:''});
@@ -43,7 +43,7 @@ export class AccountService {
         : operation === 'oauthStart' ? account.startOAuth(p=>{p.provider=provider;})
         : operation === 'oauthFinish' ? account.finishOAuth(p=>{p.provider=provider;p.request=String(input.request || '');})
         : account.cancelOAuth(p=>{p.provider=provider;p.request=String(input.request || '');});
-      const result = await this.connection.run(request.promise(), 'Account settings');
+      const result = await this.connection.run(request.promise(), 'Account settings', {signal: signal ? AbortSignal.any([this.connection.signal,signal]) : this.connection.signal});
       if (generation !== this.generation) return false;
       const data = unwrap(result.result);
       const value: AccountSettings = {emailEnabled:data.emailEnabled,githubEnabled:data.githubEnabled,googleEnabled:data.googleEnabled,oidcEnabled:data.oidcEnabled,samlEnabled:data.samlEnabled,

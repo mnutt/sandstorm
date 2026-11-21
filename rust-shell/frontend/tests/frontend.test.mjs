@@ -8,7 +8,7 @@ const bundle = await build({ configFile: false, logLevel: 'silent', build: {
   lib: { entry: fileURLToPath(new URL('./unit-entry.ts', import.meta.url)), formats: ['es'] },
 } });
 const code = bundle[0].output.find(item => item.type === 'chunk').code;
-const { authorizationUrl, ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
+const { authorizePopup, providerRequest, authorizationUrl, ListCache, watchGrains, PowerboxRequests, ShellConnection, notificationDestination, runOperation, OperationTimeout, AppService, GrainService, GrainWorkspace, NavigationController,
   isPlainNavigation, templateRequest, powerboxRequest, shareData, GrainTitleSubscriptions,
   tokenOptions, ProfilePronoun, FailureCode, TemplateOffers, clearStoredTemplateOffers, sharingRequest, sharingUrl, ShellService, ProfileService, initialShellState } = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
 const valueResult = value => ({result:{_isValue:true,_isFailure:false,value}});
@@ -657,4 +657,40 @@ test('OIDC accepts server-configured web endpoints and rejects unsafe popup URLs
   assert.equal(authorizationUrl('oidc','https://identity.example.test/custom/authorize?state=test').pathname,'/custom/authorize');
   assert.equal(authorizationUrl('oidc','http://localhost:8080/authorize').protocol,'http:');
   for (const url of ['javascript:alert(1)','data:text/html,test','https://user:secret@identity.example.test/authorize','https://identity.example.test/authorize#fragment']) assert.throws(()=>authorizationUrl('oidc',url));
+});
+
+
+test('authorization cancellation closes the popup and uses an independent cleanup signal', async t => {
+  browserGlobals(t);
+  const popup = {closed:false, location:{}, close(){ this.closed = true; }};
+  window.open = () => popup;
+  const lifetime = new AbortController();
+  const polling = deferred();
+  const cancellations = [];
+  const pending = authorizePopup(async () => ({request:'attempt',url:'https://github.com/login/oauth/authorize'}),
+    () => polling.promise, async (key, signal) => cancellations.push({key,aborted:signal.aborted}), lifetime.signal, 'github');
+  await turn();
+  lifetime.abort();
+  assert.equal(popup.closed, true);
+  await assert.rejects(pending);
+  assert.deepEqual(cancellations, [{key:'attempt',aborted:false}]);
+  polling.resolve(null);
+});
+
+test('authorization disposes a start result arriving after cancellation', async t => {
+  browserGlobals(t);
+  const popup = {location:{},close(){}};
+  window.open = () => popup;
+  const lifetime = new AbortController();
+  const starting = deferred();
+  const cancellations = [];
+  const pending = authorizePopup(() => starting.promise, async () => null,
+    async key => cancellations.push(key), lifetime.signal, 'github');
+  lifetime.abort();
+  await assert.rejects(pending);
+  starting.resolve({request:'late',url:'https://github.com/login/oauth/authorize'});
+  await turn();
+  assert.deepEqual(cancellations, ['late']);
+  assert.deepEqual(providerRequest('saml','Finish','key'), {operation:'samlFinish',data:{request:'key'}});
+  assert.deepEqual(providerRequest('github','Start'), {operation:'oauthStart',data:{provider:'github'}});
 });

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { authorizePopup, signInProviders, type SignInProviderName } from './lib/oauth';
+  import { authorizePopup, providerRequest, signInProviders, type SignInProviderName } from './lib/oauth';
+  import { refreshLoginFlow, nativeLogin, type LoginOptions } from './lib/native-auth';
   import { onMount } from 'svelte';
   import Panel from './components/ui/Panel.svelte';
   import Button from './components/ui/Button.svelte';
   import TextInput from './components/ui/TextInput.svelte';
   import LoadingStatus from './components/ui/LoadingStatus.svelte';
-  let options = $state<{email:boolean;dev:boolean;ldap:boolean;github:boolean;google:boolean;oidc:boolean;saml:boolean}>();
+  let options = $state<LoginOptions>();
   let pending = $state(false);
   let error = $state('');
   let email = $state('');
@@ -17,27 +18,26 @@
   onMount(() => {
     void (async () => {
       try {
-        const response = await fetch('/auth/options',{cache:'no-store',signal:lifetime.signal});
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || 'Sign-in unavailable.');
-        options = result;
+        options = await refreshLoginFlow(lifetime.signal);
       } catch (failure) { if (!lifetime.signal.aborted) error = String(failure); }
     })();
     return () => { lifetime.abort(); password = ''; code = ''; };
   });
   async function oauth(provider:SignInProviderName) {
+    if (pending) return;
     pending = true; error = '';
-    const call = async (operation:string,data:Record<string,string>={}) => {
-      const response = await fetch('/auth/native',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation,data}),signal:lifetime.signal});
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Authorization failed.');
-      return result;
+    const call = (stage:'Start' | 'Finish' | 'Cancel', signal:AbortSignal, request?:string) => {
+      const {operation,data} = providerRequest(provider,stage,request);
+      return nativeLogin(operation,data,signal,stage === 'Cancel');
     };
     try {
-      await authorizePopup(() => call(provider === 'saml' ? 'samlStart' : 'oauthStart',provider === 'saml' ? {} : {provider}), async request => {
-        const result = await call(provider === 'saml' ? 'samlFinish' : 'oauthFinish',provider === 'saml' ? {request} : {provider,request});
+      await authorizePopup(async signal => {
+        await refreshLoginFlow(signal);
+        return call('Start',signal);
+      }, async (request,signal) => {
+        const result = await call('Finish',signal,request);
         return result.pending ? null : result;
-      }, request => call(provider === 'saml' ? 'samlCancel' : 'oauthCancel',provider === 'saml' ? {request} : {provider,request}), lifetime.signal, provider);
+      }, (request,signal) => call('Cancel',signal,request), lifetime.signal, provider);
       location.assign('/');
     } catch (failure) { if (!lifetime.signal.aborted) error = String(failure); }
     finally { if (!lifetime.signal.aborted) pending = false; }
@@ -46,9 +46,9 @@
     if (pending) return;
     pending = true; error = ''; password = ''; code = '';
     try {
-      const response = await fetch('/auth/native',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation,data}),signal:AbortSignal.any([lifetime.signal,AbortSignal.timeout(25000)])});
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Sign-in failed.');
+      const signal = AbortSignal.any([lifetime.signal,AbortSignal.timeout(25000)]);
+      await refreshLoginFlow(signal);
+      const result = await nativeLogin(operation,data,signal);
       if (result.signedIn) location.assign('/');
       else if (result.sent) sent = true;
     } catch (failure) { if (!lifetime.signal.aborted) error = String(failure); }

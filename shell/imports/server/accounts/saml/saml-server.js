@@ -1,3 +1,4 @@
+import { AuthorizationAttempts } from "/imports/server/rust-shell-auth-attempts.mjs";
 import Url from "url";
 import zlib from "zlib";
 import Crypto from "node:crypto";
@@ -103,18 +104,10 @@ const generateService = async function () {
 
 // Native flows keep the browser request key, AuthnRequest ID, and DDP
 // login credential separate. Knowing the ID sent to the IdP cannot redeem login.
-const nativeRequests = new Map();
 const nativeIds = new Map();
+const nativeRequests = new AuthorizationAttempts({onRemove: (_key, request) => nativeIds.delete(request.id)});
 const nativePrefix = "_rust_";
-const nativeLifetime = 300000;
 export const samlEnabled = () => !!Accounts.loginServices.saml?.isEnabled();
-function discardNative(key) {
-  const request = nativeRequests.get(key);
-  if (!request) return;
-  clearTimeout(request.timer);
-  nativeIds.delete(request.id);
-  nativeRequests.delete(key);
-}
 export async function startNativeSaml(binding) {
   if (!samlEnabled()) throw new Meteor.Error(403, "SAML service is disabled.");
   const origin = Meteor.settings.public.rustShellOrigin;
@@ -130,29 +123,24 @@ export async function startNativeSaml(binding) {
   if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.hash) {
     throw new Meteor.Error(400, "Invalid SAML authorization endpoint.");
   }
-  for (const [previous, request] of nativeRequests) {
-    if (request.binding === binding) discardNative(previous);
-  }
-  const timer = setTimeout(() => discardNative(key), nativeLifetime);
-  timer.unref();
-  nativeRequests.set(key, {id, binding, origin, timer, expires: Date.now() + nativeLifetime});
+  nativeRequests.set(key, {id, binding, origin});
   nativeIds.set(id, key);
   return {request:key, url:url.href};
 }
 export function cancelNativeSaml(binding, key) {
-  if (nativeRequests.get(key)?.binding === binding) discardNative(key);
+  if (nativeRequests.get(key)?.binding === binding) void nativeRequests.discard(key);
 }
 export function finishNativeSaml(binding, key) {
   const request = nativeRequests.get(key);
   if (!request || request.binding !== binding) throw new Meteor.Error(403, "Authorization does not belong to this session.");
   if (request.expires <= Date.now() || !samlEnabled()) {
-    discardNative(key);
+    void nativeRequests.discard(key);
     throw new Meteor.Error(403, "SAML authorization expired.");
   }
   if (!request.profile) return null;
   const credentialToken = Crypto.randomBytes(32).toString("hex");
   _loginResultForCredentialToken[credentialToken] = {profile:request.profile};
-  discardNative(key);
+  nativeRequests.take(key);
   return {credentialToken};
 }
 export function discardNativeSamlCredential(credentialToken) {
